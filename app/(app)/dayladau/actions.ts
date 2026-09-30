@@ -35,11 +35,12 @@ export async function mapListingAction(investorId: string, listingKey: string, r
   return r;
 }
 
-export async function createRoomForListingAction(input: { propertyId: string; name: string; listingKey: string }): Promise<State> {
+export async function createRoomForListingAction(input: { propertyId: string; name: string; listingKey: string }): Promise<{ ok: boolean; error?: string; roomId?: string }> {
   const user = await requireUser();
-  const r = await action(() => createRoom(getDb(), user, { ...input, openedOn: D.todayVN() }));
+  let roomId: string | undefined;
+  const r = await action(async () => { roomId = (await createRoom(getDb(), user, { ...input, openedOn: D.todayVN() })).id; });
   revalidatePath("/dayladau");
-  return r;
+  return { ...r, roomId };
 }
 
 export async function createPropertyAction(_: State, f: FormData): Promise<State> {

@@ -107,9 +107,13 @@ function InvestorCard({ inv, props, onEdit }: { inv: InvestorConnection; props: 
 
 function ListingRow({ investorId, listing, props }: { investorId: string; listing: ConnectionTest["listings"][number]; props: Prop[] }) {
   const [roomId, setRoomId] = useState(listing.roomId ?? "");
+  // Phòng đang gắn thực tế; kết quả "Kiểm tra kết nối" không tự làm mới sau khi lưu nên giữ ở đây
+  const [savedRoomId, setSavedRoomId] = useState(listing.roomId ?? "");
   const [msg, setMsg] = useState<string>("");
   const [pending, start] = useTransition();
   const [newRoom, setNewRoom] = useState({ propertyId: props[0]?.id ?? "", name: listing.name });
+  // Cơ sở có thể vừa được tạo sau lần render đầu (state còn rỗng): lấy cơ sở đang hiển thị trong ô chọn
+  const propertyId = props.some((p) => p.id === newRoom.propertyId) ? newRoom.propertyId : props[0]?.id ?? "";
   return (
     <tr>
       <td><b>{listing.name}</b><div className="small muted">mã {listing.key}</div></td>
@@ -122,15 +126,18 @@ function ListingRow({ investorId, listing, props }: { investorId: string; listin
             {props.length > 0 && <option value="__new">+ Tạo phòng mới…</option>}
           </select>
           {roomId !== "__new" && (
-            <button className="btn sm" disabled={pending || roomId === (listing.roomId ?? "")} onClick={() => start(async () => { const r = await mapListingAction(investorId, listing.key, roomId || null); setMsg(r?.ok ? "Đã lưu" : r?.error ?? ""); })}>Lưu</button>
+            <button className="btn sm" disabled={pending || roomId === savedRoomId} onClick={() => start(async () => { const r = await mapListingAction(investorId, listing.key, roomId || null); if (r?.ok) setSavedRoomId(roomId); setMsg(r?.ok ? "Đã lưu" : r?.error ?? ""); })}>Lưu</button>
           )}
-          {msg && <span className={`small ${msg === "Đã lưu" ? "pos" : "err"}`}>{msg}</span>}
+          {msg && <span className={`small ${msg.startsWith("Đã") ? "pos" : "err"}`}>{msg}</span>}
         </div>
         {roomId === "__new" && (
           <div className="row" style={{ marginTop: 6 }}>
-            <select value={newRoom.propertyId} onChange={(e) => setNewRoom({ ...newRoom, propertyId: e.target.value })} aria-label="Cơ sở">{props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+            <select value={propertyId} onChange={(e) => setNewRoom({ ...newRoom, propertyId: e.target.value })} aria-label="Cơ sở">{props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
             <input type="text" value={newRoom.name} onChange={(e) => setNewRoom({ ...newRoom, name: e.target.value })} aria-label="Tên phòng" style={{ maxWidth: 180 }} />
-            <button className="btn sm primary" disabled={pending} onClick={() => start(async () => { const r = await createRoomForListingAction({ ...newRoom, listingKey: listing.key }); setMsg(r?.ok ? "Đã tạo phòng và gắn" : r?.error ?? ""); })}>Tạo và gắn</button>
+            <button className="btn sm primary" disabled={pending} onClick={() => start(async () => { const r = await createRoomForListingAction({ ...newRoom, propertyId, listingKey: listing.key });
+              // Chuyển ô chọn sang phòng vừa tạo để đóng khung tạo mới, tránh bấm tạo lần nữa
+              if (r.ok && r.roomId) { setRoomId(r.roomId); setSavedRoomId(r.roomId); }
+              setMsg(r.ok ? "Đã tạo phòng và gắn" : r.error ?? ""); })}>Tạo và gắn</button>
           </div>
         )}
       </td>

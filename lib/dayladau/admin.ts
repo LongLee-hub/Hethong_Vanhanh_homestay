@@ -164,11 +164,18 @@ export async function createProperty(db: DB, user: SessionUser, input: { investo
 export async function createRoom(db: DB, user: SessionUser, input: { propertyId: string; name: string; openedOn: string; listingKey?: string }) {
   requirePermission(user, "admin");
   if (!input.name?.trim()) throw badRequest("Nhập tên phòng");
-  if (input.listingKey) {
-    const [taken] = await db.select({ id: rooms.id }).from(rooms).where(eq(rooms.dayladauRoomId, input.listingKey)).limit(1);
-    if (taken) throw badRequest("Listing này đã gắn với phòng khác");
-  }
-  const [row] = await db.insert(rooms).values({ propertyId: input.propertyId, name: input.name.trim(), openedOn: input.openedOn, dayladauRoomId: input.listingKey || null }).returning();
-  return row;
+  if (!input.propertyId) throw badRequest("Chọn cơ sở cho phòng mới");
+  const [prop] = await db.select({ investorId: properties.investorId }).from(properties).where(eq(properties.id, input.propertyId)).limit(1);
+  if (!prop) throw badRequest("Không tìm thấy cơ sở — tải lại trang rồi thử lại");
+  // Tạo phòng rồi gắn listing trong cùng giao dịch: listing đang gắn phòng cũ sẽ chuyển sang phòng mới,
+  // gắn lỗi (vd listing thuộc nhà đầu tư khác) thì không để lại phòng mồ côi.
+  return db.transaction(async (tx) => {
+    const [row] = await tx.insert(rooms).values({ propertyId: input.propertyId, name: input.name.trim(), openedOn: input.openedOn }).returning();
+    if (input.listingKey) {
+      await mapListingToRoom(tx as unknown as DB, user, prop.investorId, input.listingKey, row.id);
+      row.dayladauRoomId = input.listingKey;
+    }
+    return row;
+  });
 }
 

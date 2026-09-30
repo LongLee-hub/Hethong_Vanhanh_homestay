@@ -242,6 +242,13 @@ describe("Quản trị kết nối Dayladau", () => {
     await mapListingToRoom(db, admin, "inv-b", "501", "Z1");
     await expect(mapListingToRoom(db, admin, "inv-b", "502", "X1")).rejects.toThrow(/không thuộc/);
     await createRoom(db, admin, { propertyId: "Z", name: "P103", openedOn: "2026-01-01", listingKey: "503" });
+    // Thiếu / sai cơ sở: báo lỗi nghiệp vụ, không để lọt lỗi khóa ngoại thành "Lỗi máy chủ"
+    await expect(createRoom(db, admin, { propertyId: "", name: "P104", openedOn: "2026-01-01", listingKey: "504" })).rejects.toThrow(/Chọn cơ sở/);
+    await expect(createRoom(db, admin, { propertyId: "khong-co", name: "P104", openedOn: "2026-01-01", listingKey: "504" })).rejects.toThrow(/cơ sở/);
+    // Tạo phòng mới cho listing đang gắn phòng khác cùng nhà đầu tư: chuyển listing sang phòng mới
+    const p104 = await createRoom(db, admin, { propertyId: "Z", name: "P104", openedOn: "2026-01-01", listingKey: "503" });
+    const byListing = await db.select({ id: schema.rooms.id }).from(schema.rooms).where(eq(schema.rooms.dayladauRoomId, "503"));
+    expect(byListing).toEqual([{ id: p104.id }]);
 
     const r = await syncBookings(db, { client: { listBookings: async () => orders }, today: "2026-09-30", decrypt: dec, investorIds: ["inv-b"] });
     expect(r.created).toBe(1);
