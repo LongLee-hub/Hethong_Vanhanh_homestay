@@ -1,0 +1,304 @@
+// LOCI Homestay Manager – mô hình dữ liệu (Đặc tả mục 4), viết bằng Drizzle ORM.
+// Tiền: bigint VND, đọc ra dạng number (an toàn tới 9 triệu tỷ). Ngày đêm phòng: date, đọc ra "YYYY-MM-DD".
+// Tháng: chuỗi "YYYY-MM".
+
+import { sql } from "drizzle-orm";
+import {
+  bigint, boolean, date, index, integer, jsonb, numeric, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex,
+} from "drizzle-orm/pg-core";
+
+const id = () => text("id").primaryKey().$defaultFn(() => crypto.randomUUID());
+const money = (name: string) => bigint(name, { mode: "number" }).notNull().default(0);
+const day = (name: string) => date(name, { mode: "string" });
+const ts = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
+
+// ---------- 4.1 Danh mục ----------
+export const roleEnum = pgEnum("role", ["ADMIN", "INVESTOR", "MANAGER", "ACCOUNTANT", "HOUSEKEEPER"]);
+
+export const users = pgTable("users", {
+  id: id(),
+  name: text("name").notNull(),
+  phone: text("phone").unique(),
+  email: text("email").unique(),
+  passwordHash: text("password_hash").notNull(),
+  role: roleEnum("role").notNull(),
+  active: boolean("active").notNull().default(true),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
+export const investors = pgTable("investors", {
+  id: id(),
+  name: text("name").notNull(),
+  userId: text("user_id").unique().references(() => users.id),
+  dayladauHostId: text("dayladau_host_id"),
+  dayladauTokenEncrypted: text("dayladau_token_encrypted"), // AES-256-GCM, không bao giờ trả ra client
+});
+
+export const properties = pgTable("properties", {
+  id: id(),
+  investorId: text("investor_id").notNull().references(() => investors.id),
+  name: text("name").notNull(),
+  address: text("address"),
+  investmentAmount: money("investment_amount"),
+  investmentStartMonth: text("investment_start_month"),
+  occupancyKpiPct: integer("occupancy_kpi_pct").notNull().default(70),
+  variableCostPerNight: money("variable_cost_per_night"),
+  fixedCostMonthly: money("fixed_cost_monthly"),
+  active: boolean("active").notNull().default(true),
+});
+
+export const rooms = pgTable("rooms", {
+  id: id(),
+  propertyId: text("property_id").notNull().references(() => properties.id),
+  name: text("name").notNull(),
+  dayladauRoomId: text("dayladau_room_id").unique(),
+  openedOn: day("opened_on").notNull(),
+  closedOn: day("closed_on"),
+});
+
+export const userPropertyAccess = pgTable(
+  "user_property_access",
+  {
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    propertyId: text("property_id").notNull().references(() => properties.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.propertyId] })],
+);
+
+// ---------- 4.2 Doanh thu ----------
+export const bookingSourceEnum = pgEnum("booking_source", ["DAYLADAU", "MANUAL"]);
+export const bookingStatusEnum = pgEnum("booking_status", ["CONFIRMED", "CANCELLED"]);
+
+export const bookings = pgTable(
+  "bookings",
+  {
+    id: id(),
+    source: bookingSourceEnum("source").notNull(),
+    externalId: text("external_id").unique(),
+    propertyId: text("property_id").notNull().references(() => properties.id),
+    roomId: text("room_id").notNull().references(() => rooms.id),
+    channel: text("channel").notNull(),
+    guestName: text("guest_name"),
+    bookedAt: day("booked_at"),
+    checkIn: day("check_in").notNull(),
+    checkOut: day("check_out").notNull(),
+    grossAmount: money("gross_amount"),
+    commissionAmount: money("commission_amount"),
+    netAmount: money("net_amount"),
+    status: bookingStatusEnum("status").notNull(),
+    transferProofUrl: text("transfer_proof_url"),
+    rawPayload: jsonb("raw_payload"),
+    createdById: text("created_by_id"),
+    lastSyncedAt: ts("last_synced_at"),
+  },
+  (t) => [index("bookings_prop_checkin").on(t.propertyId, t.checkIn)],
+);
+
+export const bookingNights = pgTable(
+  "booking_nights",
+  {
+    id: id(),
+    bookingId: text("booking_id").notNull().references(() => bookings.id, { onDelete: "cascade" }),
+    propertyId: text("property_id").notNull(),
+    roomId: text("room_id").notNull(),
+    nightDate: day("night_date").notNull(),
+    netAmount: money("net_amount"),
+  },
+  (t) => [uniqueIndex("nights_booking_date").on(t.bookingId, t.nightDate), index("nights_prop_date").on(t.propertyId, t.nightDate)],
+);
+
+export const bookingChangeLogs = pgTable("booking_change_logs", {
+  id: id(),
+  bookingId: text("booking_id").notNull().references(() => bookings.id, { onDelete: "cascade" }),
+  changedAt: ts("changed_at").notNull().defaultNow(),
+  changedBy: text("changed_by").notNull(), // "SYNC" hoặc userId
+  reason: text("reason"),
+  before: jsonb("before"),
+  after: jsonb("after").notNull(),
+});
+
+export const reviews = pgTable("reviews", {
+  id: id(),
+  propertyId: text("property_id").notNull().references(() => properties.id),
+  bookingId: text("booking_id"),
+  channel: text("channel").notNull(),
+  score: numeric("score", { precision: 4, scale: 2 }).notNull(), // thang 10
+  reviewDate: day("review_date").notNull(),
+  content: text("content"),
+});
+
+// ---------- 4.3 Chi phí ----------
+export const costScopeEnum = pgEnum("cost_scope", ["DIRECT", "COMMON"]);
+export const paymentStatusEnum = pgEnum("payment_status", ["UNPAID", "PAID"]);
+
+export const expenseCategories = pgTable("expense_categories", {
+  id: id(),
+  name: text("name").notNull(),
+  scope: costScopeEnum("scope").notNull(),
+  active: boolean("active").notNull().default(true),
+});
+
+export const expenses = pgTable(
+  "expenses",
+  {
+    id: id(),
+    propertyId: text("property_id").references(() => properties.id), // null = chi phí chung
+    categoryId: text("category_id").notNull().references(() => expenseCategories.id),
+    month: text("month").notNull(),
+    incurredOn: day("incurred_on").notNull(),
+    amount: money("amount"),
+    description: text("description").notNull(),
+    paymentStatus: paymentStatusEnum("payment_status").notNull().default("UNPAID"),
+    paidAt: ts("paid_at"),
+    receiptUrls: text("receipt_urls").array().notNull().default(sql`'{}'::text[]`),
+    taskId: text("task_id"),
+    createdById: text("created_by_id").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("expenses_month_prop").on(t.month, t.propertyId)],
+);
+
+export const monthPeriods = pgTable("month_periods", {
+  month: text("month").primaryKey(),
+  commonCostsFinalized: boolean("common_costs_finalized").notNull().default(false),
+});
+
+// ---------- 4.4 Quyết toán ----------
+export const settlementStatusEnum = pgEnum("settlement_status", ["DRAFT", "LOCKED"]);
+
+export const settlements = pgTable(
+  "settlements",
+  {
+    id: id(),
+    investorId: text("investor_id").notNull().references(() => investors.id),
+    month: text("month").notNull(),
+    status: settlementStatusEnum("status").notNull(),
+    totalRevenue: money("total_revenue"),
+    totalDirectCost: money("total_direct_cost"),
+    totalCommonCost: money("total_common_cost"),
+    totalProfit: money("total_profit"),
+    managementFee: money("management_fee"),
+    investorNet: money("investor_net"),
+    lockedAt: ts("locked_at"),
+    lockedById: text("locked_by_id"),
+  },
+  (t) => [uniqueIndex("settlements_inv_month").on(t.investorId, t.month)],
+);
+
+export const settlementLines = pgTable("settlement_lines", {
+  id: id(),
+  settlementId: text("settlement_id").notNull().references(() => settlements.id, { onDelete: "cascade" }),
+  propertyId: text("property_id").notNull(),
+  roomCount: integer("room_count").notNull(),
+  soldNights: integer("sold_nights").notNull(),
+  availableNights: integer("available_nights").notNull(),
+  revenue: money("revenue"),
+  adjustments: money("adjustments"),
+  directCost: money("direct_cost"),
+  commonCostAlloc: money("common_cost_alloc"),
+  profit: money("profit"),
+});
+
+export const settlementUnlockLogs = pgTable("settlement_unlock_logs", {
+  id: id(),
+  settlementId: text("settlement_id").notNull().references(() => settlements.id, { onDelete: "cascade" }),
+  at: ts("at").notNull().defaultNow(),
+  byUserId: text("by_user_id").notNull(),
+  reason: text("reason").notNull(),
+});
+
+export const adjustments = pgTable(
+  "adjustments",
+  {
+    id: id(),
+    propertyId: text("property_id").notNull(),
+    appliedMonth: text("applied_month").notNull(),
+    originalMonth: text("original_month").notNull(),
+    bookingId: text("booking_id"),
+    amount: money("amount"),
+    reason: text("reason").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("adj_prop_month").on(t.propertyId, t.appliedMonth)],
+);
+
+// ---------- 4.5 Công việc ----------
+export const taskTypeEnum = pgEnum("task_type", ["CLEANING", "CHECKIN", "CHECKOUT", "MAINTENANCE", "PURCHASE", "BAD_REVIEW", "INVENTORY", "RECURRING"]);
+export const taskStatusEnum = pgEnum("task_status", ["TODO", "IN_PROGRESS", "DONE", "CANCELLED"]);
+export const priorityEnum = pgEnum("priority", ["LOW", "MEDIUM", "HIGH", "URGENT"]);
+
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: id(),
+    propertyId: text("property_id").notNull().references(() => properties.id),
+    roomId: text("room_id"),
+    bookingId: text("booking_id"),
+    type: taskTypeEnum("type").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    assignedById: text("assigned_by_id").notNull(),
+    assigneeId: text("assignee_id").references(() => users.id),
+    dueAt: ts("due_at").notNull(),
+    priority: priorityEnum("priority").notNull().default("MEDIUM"),
+    status: taskStatusEnum("status").notNull().default("TODO"),
+    completedAt: ts("completed_at"),
+    photoUrls: text("photo_urls").array().notNull().default(sql`'{}'::text[]`),
+    recurrenceRule: text("recurrence_rule"),
+    templateId: text("template_id"),
+  },
+  (t) => [index("tasks_prop_status_due").on(t.propertyId, t.status, t.dueAt)],
+);
+
+export const checklistTemplates = pgTable("checklist_templates", {
+  id: id(),
+  name: text("name").notNull(),
+  items: text("items").array().notNull(),
+});
+
+export const checklistResults = pgTable("checklist_results", {
+  id: id(),
+  taskId: text("task_id").notNull().unique().references(() => tasks.id, { onDelete: "cascade" }),
+  results: jsonb("results").notNull(), // [{ item, done, note }]
+});
+
+export const attendance = pgTable(
+  "attendance",
+  {
+    id: id(),
+    userId: text("user_id").notNull().references(() => users.id),
+    propertyId: text("property_id").notNull(),
+    date: day("date").notNull(),
+    checkInAt: ts("check_in_at").notNull(),
+    checkOutAt: ts("check_out_at"),
+    photoUrl: text("photo_url"),
+  },
+  (t) => [uniqueIndex("attendance_user_date").on(t.userId, t.date)],
+);
+
+// ---------- 4.6 Cấu hình và cảnh báo ----------
+export const settings = pgTable("settings", {
+  key: text("key").primaryKey(), // managementFeePct, commission.Airbnb, syncCron, larkWebhookUrl, ...
+  value: text("value").notNull(),
+});
+
+export const alerts = pgTable("alerts", {
+  id: id(),
+  type: text("type").notNull(), // LOW_OCCUPANCY, TASK_OVERDUE, SYNC_FAILED, UNMAPPED_ROOM, LOCKED_MONTH_CHANGED
+  key: text("key").notNull().unique(), // chống tạo trùng cảnh báo đang mở
+  propertyId: text("property_id"),
+  month: text("month"),
+  message: text("message").notNull(),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  resolvedAt: ts("resolved_at"),
+});
+
+export const syncRuns = pgTable("sync_runs", {
+  id: id(),
+  startedAt: ts("started_at").notNull().defaultNow(),
+  finishedAt: ts("finished_at"),
+  created: integer("created").notNull().default(0),
+  updated: integer("updated").notNull().default(0),
+  skipped: integer("skipped").notNull().default(0),
+  errors: jsonb("errors"),
+});
