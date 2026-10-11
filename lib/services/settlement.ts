@@ -37,14 +37,12 @@ async function expensesFor(db: DB, months: string[], propertyIds: string[]): Pro
 /** Tính quyết toán từ dữ liệu hiện tại (không đọc bản đã khóa). */
 export async function computeSettlement(db: DB, investorId: string, month: string): Promise<D.InvestorSettlement> {
   const pids = (await db.select({ id: properties.id }).from(properties).where(eq(properties.investorId, investorId))).map((r) => r.id);
-  const [roomsAll, nights, exps, adjs, finalized, pct] = await Promise.all([
-    allRooms(db),
-    nightsBetween(db, pids, D.firstDay(month), D.lastDay(month)),
-    expensesFor(db, [month, D.prevMonth(month)], pids),
-    pids.length ? db.select().from(adjustments).where(and(inArray(adjustments.propertyId, pids), eq(adjustments.appliedMonth, month))) : Promise.resolve([]),
-    isCommonFinalized(db, month),
-    feePct(db),
-  ]);
+  const roomsAll = await allRooms(db);
+  const nights = await nightsBetween(db, pids, D.firstDay(month), D.lastDay(month));
+  const exps = await expensesFor(db, [month, D.prevMonth(month)], pids);
+  const adjs = pids.length ? await db.select().from(adjustments).where(and(inArray(adjustments.propertyId, pids), eq(adjustments.appliedMonth, month))) : [];
+  const finalized = await isCommonFinalized(db, month);
+  const pct = await feePct(db);
   return D.settleInvestorMonth({
     month, propertyIds: pids, rooms: roomsAll, nights, expenses: exps,
     adjustments: adjs.map((a) => ({ propertyId: a.propertyId, appliedMonth: a.appliedMonth, amount: a.amount })),
@@ -151,14 +149,12 @@ export async function paybackForInvestor(db: DB, user: SessionUser, investorId: 
 export async function investorForecast(db: DB, investorId: string, month: string, today = D.todayVN()) {
   const props = await db.select().from(properties).where(eq(properties.investorId, investorId));
   const pids = props.map((p) => p.id);
-  const [roomsAll, nights, exps, finalized, pct, adjs] = await Promise.all([
-    allRooms(db),
-    nightsBetween(db, pids, D.firstDay(D.prevMonth(month)), D.lastDay(month)),
-    expensesFor(db, [month, D.prevMonth(month)], pids),
-    isCommonFinalized(db, month),
-    feePct(db),
-    pids.length ? db.select().from(adjustments).where(and(inArray(adjustments.propertyId, pids), eq(adjustments.appliedMonth, month))) : Promise.resolve([]),
-  ]);
+  const roomsAll = await allRooms(db);
+  const nights = await nightsBetween(db, pids, D.firstDay(D.prevMonth(month)), D.lastDay(month));
+  const exps = await expensesFor(db, [month, D.prevMonth(month)], pids);
+  const finalized = await isCommonFinalized(db, month);
+  const pct = await feePct(db);
+  const adjs = pids.length ? await db.select().from(adjustments).where(and(inArray(adjustments.propertyId, pids), eq(adjustments.appliedMonth, month))) : [];
   const common = D.commonCostForMonth({ month, expenses: exps, rooms: roomsAll, finalized });
   const lines = props.map((p) => {
     const f = D.forecastProperty({

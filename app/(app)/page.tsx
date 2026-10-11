@@ -19,9 +19,14 @@ export default async function Dashboard() {
   // Quản lý cơ sở không xem phí/hoàn vốn nhưng vẫn xem doanh thu, chi phí của cơ sở được gán
   const invIds = [...new Set(props.map((p) => p.investorId))];
   const invNames = Object.fromEntries((await visibleInvestors(db, user)).map((i) => [i.id, i.name]));
-  const forecasts = await Promise.all(
-    invIds.map(async (id) => ({ inv: { id, name: invNames[id] ?? "" }, f: await investorForecast(db, id, month, today), pb: showFee ? await paybackForInvestor(db, user, id) : null })),
-  );
+  const forecasts = [];
+  for (const id of invIds) {
+    forecasts.push({
+      inv: { id, name: invNames[id] ?? "" },
+      f: await investorForecast(db, id, month, today),
+      pb: showFee ? await paybackForInvestor(db, user, id) : null,
+    });
+  }
   const lines = forecasts.flatMap((x) => x.f.lines).filter((l) => pids.includes(l.propertyId));
   const sum = (k: "revenueForecast" | "revenuePast" | "costForecast" | "actualCost") => lines.reduce((s, l) => s + l[k], 0);
   const bks = await bookingsForMonth(db, user, month);
