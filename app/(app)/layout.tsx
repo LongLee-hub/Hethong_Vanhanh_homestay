@@ -9,6 +9,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = await requireUser();
   const nav = [
     ["/", "Tổng quan", user.role !== "HOUSEKEEPER"],
+    ["/properties", "Cơ sở & phòng", can(user, "viewFinance")],
     ["/bookings", "Đặt phòng", can(user, "viewBookings")],
     ["/expenses", "Chi phí", can(user, "viewFinance")],
     ["/settlements", "Quyết toán", can(user, "viewFee")],

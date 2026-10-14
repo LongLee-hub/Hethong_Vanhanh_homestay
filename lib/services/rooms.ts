@@ -17,6 +17,7 @@ export interface CreateRoomInput {
 
 export async function createRoom(db: DB, user: SessionUser, input: CreateRoomInput): Promise<RoomRow> {
   requirePermission(user, "admin");
+  if (!input.name?.trim()) throw badRequest("Nhập tên phòng");
   await assertPropertyAccess(db, user, input.propertyId);
 
   // Kiểm tra cơ sở tồn tại và đang active
@@ -28,7 +29,7 @@ export async function createRoom(db: DB, user: SessionUser, input: CreateRoomInp
     .insert(rooms)
     .values({
       propertyId: input.propertyId,
-      name: input.name,
+      name: input.name.trim(),
       dayladauRoomId: input.dayladauRoomId ?? null,
       openedOn: input.openedOn,
     })
@@ -50,7 +51,10 @@ export async function updateRoom(db: DB, user: SessionUser, roomId: string, inpu
   await assertPropertyAccess(db, user, room.propertyId);
 
   const updates: Partial<typeof rooms.$inferInsert> = {};
-  if (input.name !== undefined) updates.name = input.name;
+  if (input.name !== undefined) {
+    if (!input.name.trim()) throw badRequest("Nhập tên phòng");
+    updates.name = input.name.trim();
+  }
   if (input.dayladauRoomId !== undefined) updates.dayladauRoomId = input.dayladauRoomId;
 
   if (Object.keys(updates).length === 0) return room;

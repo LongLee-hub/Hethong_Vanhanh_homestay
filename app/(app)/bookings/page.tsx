@@ -1,3 +1,4 @@
+import Link from "next/link";
 import * as D from "@/lib/domain";
 import { getDb } from "@/lib/db";
 import { can } from "@/lib/auth/access";
@@ -8,13 +9,78 @@ import { MonthNav, vnd } from "@/components/MonthNav";
 import { ActionForm } from "@/components/ActionForm";
 import { PhotoInput } from "@/components/PhotoInput";
 import { manualBookingAction } from "../actions";
+import { canViewLiveOrders, liveOrdersForMonth, type LiveSyncState } from "@/lib/dayladau/live";
 
 const CHANNEL: Record<string, string> = { Direct: "Trực tiếp" };
+const SYNC: Record<LiveSyncState, [string, string]> = {
+  SYNCED: ["Đã có trong hệ thống", "ok"],
+  NOT_SYNCED: ["Chưa đồng bộ", "warn"],
+  UNMAPPED: ["Phòng chưa gắn", "bad"],
+};
+
+/** Hai nguồn xem đơn: đơn đã lưu trong hệ thống, hoặc đọc trực tiếp từ API Dayladau. */
+function SourceTabs({ month, api }: { month: string; api: boolean }) {
+  return (
+    <div className="chips" style={{ width: "100%" }}>
+      <Link className="chip" aria-pressed={!api} href={`/bookings?month=${month}`}>Trong hệ thống</Link>
+      <Link className="chip" aria-pressed={api} href={`/bookings?month=${month}&src=api`}>Từ Dayladau</Link>
+    </div>
+  );
+}
+
+async function LiveBookings({ month, user }: { month: string; user: Parameters<typeof liveOrdersForMonth>[1] }) {
+  const { orders, errors, unreadable } = await liveOrdersForMonth(getDb(), user, month);
+  const ok = orders.filter((o) => o.status === "CONFIRMED");
+  const count = (s: LiveSyncState) => orders.filter((o) => o.sync === s).length;
+  const multiInv = new Set(orders.map((o) => o.investorName)).size > 1;
+  return (
+    <>
+      {errors.map((e) => <div key={e.investorName} className="banner bad">{e.investorName}: {e.message}</div>)}
+      <div className="cards">
+        <div className="stat"><span className="lbl">Đơn trên Dayladau</span><span className="v">{orders.length}</span><span className="s">{ok.length} xác nhận · {orders.length - ok.length} hủy</span></div>
+        <div className="stat"><span className="lbl">Tiền host nhận</span><span className="v">{vnd(ok.reduce((s, o) => s + o.hostAmount, 0))}</span><span className="s">Các đơn xác nhận, cả phần kéo sang tháng khác</span></div>
+        <div className="stat"><span className="lbl">Đã có trong hệ thống</span><span className="v">{count("SYNCED")}</span><span className="s">{count("NOT_SYNCED")} chưa đồng bộ · {count("UNMAPPED")} phòng chưa gắn</span></div>
+      </div>
+      {count("UNMAPPED") > 0 && <div className="banner">Đơn của phòng chưa gắn sẽ không được tính doanh thu. Gắn phòng ở mục <Link href="/properties">Cơ sở &amp; phòng</Link>, rồi đồng bộ lại.</div>}
+      <section className="panel">
+        <header><div><h2>Đơn đọc trực tiếp từ Dayladau</h2><p>Lấy lúc {new Date().toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" })}. Chỉ để xem, không ghi vào hệ thống.{unreadable ? ` Bỏ qua ${unreadable} đơn đọc lỗi.` : ""}</p></div></header>
+        <div className="tbl-wrap"><table>
+          <thead><tr><th>Khách</th><th>Phòng</th><th>Kênh bán</th><th>Nhận – trả phòng</th><th className="n">Khách trả</th><th className="n">Host nhận</th><th>Trạng thái</th><th>Hệ thống</th></tr></thead>
+          <tbody>
+            {orders.map((o) => (
+              <tr key={o.externalId}>
+                <td><b>{o.guestName ?? "Khách"}</b><div className="small muted">{o.externalId}{multiInv ? ` · ${o.investorName}` : ""}</div></td>
+                <td>{o.roomLabel ?? <span className="muted">{o.listingName}</span>}</td>
+                <td><span className="pill">{CHANNEL[o.channel] ?? o.channel}</span></td>
+                <td className="num">{D.formatDateVN(o.checkIn)} – {D.formatDateVN(o.checkOut)}</td>
+                <td className="n">{vnd(o.grossAmount)}</td>
+                <td className="n"><b>{o.hostAmount ? vnd(o.hostAmount) : "—"}</b></td>
+                <td>{o.status === "CANCELLED" ? <span className="pill bad">Đã hủy</span> : <span className="pill ok">Đã xác nhận</span>}<div className="small muted">{o.rawStatus}</div></td>
+                <td><span className={`pill ${SYNC[o.sync][1]}`}>{SYNC[o.sync][0]}</span></td>
+              </tr>
+            ))}
+            {!orders.length && <tr><td colSpan={8} className="muted small">{errors.length ? "Không đọc được đơn từ Dayladau." : "Dayladau không có đơn nào trong tháng."}</td></tr>}
+          </tbody>
+        </table></div>
+      </section>
+    </>
+  );
+}
 
 export default async function Bookings({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const user = await requireUser();
   if (!can(user, "viewBookings")) return <NoAccess />;
-  const month = monthParam((await searchParams).month);
+  const sp = await searchParams;
+  const month = monthParam(sp.month);
+  const live = canViewLiveOrders(user);
+  if (live && sp.src === "api") {
+    return (
+      <>
+        <div className="topbar"><h1>Đặt phòng</h1><MonthNav month={month} path="/bookings" extra="&src=api" /><SourceTabs month={month} api /></div>
+        <LiveBookings month={month} user={user} />
+      </>
+    );
+  }
   const db = getDb();
   const props = await visibleProperties(db, user);
   const rows = await bookingsForMonth(db, user, month);
@@ -24,7 +90,7 @@ export default async function Bookings({ searchParams }: { searchParams: Promise
   const confirmed = rows.filter((b) => b.status !== "CANCELLED");
   return (
     <>
-      <div className="topbar"><h1>Đặt phòng</h1><MonthNav month={month} path="/bookings" /></div>
+      <div className="topbar"><h1>Đặt phòng</h1><MonthNav month={month} path="/bookings" />{live && <SourceTabs month={month} api={false} />}</div>
       <div className="cards">
         <div className="stat"><span className="lbl">Đơn đã xác nhận</span><span className="v">{confirmed.length}</span><span className="s">Có đêm ở trong tháng</span></div>
         <div className="stat"><span className="lbl">Đơn đã hủy</span><span className="v">{rows.length - confirmed.length}</span></div>
