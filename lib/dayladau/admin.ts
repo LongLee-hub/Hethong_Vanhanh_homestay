@@ -7,6 +7,7 @@ import { badRequest, notFound, requirePermission, type SessionUser } from "../au
 import { decryptSecret, encryptSecret } from "../services/settings";
 import { fetchOrdersPage, PAGE_SIZE } from "./client";
 import { mapDayladauOrder } from "./mapping";
+import { DISMISSIBLE_ALERTS } from "./alert-types";
 
 const HOST_ID_RE = /^[A-Za-z0-9_-]{3,64}$/;
 const TOKEN_RE = /^[A-Za-z0-9._~-]{16,512}$/;
@@ -179,3 +180,11 @@ export async function createRoom(db: DB, user: SessionUser, input: { propertyId:
   });
 }
 
+
+export async function dismissSyncAlert(db: DB, user: SessionUser, alertId: string) {
+  requirePermission(user, "admin");
+  const [a] = await db.select({ type: alerts.type }).from(alerts).where(and(eq(alerts.id, alertId), isNull(alerts.resolvedAt))).limit(1);
+  if (!a) throw notFound("Cảnh báo không còn mở");
+  if (!DISMISSIBLE_ALERTS.includes(a.type)) throw badRequest("Cảnh báo này tự đóng khi đã gắn listing với phòng");
+  await db.update(alerts).set({ resolvedAt: new Date() }).where(eq(alerts.id, alertId));
+}

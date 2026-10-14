@@ -2,24 +2,46 @@
 import { useState, useTransition } from "react";
 import { ActionForm } from "@/components/ActionForm";
 import type { ConnectionTest, InvestorConnection } from "@/lib/dayladau/admin";
+import { DISMISSIBLE_ALERTS } from "@/lib/dayladau/alert-types";
 import type { SyncSummary } from "@/lib/dayladau/sync";
-import { createPropertyAction, createRoomForListingAction, mapListingAction, saveConnectionAction, syncNowAction, testConnectionAction } from "./actions";
+import { createPropertyAction, createRoomForListingAction, dismissAlertAction, mapListingAction, saveConnectionAction, syncNowAction, testConnectionAction } from "./actions";
+import s from "./dayladau.module.css";
 
 type Prop = { id: string; name: string; investorId: string; rooms: { id: string; name: string; listingKey: string | null }[] };
 type Run = { id: string; startedAt: string; finishedAt: string | null; created: number; updated: number; skipped: number; errors: { message: string }[] };
+type Alert = { id: string; type: string; message: string; createdAt: string };
 
 const vnd = (n: number) => n.toLocaleString("vi-VN") + " ₫";
 const dt = (iso: string) => new Date(iso).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 
-export function DayladauPanel({ investors, properties, runs }: { investors: InvestorConnection[]; properties: Prop[]; runs: Run[] }) {
+const ALERT_LABEL: Record<string, [string, string]> = {
+  SYNC_FAILED: ["Lỗi kết nối", "bad"],
+  UNMAPPED_ROOM: ["Listing chưa gắn phòng", "warn"],
+  BOOKING_MISSING: ["Đơn không còn trên Dayladau", "warn"],
+  LOCKED_MONTH_CHANGED: ["Đổi vào tháng đã khóa", "fc"],
+};
+const ALERTS_SHOWN = 8;
+
+export function DayladauPanel({ investors, properties, runs, bookingCount, alerts }: { investors: InvestorConnection[]; properties: Prop[]; runs: Run[]; bookingCount: Record<string, number>; alerts: Alert[] }) {
   const [editing, setEditing] = useState<string | "new" | null>(investors.length ? null : "new");
+  const [allAlerts, setAllAlerts] = useState(false);
+  const shown = allAlerts ? alerts : alerts.slice(0, ALERTS_SHOWN);
   return (
     <div className="stack">
+      {alerts.length > 0 && (
+        <section className="panel">
+          <header><div><h2>Cần xử lý</h2><p>Cảnh báo do đồng bộ sinh ra. Listing chưa gắn phòng tự đóng khi gắn xong; các loại khác bấm Đã xem sau khi kiểm tra.</p></div><span className="pill bad">{alerts.length}</span></header>
+          <div className={s.alerts}>
+            {shown.map((a) => <AlertRow key={a.id} a={a} />)}
+          </div>
+          {alerts.length > ALERTS_SHOWN && <button className="btn sm" style={{ marginTop: 12 }} onClick={() => setAllAlerts(!allAlerts)}>{allAlerts ? "Thu gọn" : `Xem thêm ${alerts.length - ALERTS_SHOWN} cảnh báo`}</button>}
+        </section>
+      )}
       {investors.map((inv) =>
         editing === inv.id ? (
           <ConnectionForm key={inv.id} inv={inv} onDone={() => setEditing(null)} />
         ) : (
-          <InvestorCard key={inv.id} inv={inv} props={properties.filter((p) => p.investorId === inv.id)} onEdit={() => setEditing(inv.id)} />
+          <InvestorCard key={inv.id} inv={inv} props={properties.filter((p) => p.investorId === inv.id)} bookings={bookingCount[inv.id] ?? 0} onEdit={() => setEditing(inv.id)} />
         ),
       )}
       {editing === "new" ? <ConnectionForm onDone={() => setEditing(null)} /> : <div><button className="btn primary" onClick={() => setEditing("new")}>+ Thêm nhà đầu tư</button></div>}
@@ -31,6 +53,22 @@ export function DayladauPanel({ investors, properties, runs }: { investors: Inve
             {!runs.length && <tr><td colSpan={5} className="muted small">Chưa đồng bộ lần nào.</td></tr>}</tbody>
         </table></div>
       </section>
+    </div>
+  );
+}
+
+function AlertRow({ a }: { a: Alert }) {
+  const [pending, start] = useTransition();
+  const [err, setErr] = useState("");
+  const [label, tone] = ALERT_LABEL[a.type] ?? [a.type, ""];
+  return (
+    <div className={s.alert}>
+      <span className={`pill ${tone}`}>{label}</span>
+      <p>{a.message}{err && <span className="err"> {err}</span>}</p>
+      <time dateTime={a.createdAt}>{dt(a.createdAt)}</time>
+      {DISMISSIBLE_ALERTS.includes(a.type) && (
+        <button className="btn sm" disabled={pending} onClick={() => start(async () => { const r = await dismissAlertAction(a.id); if (!r?.ok) setErr(r?.error ?? ""); })}>{pending ? "Đang đóng…" : "Đã xem"}</button>
+      )}
     </div>
   );
 }
@@ -52,26 +90,59 @@ function ConnectionForm({ inv, onDone }: { inv?: InvestorConnection; onDone: () 
   );
 }
 
-function InvestorCard({ inv, props, onEdit }: { inv: InvestorConnection; props: Prop[]; onEdit: () => void }) {
+function InvestorCard({ inv, props, bookings, onEdit }: { inv: InvestorConnection; props: Prop[]; bookings: number; onEdit: () => void }) {
   const [test, setTest] = useState<ConnectionTest | null>(null);
   const [sync, setSync] = useState<{ ok: boolean; error?: string; summary?: SyncSummary } | null>(null);
+  const [busy, setBusy] = useState<"test" | "sync" | null>(null);
   const [pending, start] = useTransition();
-  const ready = inv.hostId && inv.hasToken;
+  const run = (kind: "test" | "sync", fn: () => Promise<void>) => { setBusy(kind); start(async () => { await fn(); setBusy(null); }); };
+  const ready = !!(inv.hostId && inv.hasToken);
   const mapped = props.flatMap((p) => p.rooms).filter((r) => r.listingKey).length;
+  const synced = bookings > 0 || !!sync?.summary?.created;
+  // 4 bước kết nối; bước đang làm là bước đầu tiên chưa xong
+  const steps: { label: string; note: string; done: boolean }[] = [
+    { label: "Thông tin kết nối", note: ready ? `Host ID ${inv.hostId} · token ${inv.tokenHint}` : "Thiếu host ID hoặc token", done: ready },
+    { label: "Kiểm tra kết nối", note: test?.ok ? `Thấy ${test.listings.length} listing` : test ? "Chưa kết nối được" : mapped ? "Đã kết nối được" : "Chưa kiểm tra", done: !!test?.ok || mapped > 0 },
+    { label: "Gắn listing với phòng", note: mapped ? `${mapped} phòng đã gắn` : "Chưa gắn phòng nào", done: mapped > 0 },
+    { label: "Đồng bộ đơn", note: synced ? `${bookings + (sync?.summary?.created ?? 0)} đơn đã về` : "Chưa có đơn nào", done: synced },
+  ];
+  const now = steps.findIndex((x) => !x.done);
+  const nextHint = [
+    <>Bấm <b>Sửa</b> để điền host ID và access token.</>,
+    <>Bấm <b>Kiểm tra kết nối</b> để xem danh sách listing trên Dayladau.</>,
+    <>Chọn phòng cho từng listing ở bảng bên dưới rồi bấm <b>Lưu</b>. Đơn của listing chưa gắn sẽ bị bỏ qua.</>,
+    <>Bấm <b>Đồng bộ ngay</b> để lấy đơn về, hoặc chờ lần tự đồng bộ kế tiếp.</>,
+  ][now];
   return (
     <section className="panel">
       <header>
         <div><h2>{inv.name}</h2><p>Host ID {inv.hostId ?? "—"} · token {inv.hasToken ? inv.tokenHint : "chưa có"} · {mapped} phòng đã gắn listing</p></div>
         <div className="row">
-          {ready ? <span className="pill ok">Đã có thông tin</span> : <span className="pill warn">Thiếu thông tin</span>}
+          {now === -1 ? <span className="pill ok">Đang đồng bộ</span> : <span className="pill warn">Chưa xong bước {now + 1}</span>}
           <button className="btn sm" onClick={onEdit}>Sửa</button>
-          <button className="btn sm" disabled={!ready || pending} onClick={() => start(async () => setTest(await testConnectionAction(inv.id)))}>{pending && !sync ? "Đang kiểm tra…" : "Kiểm tra kết nối"}</button>
-          <button className="btn sm primary" disabled={!ready || pending || !mapped} title={!mapped ? "Gắn listing với phòng trước" : ""} onClick={() => start(async () => setSync(await syncNowAction(inv.id)))}>Đồng bộ ngay</button>
+          <button className="btn sm" disabled={!ready || pending} onClick={() => run("test", async () => setTest(await testConnectionAction(inv.id)))}>{busy === "test" ? "Đang kiểm tra…" : "Kiểm tra kết nối"}</button>
+          <button className="btn sm primary" disabled={!ready || pending || !mapped} title={!mapped ? "Gắn listing với phòng trước" : ""} onClick={() => run("sync", async () => setSync(await syncNowAction(inv.id)))}>{busy === "sync" ? "Đang đồng bộ…" : "Đồng bộ ngay"}</button>
         </div>
       </header>
 
+      <ol className={s.steps} aria-label="Các bước kết nối">
+        {steps.map((x, i) => (
+          <li key={x.label} className={`${s.step} ${x.done ? s.done : ""} ${i === now ? s.now : ""}`} aria-current={i === now ? "step" : undefined}><b>{x.label}</b><span>{x.note}</span></li>
+        ))}
+      </ol>
+      {nextHint && <p className={s.next}>Bước tiếp theo: {nextHint}</p>}
+
       {sync && (sync.summary ? (
-        <div className={`banner ${sync.ok ? "info" : "bad"}`}>Đồng bộ xong: {sync.summary.created} đơn mới, {sync.summary.updated} cập nhật, {sync.summary.unchanged} không đổi, {sync.summary.skipped} bỏ qua{sync.summary.adjustments ? `, ${sync.summary.adjustments} khoản điều chỉnh tháng đã khóa` : ""}.{sync.error && ` Lỗi: ${sync.error}`}</div>
+        <>
+          <div className={s.tiles}>
+            <div className={`${s.tile} ${s.tNew}`}><b>{sync.summary.created}</b><span>Đơn mới</span><small>Đã ghi vào sổ, chia tiền theo đêm</small></div>
+            <div className={`${s.tile} ${s.tChanged}`}><b>{sync.summary.updated}</b><span>Có thay đổi</span><small>Đổi ngày, đổi phòng, đổi tiền hoặc bị hủy</small></div>
+            <div className={s.tile}><b>{sync.summary.unchanged}</b><span>Không đổi</span><small>Chỉ cập nhật giờ đồng bộ</small></div>
+            <div className={`${s.tile} ${s.tSkipped}`}><b>{sync.summary.skipped}</b><span>Bỏ qua</span><small>Listing chưa gắn phòng hoặc đơn đọc lỗi</small></div>
+          </div>
+          {sync.summary.adjustments > 0 && <div className="banner">{sync.summary.adjustments} đơn thay đổi rơi vào tháng đã khóa sổ, phần chênh lệch đã ghi sang tháng kế tiếp.</div>}
+          {sync.error && <div className="banner bad">Lỗi: {sync.error}</div>}
+        </>
       ) : <div className="banner bad">{sync.error}</div>)}
 
       {test && !test.ok && <div className="banner bad">Không kết nối được: {test.error}</div>}

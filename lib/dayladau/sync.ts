@@ -84,7 +84,7 @@ export async function syncBookings(
       }
 
       for (const [key, u] of unmapped) {
-        await raiseAlert(db, "UNMAPPED_ROOM", `UNMAPPED_ROOM:${inv.id}:${key}`, `${inv.name}: listing "${u.name}" (${u.count} đơn) chưa gắn với phòng nào. Vào Quản trị → Dayladau để gắn.`);
+        await raiseAlert(db, "UNMAPPED_ROOM", `UNMAPPED_ROOM:${inv.id}:${key}`, `${inv.name}: listing "${u.name}" (${u.count} đơn) chưa gắn với phòng nào. Vào trang Kết nối Dayladau để gắn.`);
       }
 
       // Đơn đã có nhưng không còn trả về từ API: không xóa, chỉ cảnh báo (chỉ xét đơn còn ở tương lai gần).

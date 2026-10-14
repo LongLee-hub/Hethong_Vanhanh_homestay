@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { HttpError, requirePermission } from "@/lib/auth/access";
 import { action, requireUser } from "@/lib/server";
-import { createProperty, createRoom, mapListingToRoom, saveInvestorConnection, testConnection, type ConnectionTest } from "@/lib/dayladau/admin";
+import { createProperty, createRoom, dismissSyncAlert, mapListingToRoom, saveInvestorConnection, testConnection, type ConnectionTest } from "@/lib/dayladau/admin";
 import { syncBookings, type SyncSummary } from "@/lib/dayladau/sync";
 import { computeAlerts } from "@/lib/services/alerts";
 import * as D from "@/lib/domain";
@@ -67,4 +67,12 @@ export async function syncNowAction(investorId: string): Promise<{ ok: boolean; 
   } catch (e) {
     return { ok: false, error: e instanceof HttpError ? e.message : "Lỗi máy chủ" };
   }
+}
+
+export async function dismissAlertAction(alertId: string): Promise<State> {
+  const user = await requireUser();
+  const r = await action(() => dismissSyncAlert(getDb(), user, alertId));
+  revalidatePath("/dayladau");
+  revalidatePath("/");
+  return r;
 }
