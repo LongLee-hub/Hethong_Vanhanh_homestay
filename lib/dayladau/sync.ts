@@ -17,17 +17,21 @@ export interface SyncSummary {
   errors: { investorId: string; message: string }[];
 }
 
+/** Mỗi lần đồng bộ chỉ lấy chừng này đơn mới nhất của mỗi NĐT (API trả đơn mới tạo trước). */
+export const SYNC_MAX_ORDERS = 300;
+
 async function raiseAlert(db: DB, type: string, key: string, message: string, propertyId?: string) {
   await db.insert(alerts).values({ type, key, message, propertyId: propertyId ?? null }).onConflictDoNothing();
 }
 
 export async function syncBookings(
   db: DB,
-  opts: { client?: DayladauClient; today?: string; decrypt?: (s: string) => string; investorIds?: string[] } = {},
+  opts: { client?: DayladauClient; today?: string; decrypt?: (s: string) => string; investorIds?: string[]; maxOrders?: number } = {},
 ): Promise<SyncSummary> {
   const client = opts.client ?? httpDayladauClient;
   const decrypt = opts.decrypt ?? decryptSecret;
   const today = opts.today ?? D.todayVN();
+  const maxOrders = opts.maxOrders ?? SYNC_MAX_ORDERS;
   const cfg = await getAllSettings(db);
   const [run] = await db.insert(syncRuns).values({}).returning();
   const sum: SyncSummary = { created: 0, updated: 0, unchanged: 0, skipped: 0, adjustments: 0, errors: [] };
@@ -43,7 +47,7 @@ export async function syncBookings(
       const pids = props.map((p) => p.id);
       // Phòng của NĐT này, tra theo mã listing Dayladau (id hoặc tên listing)
       const roomByListing = new Map(allRooms.filter((r) => r.dayladauRoomId && pids.includes(r.propertyId)).map((r) => [r.dayladauRoomId!, r]));
-      const raws = await client.listBookings({ hostId: inv.dayladauHostId!, token: decrypt(inv.dayladauTokenEncrypted!) });
+      const raws = await client.listBookings({ hostId: inv.dayladauHostId!, token: decrypt(inv.dayladauTokenEncrypted!), maxOrders });
       const seen: string[] = [];
       const unmapped = new Map<string, { name: string; count: number }>();
 
@@ -83,8 +87,9 @@ export async function syncBookings(
         await raiseAlert(db, "UNMAPPED_ROOM", `UNMAPPED_ROOM:${inv.id}:${key}`, `${inv.name}: listing "${u.name}" (${u.count} đơn) chưa gắn với phòng nào. Vào Quản trị → Dayladau để gắn.`);
       }
 
-      // Đơn đã có nhưng không còn trả về từ API: không xóa, chỉ cảnh báo (chỉ xét đơn còn ở tương lai gần)
-      if (pids.length) {
+      // Đơn đã có nhưng không còn trả về từ API: không xóa, chỉ cảnh báo (chỉ xét đơn còn ở tương lai gần).
+      // Chỉ kết luận được khi đã lấy hết đơn; chạm trần maxOrders thì đơn cũ vắng mặt là chuyện bình thường.
+      if (pids.length && raws.length < maxOrders) {
         const missing = await db
           .select({ id: bookings.id, externalId: bookings.externalId, propertyId: bookings.propertyId })
           .from(bookings)
