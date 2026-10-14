@@ -28,54 +28,112 @@ export default async function Dashboard() {
     });
   }
   const lines = forecasts.flatMap((x) => x.f.lines).filter((l) => pids.includes(l.propertyId));
-  const sum = (k: "revenueForecast" | "revenuePast" | "costForecast" | "actualCost") => lines.reduce((s, l) => s + l[k], 0);
+  const sum = (k: "revenueForecast" | "revenuePast" | "costForecast" | "actualCost" | "soldPast" | "bookedFuture") => lines.reduce((s, l) => s + l[k], 0);
   const bks = await bookingsForMonth(db, user, month);
   const ci = bks.filter((b) => b.status === "CONFIRMED" && b.checkIn === today);
   const co = bks.filter((b) => b.status === "CONFIRMED" && b.checkOut === today);
   const al = await openAlerts(db, user);
 
+  // Số đêm có thể bán trong tháng của từng cơ sở, để vẽ thanh "đã ở / đã đặt / còn trống"
+  const avail = Object.fromEntries(props.map((p) => [p.id, D.availableNights(p.rooms, D.firstDay(month), D.lastDay(month))]));
+  const availAll = lines.reduce((s, l) => s + (avail[l.propertyId] ?? 0), 0);
+  const pctOf = (n: number, total: number) => (total ? Math.min(100, Math.round((n / total) * 100)) : 0);
+
+  // Phép tính ra con số chính. Vai trò xem được phí thì tính tới phần nhà đầu tư nhận; còn lại dừng ở lợi nhuận.
+  const revenue = showFee ? forecasts.reduce((s, x) => s + x.f.revenueForecast, 0) : sum("revenueForecast");
+  const cost = showFee ? forecasts.reduce((s, x) => s + x.f.costForecast, 0) : sum("costForecast");
+  const fee = forecasts.reduce((s, x) => s + x.f.managementFee, 0);
+  const headline = showFee ? forecasts.reduce((s, x) => s + x.f.investorNet, 0) : revenue - cost;
+  const headlineLabel = !showFee ? "Lợi nhuận dự kiến tháng này" : user.role === "INVESTOR" ? "Tháng này bạn dự kiến nhận" : "Nhà đầu tư dự kiến nhận tháng này";
+  const resultLabel = !showFee ? "Lợi nhuận" : user.role === "INVESTOR" ? "Bạn nhận" : "Nhà đầu tư nhận";
+
   return (
     <>
-      <div className="topbar"><h1>Tổng quan · {D.formatMonthVN(month)}</h1></div>
-      <div className="cards">
-        <div className="stat"><span className="lbl">Doanh thu thực tế</span><span className="v">{vnd(sum("revenuePast"))}</span><span className="s">Các đêm đến hết hôm qua</span></div>
-        <div className="stat fc"><span className="lbl">Doanh thu dự kiến</span><span className="v">{vnd(sum("revenueForecast"))}</span></div>
-        <div className="stat"><span className="lbl">Chi phí đã nhập</span><span className="v">{vnd(sum("actualCost"))}</span></div>
-        <div className="stat fc"><span className="lbl">Lợi nhuận dự kiến</span><span className={`v ${sign(sum("revenueForecast") - sum("costForecast"))}`}>{vnd(sum("revenueForecast") - sum("costForecast"))}</span></div>
-        {showFee && <div className="stat fc"><span className="lbl">Phí quản lý dự kiến</span><span className="v">{vnd(forecasts.reduce((s, x) => s + x.f.managementFee, 0))}</span></div>}
-        {showFee && <div className="stat fc"><span className="lbl">NĐT nhận dự kiến</span><span className="v">{vnd(forecasts.reduce((s, x) => s + x.f.investorNet, 0))}</span></div>}
+      <div className="topbar">
+        <h1>Xin chào, {user.name}</h1>
+        <p className="sub">Tình hình {D.formatMonthVN(month).toLowerCase()}, tính đến hôm nay {D.formatDateVN(today)}</p>
       </div>
-      <div className="grid g2">
-        <section className="panel">
-          <header><h2>Theo cơ sở</h2></header>
-          <div className="tbl-wrap"><table>
-            <thead><tr><th>Cơ sở</th><th className="n">Đêm đã bán</th><th className="n">Đã đặt tới cuối tháng</th><th className="n">ADR</th><th className="n">DT dự kiến</th></tr></thead>
-            <tbody>{lines.map((l) => (
-              <tr key={l.propertyId}><td>{props.find((p) => p.id === l.propertyId)?.name}</td><td className="n">{l.soldPast}</td><td className="n">{l.bookedFuture}</td><td className="n">{vnd(l.adrUsed)}</td><td className="n">{vnd(l.revenueForecast)}</td></tr>
-            ))}</tbody>
-          </table></div>
-        </section>
-        <section className="panel">
-          <header><h2>Hôm nay · {D.formatDateVN(today)}</h2></header>
-          <p className="small"><b>Check-in ({ci.length}):</b> {ci.map((b) => b.guestName).join(", ") || "không có"}</p>
-          <p className="small"><b>Check-out ({co.length}):</b> {co.map((b) => b.guestName).join(", ") || "không có"}</p>
-        </section>
-        <section className="panel">
-          <header><h2>Cảnh báo</h2></header>
-          {al.length ? al.map((a) => <div key={a.id} className={`banner ${a.type === "TASK_OVERDUE" ? "bad" : ""}`}>{a.message}</div>) : <p className="small muted">Không có cảnh báo.</p>}
-        </section>
+
+      {!lines.length ? (
+        <div className="panel empty">Chưa có cơ sở nào trong phạm vi bạn được xem.</div>
+      ) : (
+        <>
+          <section className="hero">
+            <div>
+              <span className="cap">{headlineLabel}</span>
+              <div className={`big ${sign(headline) === "neg" ? "neg" : ""}`}>{vnd(headline)}</div>
+              <p className="note">Đây là số ước tính đến cuối tháng, gồm các đêm đã có khách và các đêm còn trống ước theo tháng trước. Số chính thức có ở mục Quyết toán sau khi khóa sổ.</p>
+            </div>
+            <dl className="calc">
+              <div><dt>Doanh thu dự kiến</dt><dd>{vnd(revenue)}</dd></div>
+              <div><dt>Chi phí dự kiến</dt><dd>− {vnd(cost)}</dd></div>
+              {showFee && <div><dt>Phí quản lý LOCI</dt><dd>− {vnd(fee)}</dd></div>}
+              <div className="sum"><dt>{resultLabel}</dt><dd className={sign(headline)}>{vnd(headline)}</dd></div>
+            </dl>
+          </section>
+
+          <div className="cards">
+            <div className="stat"><span className="lbl">Đã thu đến hôm qua</span><span className="v">{vnd(sum("revenuePast"))}</span><span className="s">Tiền phòng các đêm khách đã ở</span></div>
+            <div className="stat"><span className="lbl">Đêm khách đã ở</span><span className="v">{sum("soldPast")}</span><span className="s">Trên tổng {availAll} đêm của tháng</span></div>
+            <div className="stat"><span className="lbl">Đêm đã có khách đặt</span><span className="v">{sum("bookedFuture")}</span><span className="s">Từ hôm nay đến cuối tháng</span></div>
+            <div className="stat"><span className="lbl">Chi phí đã ghi nhận</span><span className="v">{vnd(sum("actualCost"))}</span><span className="s">Các khoản đã nhập trong tháng</span></div>
+          </div>
+
+          <h2 className="section-title">Từng cơ sở</h2>
+          <div className="prop-list">
+            {lines.map((l) => {
+              const total = avail[l.propertyId] ?? 0;
+              const free = Math.max(0, total - l.soldPast - l.bookedFuture);
+              return (
+                <article key={l.propertyId} className="prop">
+                  <h3>{props.find((p) => p.id === l.propertyId)?.name}</h3>
+                  <div><span className="lbl">Doanh thu dự kiến</span><div className="amt">{vnd(l.revenueForecast)}</div></div>
+                  <div className="nights" role="img" aria-label={`${l.soldPast} đêm đã ở, ${l.bookedFuture} đêm đã đặt, ${free} đêm còn trống`}>
+                    <i className="sold" style={{ width: `${pctOf(l.soldPast, total)}%` }} />
+                    <i className="booked" style={{ width: `${pctOf(l.bookedFuture, total)}%` }} />
+                  </div>
+                  <div className="legend">
+                    <span><i className="dot sold" /><b>{l.soldPast}</b> đêm đã ở</span>
+                    <span><i className="dot booked" /><b>{l.bookedFuture}</b> đã đặt</span>
+                    <span><i className="dot free" /><b>{free}</b> còn trống</span>
+                  </div>
+                  <div className="kv"><span>Đã thu đến hôm qua</span><b>{vnd(l.revenuePast)}</b></div>
+                  <div className="kv"><span>Giá trung bình mỗi đêm</span><b>{vnd(l.adrUsed)}</b></div>
+                </article>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <div className="grid g2" style={{ marginTop: 24 }}>
         {showFee && (
           <section className="panel">
-            <header><h2>Hoàn vốn</h2></header>
-            {forecasts.map(({ inv, pb }) => pb && (
-              <div key={inv.id} className="stack" style={{ gap: 6, marginBottom: 12 }}>
-                <div className="row"><b>{inv.name}</b><span className="spacer" /><span className="num small">{vnd(pb.received)} / {vnd(pb.investmentTotal)}</span></div>
-                <div className="progress"><i style={{ width: `${pb.investmentTotal ? Math.min(100, Math.max(0, (pb.received / pb.investmentTotal) * 100)) : 0}%` }} /></div>
-                <div className="small muted">{pb.monthsLeft === null ? "Chưa xác định thời gian hoàn vốn" : pb.monthsLeft === 0 ? "Đã hoàn vốn" : `Dự kiến còn ${pb.monthsLeft} tháng`}</div>
-              </div>
-            ))}
+            <header><div><h2>Hoàn vốn</h2><p>Tính trên các tháng đã khóa sổ</p></div></header>
+            <div className="stack" style={{ gap: 24 }}>
+              {forecasts.map(({ inv, pb }) => pb && (
+                <div key={inv.id} className="stack" style={{ gap: 8 }}>
+                  <div className="row"><b>{inv.name}</b><span className="spacer" /><span className="pill ok">{pctOf(pb.received, pb.investmentTotal)}%</span></div>
+                  <div className="progress"><i style={{ width: `${pb.investmentTotal ? Math.min(100, Math.max(0, (pb.received / pb.investmentTotal) * 100)) : 0}%` }} /></div>
+                  <div className="kv"><span>Đã nhận về</span><b>{vnd(pb.received)}</b></div>
+                  <div className="kv"><span>Vốn đầu tư</span><b>{vnd(pb.investmentTotal)}</b></div>
+                  <div className="small muted">{pb.monthsLeft === null ? "Chưa đủ dữ liệu để ước tính thời gian hoàn vốn" : pb.monthsLeft === 0 ? "Đã hoàn vốn" : `Dự kiến còn khoảng ${pb.monthsLeft} tháng nữa`}</div>
+                </div>
+              ))}
+            </div>
           </section>
         )}
+        <section className="panel">
+          <header><h2>Hôm nay</h2></header>
+          <div className="kv"><span>Khách nhận phòng</span><b>{ci.length}</b></div>
+          {ci.length > 0 && <p className="small muted" style={{ margin: "4px 0 12px" }}>{ci.map((b) => b.guestName ?? "Khách").join(", ")}</p>}
+          <div className="kv" style={{ marginTop: 8 }}><span>Khách trả phòng</span><b>{co.length}</b></div>
+          {co.length > 0 && <p className="small muted" style={{ margin: "4px 0 0" }}>{co.map((b) => b.guestName ?? "Khách").join(", ")}</p>}
+        </section>
+        <section className="panel">
+          <header><h2>Cần lưu ý</h2>{al.length > 0 && <span className="pill warn">{al.length}</span>}</header>
+          {al.length ? al.map((a) => <div key={a.id} className={`banner ${a.type === "TASK_OVERDUE" ? "bad" : ""}`}>{a.message}</div>) : <p className="small muted" style={{ margin: 0 }}>Không có gì cần lưu ý.</p>}
+        </section>
       </div>
     </>
   );
