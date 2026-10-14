@@ -101,7 +101,7 @@ function InvestorCard({ inv, props, bookings, onEdit }: { inv: InvestorConnectio
   const synced = bookings > 0 || !!sync?.summary?.created;
   // 4 bước kết nối; bước đang làm là bước đầu tiên chưa xong
   const steps: { label: string; note: string; done: boolean }[] = [
-    { label: "Thông tin kết nối", note: ready ? `Host ID ${inv.hostId} · token ${inv.tokenHint}` : "Thiếu host ID hoặc token", done: ready },
+    { label: "Thông tin kết nối", note: ready ? "Đã có host ID và token" : "Thiếu host ID hoặc token", done: ready },
     { label: "Kiểm tra kết nối", note: test?.ok ? `Thấy ${test.listings.length} listing` : test ? "Chưa kết nối được" : mapped ? "Đã kết nối được" : "Chưa kiểm tra", done: !!test?.ok || mapped > 0 },
     { label: "Gắn listing với phòng", note: mapped ? `${mapped} phòng đã gắn` : "Chưa gắn phòng nào", done: mapped > 0 },
     { label: "Đồng bộ đơn", note: synced ? `${bookings + (sync?.summary?.created ?? 0)} đơn đã về` : "Chưa có đơn nào", done: synced },
