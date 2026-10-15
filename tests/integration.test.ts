@@ -13,8 +13,9 @@ import { getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } f
 import { syncBookings } from "../lib/dayladau/sync";
 import { createRoom, listConnections, mapListingToRoom, saveInvestorConnection, testConnection } from "../lib/dayladau/admin";
 import { addTaskPhoto, createTask, setTaskStatus, updateChecklist } from "../lib/services/tasks";
-import { updateRoom } from "../lib/services/rooms";
+import { createRoom as createRoomInProperty, updateRoom } from "../lib/services/rooms";
 import { buildInvestorReport } from "../lib/services/investor-report";
+import { setPropertyActive, updateProperty, type UpdatePropertyInput } from "../lib/services/properties";
 
 let db: DB;
 const admin: SessionUser = { id: "u-admin", name: "Admin", role: "ADMIN" };
@@ -277,5 +278,67 @@ describe("Quản trị kết nối Dayladau", () => {
   it("kết nối lỗi trả thông báo, không ném lỗi", async () => {
     const t = await testConnection(db, admin, "inv-b", { fetchPage: async () => { throw new Error("Host ID hoặc access token không hợp lệ (HTTP 401)"); }, decrypt: dec });
     expect(t).toMatchObject({ ok: false, error: expect.stringMatching(/không hợp lệ/) });
+  });
+});
+
+describe("Phòng: tên không được để trống", () => {
+  it("tạo phòng: chặn tên rỗng, cắt khoảng trắng hai đầu", async () => {
+    await expect(createRoomInProperty(db, admin, { propertyId: "Z", name: "   ", openedOn: "2026-01-01" })).rejects.toMatchObject({ status: 400, message: "Nhập tên phòng" });
+    const r = await createRoomInProperty(db, admin, { propertyId: "Z", name: "  P201  ", openedOn: "2026-01-01" });
+    expect(r.name).toBe("P201");
+  });
+
+  it("sửa phòng: chặn tên rỗng, cắt khoảng trắng hai đầu", async () => {
+    await expect(updateRoom(db, admin, "Z2", { name: "" })).rejects.toMatchObject({ status: 400, message: "Nhập tên phòng" });
+    expect((await updateRoom(db, admin, "Z2", { name: " P102A " })).name).toBe("P102A");
+  });
+});
+
+describe("Cơ sở: sửa thông tin, ngưng / mở lại", () => {
+  const base: UpdatePropertyInput = {
+    name: "Cơ sở thử", address: null, investmentAmount: 0, investmentStartMonth: null,
+    occupancyKpiPct: 70, variableCostPerNight: 0, fixedCostMonthly: 0,
+  };
+
+  beforeAll(async () => {
+    await db.insert(schema.properties).values({ id: "W", investorId: "inv-b", name: "Cơ sở thử" });
+    await db.insert(schema.rooms).values({ id: "W1", propertyId: "W", name: "P101", openedOn: "2026-01-01" });
+  });
+
+  it("chỉ admin được sửa", async () => {
+    await expect(updateProperty(db, acc, "W", base)).rejects.toMatchObject({ status: 403 });
+    await expect(setPropertyActive(db, invB, "W", false, "2026-08-01")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("kiểm tra dữ liệu nhập", async () => {
+    await expect(updateProperty(db, admin, "W", { ...base, name: "  " })).rejects.toThrow(/Nhập tên cơ sở/);
+    await expect(updateProperty(db, admin, "W", { ...base, occupancyKpiPct: 101 })).rejects.toThrow(/KPI/);
+    await expect(updateProperty(db, admin, "W", { ...base, occupancyKpiPct: -1 })).rejects.toThrow(/KPI/);
+    await expect(updateProperty(db, admin, "W", { ...base, investmentStartMonth: "2026-7" })).rejects.toThrow(/Tháng bắt đầu/);
+    await expect(updateProperty(db, admin, "khong-co", base)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("lưu thông tin, cắt khoảng trắng, địa chỉ rỗng thành null", async () => {
+    const row = await updateProperty(db, admin, "W", {
+      ...base, name: " Cơ sở W ", address: "   ", investmentAmount: 300_000_000, investmentStartMonth: "2026-09", occupancyKpiPct: 80,
+    });
+    expect(row).toMatchObject({ name: "Cơ sở W", address: null, investmentAmount: 300_000_000, investmentStartMonth: "2026-09", occupancyKpiPct: 80 });
+    expect((await updateProperty(db, admin, "W", { ...base, address: " 12 Hàng Bạc " })).address).toBe("12 Hàng Bạc");
+  });
+
+  it("không ngưng được khi còn đơn chưa trả phòng; đơn đã huỷ hoặc đã trả thì được", async () => {
+    await db.insert(schema.bookings).values([
+      { id: "bw-open", source: "MANUAL", propertyId: "W", roomId: "W1", channel: "Trực tiếp", checkIn: "2026-08-10", checkOut: "2026-08-12", status: "CONFIRMED" },
+      { id: "bw-cancel", source: "MANUAL", propertyId: "W", roomId: "W1", channel: "Trực tiếp", checkIn: "2026-08-20", checkOut: "2026-08-22", status: "CANCELLED" },
+    ]);
+    await expect(setPropertyActive(db, admin, "W", false, "2026-08-01")).rejects.toThrow(/chưa trả phòng/);
+    // Ngày trả phòng = hôm nay coi như đã trả
+    expect((await setPropertyActive(db, admin, "W", false, "2026-08-12")).active).toBe(false);
+    await expect(createRoomInProperty(db, admin, { propertyId: "W", name: "P102", openedOn: "2026-08-12" })).rejects.toThrow(/ngưng hoạt động/);
+    expect((await setPropertyActive(db, admin, "W", true, "2026-08-12")).active).toBe(true);
+  });
+
+  it("cơ sở không tồn tại trả 404", async () => {
+    await expect(setPropertyActive(db, admin, "khong-co", true, "2026-08-01")).rejects.toMatchObject({ status: 404 });
   });
 });
