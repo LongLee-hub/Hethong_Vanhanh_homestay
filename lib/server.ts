@@ -1,4 +1,5 @@
 // Tiện ích phía máy chủ cho trang và route API.
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
@@ -7,10 +8,11 @@ import { getDb } from "./db";
 import { HttpError, type SessionUser } from "./auth/access";
 import { SESSION_COOKIE, readSessionToken, refreshUser } from "./auth/session";
 
-export async function currentUser(): Promise<SessionUser | null> {
+// cache: layout và trang cùng gọi trong một lượt tải, chỉ hỏi DB một lần
+export const currentUser = cache(async (): Promise<SessionUser | null> => {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   return refreshUser(getDb(), await readSessionToken(token));
-}
+});
 
 /** Dùng trong trang: chưa đăng nhập thì chuyển về /login. */
 export async function requireUser(): Promise<SessionUser> {

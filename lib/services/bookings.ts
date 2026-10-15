@@ -8,14 +8,14 @@ import { assertPropertyAccess, badRequest, notFound, requirePermission, type Ses
 export type BookingRow = typeof bookings.$inferSelect;
 export type BookingInput = Omit<typeof bookings.$inferInsert, "id"> & { id?: string };
 
-const TRACKED = ["roomId", "checkIn", "checkOut", "grossAmount", "commissionAmount", "netAmount", "status"] as const;
+const TRACKED = ["roomId", "checkIn", "checkOut", "grossAmount", "commissionAmount", "netAmount", "status", "rentalType"] as const;
 
 function snapshot(b: Pick<BookingRow, (typeof TRACKED)[number]>) {
-  return Object.fromEntries(TRACKED.map((k) => [k, b[k]]));
+  return Object.fromEntries(TRACKED.map((k) => [k, b[k] ?? null]));
 }
 
-function toLite(b: Pick<BookingRow, "id" | "propertyId" | "roomId" | "checkIn" | "checkOut" | "netAmount" | "status">): D.BookingLite {
-  return { id: b.id, propertyId: b.propertyId, roomId: b.roomId, checkIn: b.checkIn, checkOut: b.checkOut, netAmount: b.netAmount, status: b.status };
+function toLite(b: Pick<BookingRow, "id" | "propertyId" | "roomId" | "checkIn" | "checkOut" | "netAmount" | "status" | "rentalType">): D.BookingLite {
+  return { id: b.id, propertyId: b.propertyId, roomId: b.roomId, checkIn: b.checkIn, checkOut: b.checkOut, netAmount: b.netAmount, status: b.status, rentalType: b.rentalType };
 }
 
 async function investorOf(tx: DB, propertyId: string): Promise<string> {
@@ -77,7 +77,7 @@ export async function upsertBooking(db: DB, input: BookingInput, changedBy: stri
     await t.delete(bookingNights).where(eq(bookingNights.bookingId, id));
     const newNights = D.splitNights(toLite(next));
     if (newNights.length) {
-      await t.insert(bookingNights).values(newNights.map((n) => ({ bookingId: id, propertyId: n.propertyId, roomId: n.roomId, nightDate: n.nightDate, netAmount: n.netAmount })));
+      await t.insert(bookingNights).values(newNights.map((n) => ({ bookingId: id, propertyId: n.propertyId, roomId: n.roomId, nightDate: n.nightDate, netAmount: n.netAmount, kind: n.kind ?? "NIGHT" })));
     }
 
     // 5.6: điều chỉnh cho tháng đã khóa
@@ -124,7 +124,7 @@ export async function saveManualBooking(
     if (user.role !== "ADMIN" && prev.createdById !== user.id) throw badRequest("Chỉ người tạo đơn hoặc Admin được sửa");
     if (await touchesLockedMonth(db, prev)) throw badRequest("Đơn có đêm thuộc tháng đã khóa sổ");
   }
-  const draft = { id: input.id ?? "new", propertyId: input.propertyId, roomId: input.roomId, checkIn: input.checkIn, checkOut: input.checkOut, netAmount: input.amount, status: input.status };
+  const draft = { id: input.id ?? "new", propertyId: input.propertyId, roomId: input.roomId, checkIn: input.checkIn, checkOut: input.checkOut, netAmount: input.amount, status: input.status, rentalType: null };
   if (await touchesLockedMonth(db, draft)) throw badRequest("Đơn có đêm rơi vào tháng đã khóa sổ");
 
   if (input.status === "CONFIRMED") {

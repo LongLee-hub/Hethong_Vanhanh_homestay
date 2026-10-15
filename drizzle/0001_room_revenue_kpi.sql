@@ -1,0 +1,1 @@
+ALTER TABLE "rooms" ADD COLUMN "revenue_kpi_monthly" bigint DEFAULT 0 NOT NULL;

@@ -8,8 +8,10 @@ import { allowedInvestorIds, allowedPropertyIds, assertPropertyAccess, type Sess
 export async function visibleProperties(db: DB, user: SessionUser) {
   const ids = await allowedPropertyIds(db, user);
   if (!ids.length) return [];
-  const props = await db.select().from(properties).where(inArray(properties.id, ids)).orderBy(asc(properties.name));
-  const rs = await db.select().from(rooms).where(inArray(rooms.propertyId, ids)).orderBy(asc(rooms.name));
+  const [props, rs] = await Promise.all([
+    db.select().from(properties).where(inArray(properties.id, ids)).orderBy(asc(properties.name)),
+    db.select().from(rooms).where(inArray(rooms.propertyId, ids)).orderBy(asc(rooms.name)),
+  ]);
   return props.map((p) => ({ ...p, rooms: rs.filter((r) => r.propertyId === p.id) }));
 }
 

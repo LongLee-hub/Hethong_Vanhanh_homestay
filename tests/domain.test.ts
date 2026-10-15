@@ -62,10 +62,23 @@ describe("5.1 Phân bổ doanh thu theo đêm", () => {
     expect(splitNights(bk({ status: "CANCELLED", netAmount: 0 }))).toEqual([]);
   });
 
-  it("đơn hủy có phí: ghi vào đêm check-in", () => {
+  it("đơn hủy có phí: ghi vào ngày check-in, loại phí hủy", () => {
     const n = splitNights(bk({ status: "CANCELLED", checkOut: "2026-09-14", netAmount: 500_000 }));
     expect(n).toHaveLength(1);
-    expect(n[0]).toMatchObject({ nightDate: "2026-09-10", netAmount: 500_000 });
+    expect(n[0]).toMatchObject({ nightDate: "2026-09-10", netAmount: 500_000, kind: "CANCEL_FEE" });
+  });
+
+  it("thuê giờ: một lượt vào ngày nhận phòng", () => {
+    for (const rentalType of ["hourly_rental", "special_offer_time_rental"]) {
+      const n = splitNights(bk({ rentalType, checkIn: "2026-09-10", checkOut: "2026-09-11", netAmount: 300_000 }));
+      expect(n).toEqual([expect.objectContaining({ nightDate: "2026-09-10", netAmount: 300_000, kind: "HOURLY" })]);
+    }
+  });
+
+  it("qua đêm ngắn và thuê theo ngày vẫn là đêm bán", () => {
+    for (const rentalType of ["night_short_rental", "nightly_rental", "daily_rental", null]) {
+      expect(splitNights(bk({ rentalType }))[0].kind).toBe("NIGHT");
+    }
   });
 
   it("từ chối số thực", () => {
@@ -93,6 +106,20 @@ describe("5.2 Chỉ số vận hành", () => {
     expect(k.occupancyPct).toBe(25);
     expect(k.adr).toBe(1_000_000);
     expect(k.revpar).toBe(250_000);
+  });
+
+  it("lượt thuê giờ và phí hủy có doanh thu nhưng không tính vào công suất", () => {
+    const r = rooms("X", 1);
+    const nights = [
+      ...splitNights(bk({ id: "n", checkIn: "2026-09-10", checkOut: "2026-09-11", netAmount: 1_000_000 })),
+      ...splitNights(bk({ id: "h", rentalType: "hourly_rental", checkIn: "2026-09-10", checkOut: "2026-09-11", netAmount: 300_000 })),
+      ...splitNights(bk({ id: "c", status: "CANCELLED", checkIn: "2026-09-12", checkOut: "2026-09-13", netAmount: 200_000 })),
+    ];
+    const k = computeKpis(nights, r, "2026-09-01", "2026-09-30");
+    expect(k.revenue).toBe(1_500_000);
+    expect(k.soldNights).toBe(1);
+    expect(k.hourlyCount).toBe(1);
+    expect(k.adr).toBe(1_000_000);
   });
 
   it("nhóm lead time", () => {
@@ -288,27 +315,45 @@ describe("5.8 Dự kiến", () => {
   it("ngày 1: chưa có đêm nào, dùng ADR tháng trước", () => {
     const x = f("2026-09-01", []);
     expect(x.revenuePast).toBe(0);
-    expect(x.emptyRemaining).toBe(60);
+    // Đêm 1/9 đã tính là đã qua (trống), còn 29 ngày × 2 phòng
+    expect(x.emptyRemaining).toBe(58);
     expect(x.adrUsed).toBe(1_000_000);
-    expect(x.revenueForecast).toBe(30_000_000);
-    expect(x.costForecast).toBe(10_000_000 + 3_000_000 + 1_000_000);
+    expect(x.revenueForecast).toBe(29_000_000);
+    expect(x.costForecast).toBe(10_000_000 + 2_900_000 + 1_000_000);
   });
 
-  it("giữa tháng", () => {
+  it("giữa tháng: đêm hôm nay đã tính vào doanh thu (Quy chế, Điều 1)", () => {
     const sep = splitNights(bk({ id: "s", checkIn: "2026-09-01", checkOut: "2026-09-21", netAmount: 24_000_000 }));
     const x = f("2026-09-16", sep);
-    expect(x.soldPast).toBe(15);
-    expect(x.bookedFuture).toBe(5);
-    expect(x.emptyRemaining).toBe(30 - 5);
+    expect(x.soldPast).toBe(16);
+    expect(x.revenuePast).toBe(16 * 1_200_000);
+    expect(x.bookedFuture).toBe(4);
+    expect(x.emptyRemaining).toBe(28 - 4);
     expect(x.adrUsed).toBe(1_200_000);
-    expect(x.revenueForecast).toBe(24_000_000 + Math.floor(25 * 0.5 * 1_200_000));
+    expect(x.revenueForecast).toBe(24_000_000 + Math.floor(24 * 0.5 * 1_200_000));
+  });
+
+  it("khách nhận phòng hôm nay: đêm nay có trong doanh thu đến hôm nay", () => {
+    const sep = splitNights(bk({ id: "s", checkIn: "2026-09-16", checkOut: "2026-09-18", netAmount: 2_000_000 }));
+    const x = f("2026-09-16", sep);
+    expect(x.revenuePast).toBe(1_000_000);
+    expect(x.soldPast).toBe(1);
+    expect(x.bookedFuture).toBe(1);
+  });
+
+  it("thuê giờ hôm nay: có doanh thu, không tính đêm bán", () => {
+    const sep = splitNights(bk({ id: "h", rentalType: "hourly_rental", checkIn: "2026-09-16", checkOut: "2026-09-17", netAmount: 300_000 }));
+    const x = f("2026-09-16", sep);
+    expect(x.revenuePast).toBe(300_000);
+    expect(x.soldPast).toBe(0);
+    expect(x.hourlyPast).toBe(1);
   });
 
   it("cuối tháng", () => {
     const sep = splitNights(bk({ id: "s", checkIn: "2026-09-01", checkOut: "2026-09-30", netAmount: 29_000_000 }));
     const x = f("2026-09-30", sep);
     expect(x.bookedFuture).toBe(0);
-    expect(x.emptyRemaining).toBe(2);
+    expect(x.emptyRemaining).toBe(0);
     expect(x.revenuePast).toBe(29_000_000);
   });
 });

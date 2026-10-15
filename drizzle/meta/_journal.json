@@ -8,6 +8,20 @@
       "when": 1790743930270,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792038335205,
+      "tag": "0001_room_revenue_kpi",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792040164035,
+      "tag": "0002_revenue_policy",
+      "breakpoints": true
     }
   ]
 }

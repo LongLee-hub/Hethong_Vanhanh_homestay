@@ -10,12 +10,12 @@ import { visibleInvestors, visibleProperties } from "@/lib/queries";
 import { vnd } from "@/components/MonthNav";
 import { ActionForm } from "@/components/ActionForm";
 import {
-  closeRoomAction, createPropertyAction, renameRoomAction, reopenRoomAction,
+  closeRoomAction, createPropertyAction, renameRoomAction, reopenRoomAction, setRoomKpiAction,
   setPropertyActiveAction, transferRoomAction, updatePropertyAction,
 } from "./actions";
 import { AddRoom } from "./add-room";
 
-type Room = { id: string; name: string; dayladauRoomId: string | null; openedOn: string; closedOn: string | null };
+type Room = { id: string; name: string; dayladauRoomId: string | null; openedOn: string; closedOn: string | null; revenueKpiMonthly: number };
 
 function roomStatus(r: Room, today: string) {
   if (r.closedOn && r.closedOn <= today) return <span className="pill">Đã đóng từ {D.formatDateVN(r.closedOn)}</span>;
@@ -107,6 +107,7 @@ export default async function Properties({ searchParams }: { searchParams: Promi
                     <>
                       <b>{r.name}</b>
                       <span className="small muted">{r.dayladauRoomId ? `Listing ${r.dayladauRoomId}` : "Chưa gắn listing"}</span>
+                      {showMoney && <span className="small muted">KPI {r.revenueKpiMonthly ? `${vnd(r.revenueKpiMonthly)}/tháng` : "chưa đặt"}</span>}
                       <span className="spacer" />
                       {roomStatus(r, today)}
                     </>
@@ -120,6 +121,10 @@ export default async function Properties({ searchParams }: { searchParams: Promi
                             <ActionForm action={renameRoomAction} submit="Đổi tên" okText="Đã đổi tên" className="row">
                               <input type="hidden" name="roomId" value={r.id} />
                               <input type="text" name="name" id={`name-${r.id}`} defaultValue={r.name} required aria-label="Tên phòng" />
+                            </ActionForm>
+                            <ActionForm action={setRoomKpiAction} submit="Lưu KPI" okText="Đã lưu KPI" className="row">
+                              <input type="hidden" name="roomId" value={r.id} />
+                              <input type="text" inputMode="numeric" name="revenueKpiMonthly" id={`kpi-${r.id}`} defaultValue={r.revenueKpiMonthly || ""} placeholder="11.000.000" aria-label="KPI doanh thu / tháng (VND)" />
                             </ActionForm>
                             {!closed && targets.length > 0 && (
                               <ActionForm action={transferRoomAction} submit="Chuyển cơ sở" okText="Đã chuyển" className="row">

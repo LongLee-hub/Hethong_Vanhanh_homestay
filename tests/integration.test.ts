@@ -1,6 +1,6 @@
 // Test tích hợp trên PostgreSQL nhúng (PGlite): chạy migration thật, gọi service thật.
 import { beforeAll, describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { and, eq } from "drizzle-orm";
@@ -13,6 +13,8 @@ import { getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } f
 import { syncBookings } from "../lib/dayladau/sync";
 import { createRoom, listConnections, mapListingToRoom, saveInvestorConnection, testConnection } from "../lib/dayladau/admin";
 import { addTaskPhoto, createTask, setTaskStatus, updateChecklist } from "../lib/services/tasks";
+import { updateRoom } from "../lib/services/rooms";
+import { buildInvestorReport } from "../lib/services/investor-report";
 
 let db: DB;
 const admin: SessionUser = { id: "u-admin", name: "Admin", role: "ADMIN" };
@@ -24,8 +26,10 @@ const mgr: SessionUser = { id: "u-mgr", name: "Quản lý", role: "MANAGER" };
 
 beforeAll(async () => {
   const pg = new PGlite();
-  const sql = readFileSync(new URL("../drizzle/0000_init.sql", import.meta.url), "utf8");
-  for (const stmt of sql.split("--> statement-breakpoint")) if (stmt.trim()) await pg.exec(stmt);
+  for (const file of readdirSync(new URL("../drizzle/", import.meta.url)).filter((f) => f.endsWith(".sql")).sort()) {
+    const sql = readFileSync(new URL(`../drizzle/${file}`, import.meta.url), "utf8");
+    for (const stmt of sql.split("--> statement-breakpoint")) if (stmt.trim()) await pg.exec(stmt);
+  }
   db = drizzle(pg, { schema }) as unknown as DB;
   const s = schema;
   await db.insert(s.users).values([
@@ -117,6 +121,19 @@ describe("Doanh thu, chi phí, quyết toán (giai đoạn 2)", () => {
     const p = await paybackForInvestor(db, invA, "inv-a");
     expect(p.received).toBe(20_000_000);
     expect(p.remaining).toBe(580_000_000);
+  });
+
+  it("báo cáo NĐT: doanh thu từng phòng, dự kiến và KPI", async () => {
+    await expect(updateRoom(db, acc, "X1", { revenueKpiMonthly: 50_000_000 })).rejects.toMatchObject({ status: 403 });
+    await updateRoom(db, admin, "X1", { revenueKpiMonthly: 50_000_000 });
+    const r = await buildInvestorReport(db, invA, "inv-a", "2026-08", null);
+    expect(r.rooms.elapsedDays).toBe(31); // tháng đã qua → đủ tháng, dự kiến = thực tế
+    expect(r.rooms.rows).toEqual([
+      { roomId: "Y1", name: "Phan Kế Bính. P101", revenue: 1_000_000, projected: 1_000_000, kpi: 0 },
+      { roomId: "X1", name: "Vạn Phúc. P101", revenue: 40_000_000, projected: 40_000_000, kpi: 50_000_000 },
+    ]);
+    const one = await buildInvestorReport(db, invA, "inv-a", "2026-08", "X");
+    expect(one.rooms.rows.map((x) => x.roomId)).toEqual(["X1"]);
   });
 });
 

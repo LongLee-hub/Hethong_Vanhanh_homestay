@@ -35,7 +35,11 @@ export interface BookingLite {
   status: "CONFIRMED" | "CANCELLED";
   bookedAt?: ISODate | null;
   channel?: string;
+  rentalType?: string | null; // loại thuê Dayladau (type_rental); null = thuê theo đêm
 }
+
+/** NIGHT = đêm bán; HOURLY = lượt thuê giờ; CANCEL_FEE = phí hủy. Chỉ NIGHT tính vào công suất. */
+export type NightKind = "NIGHT" | "HOURLY" | "CANCEL_FEE";
 
 export interface NightLite {
   bookingId: string;
@@ -43,7 +47,13 @@ export interface NightLite {
   roomId: string;
   nightDate: ISODate;
   netAmount: number;
+  kind?: NightKind; // bỏ trống = NIGHT
 }
+
+/** Loại thuê Dayladau tính là lượt thuê giờ (Quy chế doanh thu, Điều 4). Qua đêm ngắn vẫn là đêm bán. */
+export const HOURLY_RENTAL_TYPES = ["hourly_rental", "special_offer_time_rental"];
+export const isHourlyRental = (t?: string | null) => !!t && HOURLY_RENTAL_TYPES.includes(t);
+const isSoldNight = (n: NightLite) => (n.kind ?? "NIGHT") === "NIGHT";
 
 export interface ExpenseLite {
   propertyId: string | null; // null = chi phí chung
@@ -67,15 +77,16 @@ function assertInt(n: number, label: string) {
  * Tách một đơn thành các đêm phòng.
  * - Đêm: checkIn .. checkOut-1
  * - Mỗi đêm = floor(net / số đêm), phần dư cộng vào đêm cuối.
- * - Đơn CANCELLED: không có đêm; nếu còn net > 0 (phí hủy) ghi toàn bộ vào đêm checkIn.
- *   TODO(CONFIRM): cách ghi nhận phí hủy.
+ * - Đơn CANCELLED: không có đêm; nếu còn net > 0 (phí hủy) ghi toàn bộ vào ngày checkIn, loại CANCEL_FEE.
+ * - Thuê giờ: một lượt HOURLY vào ngày checkIn, không tính là đêm bán.
  */
 export function splitNights(b: BookingLite): NightLite[] {
   assertInt(b.netAmount, "netAmount");
   const base = { bookingId: b.id, propertyId: b.propertyId, roomId: b.roomId };
   if (b.status === "CANCELLED") {
-    return b.netAmount > 0 ? [{ ...base, nightDate: b.checkIn, netAmount: b.netAmount }] : [];
+    return b.netAmount > 0 ? [{ ...base, nightDate: b.checkIn, netAmount: b.netAmount, kind: "CANCEL_FEE" }] : [];
   }
+  if (isHourlyRental(b.rentalType)) return [{ ...base, nightDate: b.checkIn, netAmount: b.netAmount, kind: "HOURLY" }];
   const n = diffDays(b.checkOut, b.checkIn);
   if (n <= 0) throw new Error(`Đơn ${b.id}: checkOut phải sau checkIn`);
   const per = Math.floor(b.netAmount / n);
@@ -86,6 +97,7 @@ export function splitNights(b: BookingLite): NightLite[] {
       ...base,
       nightDate: addDays(b.checkIn, i),
       netAmount: per + (i === n - 1 ? remainder : 0),
+      kind: "NIGHT",
     });
   }
   return nights;
@@ -111,6 +123,7 @@ export function availableNights(rooms: RoomLite[], from: ISODate, to: ISODate): 
 
 export interface Kpis {
   soldNights: number;
+  hourlyCount: number; // lượt thuê giờ, không tính vào công suất
   availableNights: number;
   revenue: number;
   occupancyPct: number; // 0..100, 1 chữ số thập phân
@@ -120,16 +133,19 @@ export interface Kpis {
 
 export function computeKpis(nights: NightLite[], rooms: RoomLite[], from: ISODate, to: ISODate): Kpis {
   const inRange = nightsInRange(nights, from, to);
-  // Phí hủy nằm trong bảng đêm nhưng vẫn đếm là 1 đêm bán theo đặc tả (số bản ghi BookingNight).
-  const sold = inRange.length;
+  // Doanh thu gồm cả lượt thuê giờ và phí hủy; công suất và giá trung bình/đêm chỉ xét đêm bán.
+  const soldList = inRange.filter(isSoldNight);
+  const sold = soldList.length;
   const avail = availableNights(rooms, from, to);
   const revenue = inRange.reduce((s, n) => s + n.netAmount, 0);
+  const nightRevenue = soldList.reduce((s, n) => s + n.netAmount, 0);
   return {
     soldNights: sold,
+    hourlyCount: inRange.filter((n) => n.kind === "HOURLY").length,
     availableNights: avail,
     revenue,
     occupancyPct: avail ? Math.round((sold / avail) * 1000) / 10 : 0,
-    adr: sold ? Math.floor(revenue / sold) : 0,
+    adr: sold ? Math.floor(nightRevenue / sold) : 0,
     revpar: avail ? Math.floor(revenue / avail) : 0,
   };
 }
@@ -366,8 +382,9 @@ export interface Forecast {
   revenueFutureBooked: number;
   revenueEstimatedEmpty: number;
   revenueForecast: number;
-  soldPast: number;
-  bookedFuture: number;
+  soldPast: number; // đêm bán từ đầu tháng tới hết đêm nay
+  hourlyPast: number; // lượt thuê giờ từ đầu tháng tới hôm nay
+  bookedFuture: number; // đêm bán đã đặt từ ngày mai tới cuối tháng
   emptyRemaining: number;
   expectedSold: number;
   costForecast: number;
@@ -387,24 +404,28 @@ export function forecastProperty(opts: {
   const { month, today, rooms, nights } = opts;
   const from = firstDay(month);
   const to = lastDay(month);
-  const past = nights.filter((n) => n.nightDate >= from && n.nightDate <= to && n.nightDate < today);
-  const futureFrom = today < from ? from : today;
+  // Quy chế doanh thu, Điều 1: đêm hôm nay tính là đã thực hiện (theo lịch nhận phòng).
+  const past = nights.filter((n) => n.nightDate >= from && n.nightDate <= to && n.nightDate <= today);
+  const tomorrow = addDays(today, 1);
+  const futureFrom = tomorrow < from ? from : tomorrow;
   const future = futureFrom > to ? [] : nightsInRange(nights, futureFrom, to);
+  const futureSold = future.filter(isSoldNight);
+  const pastSold = past.filter(isSoldNight);
   const availFuture = futureFrom > to ? 0 : availableNights(rooms, futureFrom, to);
-  const empty = Math.max(0, availFuture - future.length);
+  const empty = Math.max(0, availFuture - futureSold.length);
 
   const pm = prevMonth(month);
   const prevK = computeKpis(nights, rooms, firstDay(pm), lastDay(pm));
   const prevOcc = prevK.availableNights ? prevK.soldNights / prevK.availableNights : 0;
-  const curSold = past.length + future.length;
-  const curRev = [...past, ...future].reduce((s, n) => s + n.netAmount, 0);
+  const curSold = pastSold.length + futureSold.length;
+  const curRev = [...pastSold, ...futureSold].reduce((s, n) => s + n.netAmount, 0);
   const adr = curSold ? Math.floor(curRev / curSold) : prevK.adr;
 
   const estEmptyNights = empty * prevOcc;
   const estEmptyRevenue = Math.floor(estEmptyNights * adr);
   const revenuePast = past.reduce((s, n) => s + n.netAmount, 0);
   const revenueFuture = future.reduce((s, n) => s + n.netAmount, 0);
-  const expectedSold = past.length + future.length + estEmptyNights;
+  const expectedSold = curSold + estEmptyNights;
   const cost =
     opts.fixedCostMonthly + Math.floor(opts.variableCostPerNight * expectedSold) + opts.commonCost;
   return {
@@ -412,8 +433,9 @@ export function forecastProperty(opts: {
     revenueFutureBooked: revenueFuture,
     revenueEstimatedEmpty: estEmptyRevenue,
     revenueForecast: revenuePast + revenueFuture + estEmptyRevenue,
-    soldPast: past.length,
-    bookedFuture: future.length,
+    soldPast: pastSold.length,
+    hourlyPast: past.filter((n) => n.kind === "HOURLY").length,
+    bookedFuture: futureSold.length,
     emptyRemaining: empty,
     expectedSold: Math.round(expectedSold * 10) / 10,
     costForecast: cost,

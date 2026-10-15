@@ -42,6 +42,7 @@ export async function createRoom(db: DB, user: SessionUser, input: CreateRoomInp
 export interface UpdateRoomInput {
   name?: string;
   dayladauRoomId?: string | null;
+  revenueKpiMonthly?: number; // VND / tháng
 }
 
 export async function updateRoom(db: DB, user: SessionUser, roomId: string, input: UpdateRoomInput): Promise<RoomRow> {
@@ -56,6 +57,10 @@ export async function updateRoom(db: DB, user: SessionUser, roomId: string, inpu
     updates.name = input.name.trim();
   }
   if (input.dayladauRoomId !== undefined) updates.dayladauRoomId = input.dayladauRoomId;
+  if (input.revenueKpiMonthly !== undefined) {
+    if (!Number.isSafeInteger(input.revenueKpiMonthly) || input.revenueKpiMonthly < 0) throw badRequest("KPI doanh thu phải là số tiền không âm");
+    updates.revenueKpiMonthly = input.revenueKpiMonthly;
+  }
 
   if (Object.keys(updates).length === 0) return room;
 

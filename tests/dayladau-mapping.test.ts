@@ -41,10 +41,25 @@ describe("Map order Dayladau (theo script Apps Script)", () => {
     expect(mapDayladauOrder(order({ listing: { name: "P301" } })).listingKey).toBe("P301");
   });
 
-  it("đơn hủy: doanh thu 0", () => {
-    const m = mapDayladauOrder(order({ status: "cancelled_by_guest" }));
+  it("đơn hủy không còn tiền host: doanh thu 0", () => {
+    const m = mapDayladauOrder(order({ status: "cancelled_by_guest", total_billed: 0, items: [] }));
     expect(m.status).toBe("CANCELLED");
     expect(netOf(m).net).toBe(0);
+  });
+
+  it("đơn hủy có phí: doanh thu = host_amount (Quy chế, Điều 3)", () => {
+    // Như đơn 283875: giá phòng 335.300, hoàn khách 167.650, host 80%
+    const m = mapDayladauOrder(order({
+      status: "cancelled", total_billed: 142_650,
+      items: [
+        { type: "reservation", amount: 335_300, commission_rates: [{ type: "host", rate: 0.8 }] },
+        { type: "promotion_code", amount: -50_000, commission_rates: [{ type: "host", rate: 0 }] },
+        { type: "reservation", amount: -167_650, commission_rates: [{ type: "host", rate: 0.8 }] },
+        { type: "promotion_code", amount: 25_000, commission_rates: [{ type: "host", rate: 0 }] },
+      ],
+    }));
+    expect(m.status).toBe("CANCELLED");
+    expect(netOf(m)).toEqual({ net: 134_120, commission: 142_650 - 134_120 });
   });
 
   it("thuê theo giờ trong ngày → 1 đêm ngày nhận phòng", () => {

@@ -75,7 +75,7 @@ export async function syncBookings(
           {
             source: "DAYLADAU", externalId: m.externalId, propertyId: room.propertyId, roomId: room.id, channel: m.channel, guestName: m.guestName,
             bookedAt: m.bookedAt, checkIn: m.checkIn, checkOut: m.checkOut, grossAmount: m.grossAmount, commissionAmount: commission,
-            netAmount: net, status: m.status, rawPayload: raw, lastSyncedAt: new Date(),
+            netAmount: net, status: m.status, rentalType: m.rentalType, rawPayload: raw, lastSyncedAt: new Date(),
           },
           "SYNC",
         );

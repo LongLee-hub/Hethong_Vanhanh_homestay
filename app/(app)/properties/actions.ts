@@ -17,6 +17,7 @@ async function run(fn: Parameters<typeof action>[0]): Promise<State> {
   const r = await action(fn);
   revalidatePath("/properties");
   revalidatePath("/");
+  revalidatePath("/reports");
   return r;
 }
 
@@ -64,6 +65,11 @@ export async function createRoomAction(input: { propertyId: string; name: string
 export async function renameRoomAction(_: State, f: FormData): Promise<State> {
   const user = await requireUser();
   return run(() => updateRoom(getDb(), user, s(f, "roomId"), { name: s(f, "name") }));
+}
+
+export async function setRoomKpiAction(_: State, f: FormData): Promise<State> {
+  const user = await requireUser();
+  return run(() => updateRoom(getDb(), user, s(f, "roomId"), { revenueKpiMonthly: money(f, "revenueKpiMonthly") }));
 }
 
 export async function transferRoomAction(_: State, f: FormData): Promise<State> {

@@ -54,6 +54,7 @@ export const rooms = pgTable("rooms", {
   dayladauRoomId: text("dayladau_room_id").unique(),
   openedOn: day("opened_on").notNull(),
   closedOn: day("closed_on"),
+  revenueKpiMonthly: money("revenue_kpi_monthly"), // KPI doanh thu / tháng, 0 = chưa đặt
 });
 
 export const userPropertyAccess = pgTable(
@@ -86,6 +87,7 @@ export const bookings = pgTable(
     commissionAmount: money("commission_amount"),
     netAmount: money("net_amount"),
     status: bookingStatusEnum("status").notNull(),
+    rentalType: text("rental_type"), // type_rental của Dayladau; null = thuê theo đêm
     transferProofUrl: text("transfer_proof_url"),
     rawPayload: jsonb("raw_payload"),
     createdById: text("created_by_id"),
@@ -93,6 +95,8 @@ export const bookings = pgTable(
   },
   (t) => [index("bookings_prop_checkin").on(t.propertyId, t.checkIn)],
 );
+
+export const nightKindEnum = pgEnum("night_kind", ["NIGHT", "HOURLY", "CANCEL_FEE"]);
 
 export const bookingNights = pgTable(
   "booking_nights",
@@ -103,6 +107,7 @@ export const bookingNights = pgTable(
     roomId: text("room_id").notNull(),
     nightDate: day("night_date").notNull(),
     netAmount: money("net_amount"),
+    kind: nightKindEnum("kind").notNull().default("NIGHT"), // chỉ NIGHT tính vào công suất
   },
   (t) => [uniqueIndex("nights_booking_date").on(t.bookingId, t.nightDate), index("nights_prop_date").on(t.propertyId, t.nightDate)],
 );

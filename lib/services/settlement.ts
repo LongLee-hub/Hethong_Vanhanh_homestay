@@ -13,65 +13,96 @@ export async function isCommonFinalized(db: DB, month: string): Promise<boolean>
   return !!p?.commonCostsFinalized;
 }
 
-async function allRooms(db: DB): Promise<D.RoomLite[]> {
-  return (await db.select().from(rooms)).map((r) => ({ id: r.id, propertyId: r.propertyId, openedOn: r.openedOn, closedOn: r.closedOn }));
+/** Dữ liệu một NĐT cần để tính quyết toán/dự kiến cho các tháng `months`, lấy trong một lượt hỏi DB (các câu chạy song song). */
+interface InvestorData {
+  props: (typeof properties.$inferSelect)[];
+  rooms: D.RoomLite[]; // toàn hệ thống, để chia chi phí chung
+  nights: D.NightLite[];
+  expenses: D.ExpenseLite[]; // các tháng `months` và tháng liền trước mỗi tháng
+  adjustments: D.AdjustmentLite[];
+  finalized: Set<string>; // tháng đã chốt chi phí chung
+  pct: number;
 }
 
-async function nightsBetween(db: DB, propertyIds: string[], from: string, to: string): Promise<D.NightLite[]> {
-  if (!propertyIds.length) return [];
-  const rows = await db
-    .select()
-    .from(bookingNights)
-    .where(and(inArray(bookingNights.propertyId, propertyIds), gte(bookingNights.nightDate, from), lte(bookingNights.nightDate, to)));
-  return rows.map((n) => ({ bookingId: n.bookingId, propertyId: n.propertyId, roomId: n.roomId, nightDate: n.nightDate, netAmount: n.netAmount }));
+async function loadInvestorData(db: DB, investorId: string, months: string[], nightsFrom?: string): Promise<InvestorData> {
+  const ms = [...months].sort();
+  const expMonths = [...new Set(ms.flatMap((m) => [D.prevMonth(m), m]))];
+  const invProps = db.select({ id: properties.id }).from(properties).where(eq(properties.investorId, investorId));
+  const [props, roomRows, nightRows, exps, adjs, periods, pct] = await Promise.all([
+    db.select().from(properties).where(eq(properties.investorId, investorId)),
+    db.select().from(rooms),
+    db
+      .select()
+      .from(bookingNights)
+      .where(and(inArray(bookingNights.propertyId, invProps), gte(bookingNights.nightDate, nightsFrom ?? D.firstDay(ms[0])), lte(bookingNights.nightDate, D.lastDay(ms[ms.length - 1])))),
+    db
+      .select({ propertyId: expenses.propertyId, month: expenses.month, amount: expenses.amount })
+      .from(expenses)
+      .where(and(inArray(expenses.month, expMonths), or(isNull(expenses.propertyId), inArray(expenses.propertyId, invProps)))),
+    db.select().from(adjustments).where(and(inArray(adjustments.propertyId, invProps), inArray(adjustments.appliedMonth, ms))),
+    db.select().from(monthPeriods).where(inArray(monthPeriods.month, ms)),
+    feePct(db),
+  ]);
+  return {
+    props,
+    rooms: roomRows.map((r) => ({ id: r.id, propertyId: r.propertyId, openedOn: r.openedOn, closedOn: r.closedOn })),
+    nights: nightRows.map((n) => ({ bookingId: n.bookingId, propertyId: n.propertyId, roomId: n.roomId, nightDate: n.nightDate, netAmount: n.netAmount, kind: n.kind })),
+    expenses: exps,
+    adjustments: adjs.map((a) => ({ propertyId: a.propertyId, appliedMonth: a.appliedMonth, amount: a.amount })),
+    finalized: new Set(periods.filter((p) => p.commonCostsFinalized).map((p) => p.month)),
+    pct,
+  };
 }
 
-async function expensesFor(db: DB, months: string[], propertyIds: string[]): Promise<D.ExpenseLite[]> {
-  const rows = await db
-    .select({ propertyId: expenses.propertyId, month: expenses.month, amount: expenses.amount })
-    .from(expenses)
-    .where(and(inArray(expenses.month, months), or(isNull(expenses.propertyId), propertyIds.length ? inArray(expenses.propertyId, propertyIds) : undefined)));
-  return rows;
+function settleFrom(d: InvestorData, month: string): D.InvestorSettlement {
+  return D.settleInvestorMonth({
+    month, propertyIds: d.props.map((p) => p.id), rooms: d.rooms, nights: d.nights, expenses: d.expenses,
+    adjustments: d.adjustments, commonFinalized: d.finalized.has(month), feePct: d.pct,
+  });
 }
 
 /** Tính quyết toán từ dữ liệu hiện tại (không đọc bản đã khóa). */
 export async function computeSettlement(db: DB, investorId: string, month: string): Promise<D.InvestorSettlement> {
-  const pids = (await db.select({ id: properties.id }).from(properties).where(eq(properties.investorId, investorId))).map((r) => r.id);
-  const roomsAll = await allRooms(db);
-  const nights = await nightsBetween(db, pids, D.firstDay(month), D.lastDay(month));
-  const exps = await expensesFor(db, [month, D.prevMonth(month)], pids);
-  const adjs = pids.length ? await db.select().from(adjustments).where(and(inArray(adjustments.propertyId, pids), eq(adjustments.appliedMonth, month))) : [];
-  const finalized = await isCommonFinalized(db, month);
-  const pct = await feePct(db);
-  return D.settleInvestorMonth({
-    month, propertyIds: pids, rooms: roomsAll, nights, expenses: exps,
-    adjustments: adjs.map((a) => ({ propertyId: a.propertyId, appliedMonth: a.appliedMonth, amount: a.amount })),
-    commonFinalized: finalized, feePct: pct,
-  });
+  return settleFrom(await loadInvestorData(db, investorId, [month]), month);
 }
 
 export type SettlementView = D.InvestorSettlement & { investorId: string; status: "DRAFT" | "LOCKED" | "OPEN"; lockedAt?: Date | null };
 
 /** Quyết toán để hiển thị: tháng đã khóa đọc từ bảng lưu, không tính lại (5.5). */
 export async function getSettlement(db: DB, user: SessionUser, investorId: string, month: string): Promise<SettlementView> {
-  await assertInvestorAccess(db, user, investorId);
-  const [s] = await db.select().from(settlements).where(and(eq(settlements.investorId, investorId), eq(settlements.month, month))).limit(1);
-  if (s?.status === "LOCKED") {
-    const lines = await db.select().from(settlementLines).where(eq(settlementLines.settlementId, s.id));
-    return {
-      investorId, month, status: "LOCKED", lockedAt: s.lockedAt, commonProvisional: false,
-      totalRevenue: s.totalRevenue, totalDirectCost: s.totalDirectCost, totalCommonCost: s.totalCommonCost,
-      totalProfit: s.totalProfit, managementFee: s.managementFee, investorNet: s.investorNet,
-      lines: lines.map((l) => ({
-        propertyId: l.propertyId, roomCount: l.roomCount, soldNights: l.soldNights, availableNights: l.availableNights,
-        nightRevenue: l.revenue - l.adjustments, adjustments: l.adjustments, revenue: l.revenue, directCost: l.directCost,
-        commonCostAlloc: l.commonCostAlloc, profit: l.profit,
-      })),
-    };
-  }
-  const c = await computeSettlement(db, investorId, month);
+  return (await getSettlements(db, user, investorId, [month]))[0];
+}
+
+/** Như getSettlement cho nhiều tháng, đọc DB chung một lượt. Kết quả theo đúng thứ tự `months`. */
+export async function getSettlements(db: DB, user: SessionUser, investorId: string, months: string[]): Promise<SettlementView[]> {
+  const [, saved, lockedLines, data] = await Promise.all([
+    assertInvestorAccess(db, user, investorId),
+    db.select().from(settlements).where(and(eq(settlements.investorId, investorId), inArray(settlements.month, months))),
+    db
+      .select({ line: settlementLines, month: settlements.month })
+      .from(settlementLines)
+      .innerJoin(settlements, eq(settlements.id, settlementLines.settlementId))
+      .where(and(eq(settlements.investorId, investorId), inArray(settlements.month, months), eq(settlements.status, "LOCKED"))),
+    loadInvestorData(db, investorId, months),
+  ]);
   const today = D.todayVN();
-  return { ...c, investorId, status: D.lastDay(month) < today ? "DRAFT" : "OPEN" };
+  return months.map((month): SettlementView => {
+    const s = saved.find((r) => r.month === month);
+    if (s?.status === "LOCKED") {
+      const lines = lockedLines.filter((r) => r.month === month).map((r) => r.line);
+      return {
+        investorId, month, status: "LOCKED", lockedAt: s.lockedAt, commonProvisional: false,
+        totalRevenue: s.totalRevenue, totalDirectCost: s.totalDirectCost, totalCommonCost: s.totalCommonCost,
+        totalProfit: s.totalProfit, managementFee: s.managementFee, investorNet: s.investorNet,
+        lines: lines.map((l) => ({
+          propertyId: l.propertyId, roomCount: l.roomCount, soldNights: l.soldNights, availableNights: l.availableNights,
+          nightRevenue: l.revenue - l.adjustments, adjustments: l.adjustments, revenue: l.revenue, directCost: l.directCost,
+          commonCostAlloc: l.commonCostAlloc, profit: l.profit,
+        })),
+      };
+    }
+    return { ...settleFrom(data, month), investorId, status: D.lastDay(month) < today ? "DRAFT" : "OPEN" };
+  });
 }
 
 export async function lockSettlement(db: DB, user: SessionUser, investorId: string, month: string) {
@@ -133,28 +164,26 @@ export async function isAnyInvestorLocked(db: DB, month: string): Promise<boolea
 
 // ---- 5.7 Hoàn vốn ----
 export async function paybackForInvestor(db: DB, user: SessionUser, investorId: string) {
-  await assertInvestorAccess(db, user, investorId);
-  const props = await db.select().from(properties).where(eq(properties.investorId, investorId));
+  const [, props, locked] = await Promise.all([
+    assertInvestorAccess(db, user, investorId),
+    db.select().from(properties).where(eq(properties.investorId, investorId)),
+    db
+      .select({ month: settlements.month, investorNet: settlements.investorNet })
+      .from(settlements)
+      .where(and(eq(settlements.investorId, investorId), eq(settlements.status, "LOCKED")))
+      .orderBy(asc(settlements.month)),
+  ]);
   const investmentTotal = props.reduce((s, p) => s + p.investmentAmount, 0);
   const startMonth = props.map((p) => p.investmentStartMonth).filter(Boolean).sort()[0] ?? null;
-  const locked = await db
-    .select({ month: settlements.month, investorNet: settlements.investorNet })
-    .from(settlements)
-    .where(and(eq(settlements.investorId, investorId), eq(settlements.status, "LOCKED")))
-    .orderBy(asc(settlements.month));
   return { investmentTotal, ...D.payback({ investmentTotal, lockedNets: locked, startMonth }) };
 }
 
 // ---- 5.8 Dự kiến tháng hiện tại, theo NĐT ----
 export async function investorForecast(db: DB, investorId: string, month: string, today = D.todayVN()) {
-  const props = await db.select().from(properties).where(eq(properties.investorId, investorId));
-  const pids = props.map((p) => p.id);
-  const roomsAll = await allRooms(db);
-  const nights = await nightsBetween(db, pids, D.firstDay(D.prevMonth(month)), D.lastDay(month));
-  const exps = await expensesFor(db, [month, D.prevMonth(month)], pids);
-  const finalized = await isCommonFinalized(db, month);
-  const pct = await feePct(db);
-  const adjs = pids.length ? await db.select().from(adjustments).where(and(inArray(adjustments.propertyId, pids), eq(adjustments.appliedMonth, month))) : [];
+  // Lấy thêm đêm của tháng trước để ước công suất cho đêm còn trống
+  const d = await loadInvestorData(db, investorId, [month], D.firstDay(D.prevMonth(month)));
+  const { props, rooms: roomsAll, nights, expenses: exps, adjustments: adjs, pct } = d;
+  const finalized = d.finalized.has(month);
   const common = D.commonCostForMonth({ month, expenses: exps, rooms: roomsAll, finalized });
   const lines = props.map((p) => {
     const f = D.forecastProperty({

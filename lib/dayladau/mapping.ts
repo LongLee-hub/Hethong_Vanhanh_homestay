@@ -101,9 +101,12 @@ export function mapDayladauOrder(o: RawOrder): MappedBooking {
   };
 }
 
-/** Doanh thu net ghi nhận: tiền host nhận; đơn hủy = 0 (TODO(CONFIRM) phí hủy). */
+/**
+ * Doanh thu net ghi nhận: tiền host nhận.
+ * Đơn hủy: phí hủy = host_amount (Dayladau ghi tiền hoàn bằng item reservation âm), không có thì 0.
+ */
 export function netOf(m: MappedBooking, fallbackCommissionPct = 0): { commission: number; net: number } {
-  if (m.status === "CANCELLED") return { commission: 0, net: 0 };
+  if (m.status === "CANCELLED") return m.hostAmount > 0 ? { commission: Math.max(0, m.grossAmount - m.hostAmount), net: m.hostAmount } : { commission: 0, net: 0 };
   if (m.hostAmount > 0) return { commission: m.grossAmount - m.hostAmount, net: m.hostAmount };
   const commission = Math.round((m.grossAmount * fallbackCommissionPct) / 100);
   return { commission, net: m.grossAmount - commission };

@@ -13,26 +13,23 @@ export default async function Dashboard() {
   const db = getDb();
   const today = D.todayVN();
   const month = D.monthOf(today);
-  const props = await visibleProperties(db, user);
+  // Các phần độc lập đọc DB song song để trang mở nhanh
+  const [props, invRows, bks, al] = await Promise.all([visibleProperties(db, user), visibleInvestors(db, user), bookingsForMonth(db, user, month), openAlerts(db, user)]);
   const pids = props.map((p) => p.id);
   const showFee = can(user, "viewFee");
   // Quản lý cơ sở không xem phí/hoàn vốn nhưng vẫn xem doanh thu, chi phí của cơ sở được gán
   const invIds = [...new Set(props.map((p) => p.investorId))];
-  const invNames = Object.fromEntries((await visibleInvestors(db, user)).map((i) => [i.id, i.name]));
-  const forecasts = [];
-  for (const id of invIds) {
-    forecasts.push({
-      inv: { id, name: invNames[id] ?? "" },
-      f: await investorForecast(db, id, month, today),
-      pb: showFee ? await paybackForInvestor(db, user, id) : null,
-    });
-  }
+  const invNames = Object.fromEntries(invRows.map((i) => [i.id, i.name]));
+  const forecasts = await Promise.all(
+    invIds.map(async (id) => {
+      const [f, pb] = await Promise.all([investorForecast(db, id, month, today), showFee ? paybackForInvestor(db, user, id) : null]);
+      return { inv: { id, name: invNames[id] ?? "" }, f, pb };
+    }),
+  );
   const lines = forecasts.flatMap((x) => x.f.lines).filter((l) => pids.includes(l.propertyId));
-  const sum = (k: "revenueForecast" | "revenuePast" | "costForecast" | "actualCost" | "soldPast" | "bookedFuture") => lines.reduce((s, l) => s + l[k], 0);
-  const bks = await bookingsForMonth(db, user, month);
+  const sum = (k: "revenueForecast" | "revenuePast" | "costForecast" | "actualCost" | "soldPast" | "hourlyPast" | "bookedFuture") => lines.reduce((s, l) => s + l[k], 0);
   const ci = bks.filter((b) => b.status === "CONFIRMED" && b.checkIn === today);
   const co = bks.filter((b) => b.status === "CONFIRMED" && b.checkOut === today);
-  const al = await openAlerts(db, user);
 
   // Số đêm có thể bán trong tháng của từng cơ sở, để vẽ thanh "đã ở / đã đặt / còn trống"
   const avail = Object.fromEntries(props.map((p) => [p.id, D.availableNights(p.rooms, D.firstDay(month), D.lastDay(month))]));
@@ -73,9 +70,9 @@ export default async function Dashboard() {
           </section>
 
           <div className="cards">
-            <div className="stat"><span className="lbl">Đã thu đến hôm qua</span><span className="v">{vnd(sum("revenuePast"))}</span><span className="s">Tiền phòng các đêm khách đã ở</span></div>
-            <div className="stat"><span className="lbl">Đêm khách đã ở</span><span className="v">{sum("soldPast")}</span><span className="s">Trên tổng {availAll} đêm của tháng</span></div>
-            <div className="stat"><span className="lbl">Đêm đã có khách đặt</span><span className="v">{sum("bookedFuture")}</span><span className="s">Từ hôm nay đến cuối tháng</span></div>
+            <div className="stat"><span className="lbl">Doanh thu đến hôm nay</span><span className="v">{vnd(sum("revenuePast"))}</span><span className="s">Tính cả đêm nay, lượt thuê giờ và phí hủy</span></div>
+            <div className="stat"><span className="lbl">Đêm đã bán</span><span className="v">{sum("soldPast")}</span><span className="s">Trên tổng {availAll} đêm của tháng{sum("hourlyPast") ? `, thêm ${sum("hourlyPast")} lượt thuê giờ` : ""}</span></div>
+            <div className="stat"><span className="lbl">Đêm đã có khách đặt</span><span className="v">{sum("bookedFuture")}</span><span className="s">Từ ngày mai đến cuối tháng</span></div>
             <div className="stat"><span className="lbl">Chi phí đã ghi nhận</span><span className="v">{vnd(sum("actualCost"))}</span><span className="s">Các khoản đã nhập trong tháng</span></div>
           </div>
 
@@ -88,16 +85,16 @@ export default async function Dashboard() {
                 <article key={l.propertyId} className="prop">
                   <h3>{props.find((p) => p.id === l.propertyId)?.name}</h3>
                   <div><span className="lbl">Doanh thu dự kiến</span><div className="amt">{vnd(l.revenueForecast)}</div></div>
-                  <div className="nights" role="img" aria-label={`${l.soldPast} đêm đã ở, ${l.bookedFuture} đêm đã đặt, ${free} đêm còn trống`}>
+                  <div className="nights" role="img" aria-label={`${l.soldPast} đêm đã bán, ${l.bookedFuture} đêm đã đặt, ${free} đêm còn trống`}>
                     <i className="sold" style={{ width: `${pctOf(l.soldPast, total)}%` }} />
                     <i className="booked" style={{ width: `${pctOf(l.bookedFuture, total)}%` }} />
                   </div>
                   <div className="legend">
-                    <span><i className="dot sold" /><b>{l.soldPast}</b> đêm đã ở</span>
+                    <span><i className="dot sold" /><b>{l.soldPast}</b> đêm đã bán</span>
                     <span><i className="dot booked" /><b>{l.bookedFuture}</b> đã đặt</span>
                     <span><i className="dot free" /><b>{free}</b> còn trống</span>
                   </div>
-                  <div className="kv"><span>Đã thu đến hôm qua</span><b>{vnd(l.revenuePast)}</b></div>
+                  <div className="kv"><span>Doanh thu đến hôm nay</span><b>{vnd(l.revenuePast)}</b></div>
                   <div className="kv"><span>Giá trung bình mỗi đêm</span><b>{vnd(l.adrUsed)}</b></div>
                 </article>
               );
