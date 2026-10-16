@@ -7,7 +7,7 @@ import { and, eq } from "drizzle-orm";
 import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import { allowedPropertyIds, assertPropertyAccess, type SessionUser } from "../lib/auth/access";
-import { saveManualBooking } from "../lib/services/bookings";
+import { saveManualBooking, upsertBooking } from "../lib/services/bookings";
 import { createExpense, setCommonFinalized } from "../lib/services/expenses";
 import { getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } from "../lib/services/settlement";
 import { syncBookings } from "../lib/dayladau/sync";
@@ -18,6 +18,7 @@ import { buildInvestorReport } from "../lib/services/investor-report";
 import { setPropertyActive, updateProperty, type UpdatePropertyInput } from "../lib/services/properties";
 import { createUser, resetPassword, setUserActive, setUserProperties, updateUser } from "../lib/services/users";
 import { verifyLogin } from "../lib/auth/session";
+import { bookingChanges } from "../lib/services/booking-changes";
 
 let db: DB;
 const admin: SessionUser = { id: "u-admin", name: "Admin", role: "ADMIN" };
@@ -401,5 +402,39 @@ describe("Tài khoản theo vị trí", () => {
     await updateUser(db, admin, u.id, { name: "Quản lý Hai", phone: "0988000111", email: "ql2@x.vn" });
     const [row] = await db.select().from(schema.users).where(eq(schema.users.id, u.id));
     expect(row).toMatchObject({ name: "Quản lý Hai", email: "ql2@x.vn" });
+  });
+});
+
+describe("Đơn đã cập nhật", () => {
+  it("phân loại đơn mới / đổi / hủy, lọc theo cơ sở và ẩn số tiền với buồng phòng", async () => {
+    const since = new Date(Date.now() - 1000);
+    const base = { source: "DAYLADAU" as const, externalId: "CHG-1", propertyId: "X", roomId: "X1", channel: "Airbnb", guestName: "Khách Đổi", checkIn: "2026-12-10", checkOut: "2026-12-12", grossAmount: 2_000_000, commissionAmount: 0, netAmount: 2_000_000, status: "CONFIRMED" as const };
+    await upsertBooking(db, base, "SYNC");
+    await upsertBooking(db, { ...base, netAmount: 1_800_000 }, "SYNC");
+    await upsertBooking(db, { ...base, netAmount: 1_800_000, checkOut: "2026-12-13" }, "SYNC");
+    await upsertBooking(db, { ...base, netAmount: 1_800_000, checkOut: "2026-12-13", status: "CANCELLED" }, admin.id, "Khách hủy");
+
+    const mine = (rows: Awaited<ReturnType<typeof bookingChanges>>) => rows.filter((c) => c.booking.externalId === "CHG-1");
+    const a = mine(await bookingChanges(db, admin, since));
+    expect(a.map((c) => c.kind)).toEqual(["CANCELLED", "CHANGED", "CHANGED", "NEW"]);
+    expect(a[0]).toMatchObject({ by: "Admin", reason: "Khách hủy" });
+    expect(a[1].fields.map((f) => [f.key, f.before, f.after])).toEqual([["checkOut", "2026-12-12", "2026-12-13"]]);
+    expect(a[2].fields.map((f) => f.key)).toEqual(["netAmount"]);
+    expect(a[3].by).toBe("Đồng bộ Dayladau");
+
+    // Buồng phòng: không thấy số tiền, thay đổi chỉ về tiền bị bỏ
+    const h = mine(await bookingChanges(db, hk, since));
+    expect(h.map((c) => c.kind)).toEqual(["CANCELLED", "CHANGED", "NEW"]);
+    expect(h.every((c) => c.booking.netAmount === null)).toBe(true);
+    expect(h[1].fields.map((f) => f.key)).toEqual(["checkOut"]);
+
+    expect(mine(await bookingChanges(db, invB, since))).toEqual([]);
+
+    // Đơn khách đặt từ lâu, nay mới vào hệ thống: không tính là đơn mới
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
+    await upsertBooking(db, { ...base, externalId: "CHG-OLD", bookedAt: "2026-05-01" }, "SYNC");
+    await upsertBooking(db, { ...base, externalId: "CHG-FRESH", bookedAt: today }, "SYNC");
+    const kinds = Object.fromEntries((await bookingChanges(db, admin, since)).map((c) => [c.booking.externalId, c.kind]));
+    expect(kinds).toMatchObject({ "CHG-OLD": "IMPORTED", "CHG-FRESH": "NEW" });
   });
 });

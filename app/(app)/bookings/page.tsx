@@ -10,6 +10,7 @@ import { ActionForm } from "@/components/ActionForm";
 import { PhotoInput } from "@/components/PhotoInput";
 import { manualBookingAction } from "../actions";
 import { canViewLiveOrders, liveOrdersForMonth, type LiveSyncState } from "@/lib/dayladau/live";
+import { BookingChanges } from "./changes";
 
 const CHANNEL: Record<string, string> = { Direct: "Trực tiếp" };
 const SYNC: Record<LiveSyncState, [string, string]> = {
@@ -18,12 +19,15 @@ const SYNC: Record<LiveSyncState, [string, string]> = {
   UNMAPPED: ["Phòng chưa gắn", "bad"],
 };
 
-/** Hai nguồn xem đơn: đơn đã lưu trong hệ thống, hoặc đọc trực tiếp từ API Dayladau. */
-function SourceTabs({ month, api }: { month: string; api: boolean }) {
+type Src = "db" | "changes" | "api";
+
+/** Các cách xem đơn: đơn đã lưu trong hệ thống, đơn vừa cập nhật, hoặc đọc trực tiếp từ API Dayladau. */
+function SourceTabs({ month, src, live }: { month: string; src: Src; live: boolean }) {
   return (
     <div className="chips" style={{ width: "100%" }}>
-      <Link className="chip" aria-pressed={!api} href={`/bookings?month=${month}`}>Trong hệ thống</Link>
-      <Link className="chip" aria-pressed={api} href={`/bookings?month=${month}&src=api`}>Từ Dayladau</Link>
+      <Link className="chip" aria-pressed={src === "db"} href={`/bookings?month=${month}`}>Trong hệ thống</Link>
+      <Link className="chip" aria-pressed={src === "changes"} href={`/bookings?month=${month}&src=changes`}>Đơn đã cập nhật</Link>
+      {live && <Link className="chip" aria-pressed={src === "api"} href={`/bookings?month=${month}&src=api`}>Từ Dayladau</Link>}
     </div>
   );
 }
@@ -76,8 +80,16 @@ export default async function Bookings({ searchParams }: { searchParams: Promise
   if (live && sp.src === "api") {
     return (
       <>
-        <div className="topbar"><h1>Đặt phòng</h1><MonthNav month={month} path="/bookings" extra="&src=api" /><SourceTabs month={month} api /></div>
+        <div className="topbar"><h1>Đặt phòng</h1><MonthNav month={month} path="/bookings" extra="&src=api" /><SourceTabs month={month} src="api" live /></div>
         <LiveBookings month={month} user={user} />
+      </>
+    );
+  }
+  if (sp.src === "changes") {
+    return (
+      <>
+        <div className="topbar"><h1>Đặt phòng</h1><p className="sub">Đơn mới, đơn đổi ngày, phòng hoặc số tiền, và đơn bị hủy.</p><SourceTabs month={month} src="changes" live={live} /></div>
+        <BookingChanges user={user} sp={sp} />
       </>
     );
   }
@@ -90,7 +102,7 @@ export default async function Bookings({ searchParams }: { searchParams: Promise
   const confirmed = rows.filter((b) => b.status !== "CANCELLED");
   return (
     <>
-      <div className="topbar"><h1>Đặt phòng</h1><MonthNav month={month} path="/bookings" />{live && <SourceTabs month={month} api={false} />}</div>
+      <div className="topbar"><h1>Đặt phòng</h1><MonthNav month={month} path="/bookings" /><SourceTabs month={month} src="db" live={live} /></div>
       <div className="cards">
         <div className="stat"><span className="lbl">Đơn đã xác nhận</span><span className="v">{confirmed.length}</span><span className="s">Có đêm ở trong tháng</span></div>
         <div className="stat"><span className="lbl">Đơn đã hủy</span><span className="v">{rows.length - confirmed.length}</span></div>

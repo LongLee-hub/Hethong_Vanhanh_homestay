@@ -246,6 +246,11 @@ textarea { min-height: 72px; resize: vertical; }
 .check-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 .check-item:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .role-list { max-height: none; }
+.change-list { margin-bottom: 16px; }
+.change-time { min-width: 3.2em; }
+.change-detail { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 0 16px 12px calc(16px + 3.2em + 12px); }
+.change-detail s { text-decoration-thickness: 1px; }
+@media (max-width: 860px) { .change-detail { padding-left: 16px; } }
 .thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
 .thumbs img { width: 84px; height: 84px; object-fit: cover; border-radius: 12px; border: 1px solid var(--line); }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 12px 16px; border-radius: 12px; z-index: 60; font-size: .9rem; max-width: calc(100% - 32px); }
