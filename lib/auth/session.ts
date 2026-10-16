@@ -45,7 +45,7 @@ export const sessionCookieOptions = {
 /** Đăng nhập bằng số điện thoại hoặc email. */
 export async function verifyLogin(db: DB, login: string, password: string): Promise<SessionUser> {
   const key = login.trim().toLowerCase();
-  const [u] = await db.select().from(users).where(or(eq(users.phone, key), eq(users.email, key))).limit(1);
+  const [u] = await db.select().from(users).where(or(eq(users.phone, normalizePhone(key)), eq(users.email, key))).limit(1);
   if (!u || !u.active || !(await bcrypt.compare(password, u.passwordHash))) {
     throw new HttpError(401, "Sai số điện thoại/email hoặc mật khẩu");
   }
@@ -59,5 +59,8 @@ export async function refreshUser(db: DB, s: SessionUser | null): Promise<Sessio
   if (!u || !u.active) return null;
   return { id: u.id, name: u.name, role: u.role };
 }
+
+/** Số điện thoại lưu dạng chỉ chữ số (giữ dấu + đầu), để đăng nhập "0912 345 678" hay "0912.345.678" đều khớp. */
+export const normalizePhone = (p: string) => p.trim().replace(/(?!^\+)[^\d]/g, "");
 
 export const hashPassword = (p: string) => bcrypt.hash(p, 10);

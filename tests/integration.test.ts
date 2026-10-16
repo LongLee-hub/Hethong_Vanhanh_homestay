@@ -16,6 +16,8 @@ import { addTaskPhoto, createTask, setTaskStatus, updateChecklist } from "../lib
 import { createRoom as createRoomInProperty, updateRoom } from "../lib/services/rooms";
 import { buildInvestorReport } from "../lib/services/investor-report";
 import { setPropertyActive, updateProperty, type UpdatePropertyInput } from "../lib/services/properties";
+import { createUser, resetPassword, setUserActive, setUserProperties, updateUser } from "../lib/services/users";
+import { verifyLogin } from "../lib/auth/session";
 
 let db: DB;
 const admin: SessionUser = { id: "u-admin", name: "Admin", role: "ADMIN" };
@@ -340,5 +342,64 @@ describe("Cơ sở: sửa thông tin, ngưng / mở lại", () => {
 
   it("cơ sở không tồn tại trả 404", async () => {
     await expect(setPropertyActive(db, admin, "khong-co", true, "2026-08-01")).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe("Tài khoản theo vị trí", () => {
+  const base = { password: "matkhau123" };
+
+  it("chỉ Admin tạo được tài khoản", async () => {
+    await expect(createUser(db, mgr, { ...base, name: "X", phone: "0900000001", role: "HOUSEKEEPER", propertyIds: ["X"] })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("nhân viên chỉ thấy cơ sở được giao, đăng nhập được bằng số điện thoại có dấu cách", async () => {
+    const u = await createUser(db, admin, { ...base, name: " Chị Lan ", phone: "0912 345 678", role: "HOUSEKEEPER", propertyIds: ["X", "Y", "X"] });
+    expect(u).toMatchObject({ name: "Chị Lan", role: "HOUSEKEEPER" });
+    expect((await allowedPropertyIds(db, { id: u.id, name: u.name, role: u.role })).sort()).toEqual(["X", "Y"]);
+    expect((await verifyLogin(db, "0912.345.678", "matkhau123")).id).toBe(u.id);
+
+    await setUserProperties(db, admin, u.id, ["Z"]);
+    expect(await allowedPropertyIds(db, { id: u.id, name: u.name, role: u.role })).toEqual(["Z"]);
+    await expect(setUserProperties(db, admin, u.id, [])).rejects.toThrow(/ít nhất một cơ sở/);
+  });
+
+  it("chặn trùng số điện thoại / email, thiếu cơ sở, mật khẩu ngắn", async () => {
+    await expect(createUser(db, admin, { ...base, name: "Trùng", phone: "0912345678", role: "MANAGER", propertyIds: ["X"] })).rejects.toThrow(/Số điện thoại đã có/);
+    await expect(createUser(db, admin, { ...base, name: "Trùng", email: "ADMIN@loci.vn", role: "ADMIN" })).rejects.toThrow(/Email đã có/);
+    await expect(createUser(db, admin, { ...base, name: "Không cơ sở", phone: "0900000002", role: "ACCOUNTANT", propertyIds: [] })).rejects.toThrow(/ít nhất một cơ sở/);
+    await expect(createUser(db, admin, { name: "Ngắn", phone: "0900000003", role: "ADMIN", password: "123" })).rejects.toThrow(/8 ký tự/);
+    await expect(createUser(db, admin, { ...base, name: "Không liên hệ", role: "ADMIN" })).rejects.toThrow(/số điện thoại hoặc email/);
+  });
+
+  it("NĐT gắn chủ đầu tư chưa có tài khoản, không gắn được chủ đầu tư đã có", async () => {
+    await db.insert(schema.investors).values({ id: "inv-free", name: "NĐT mới" });
+    await db.insert(schema.properties).values({ id: "F", investorId: "inv-free", name: "Cơ sở F" });
+    const u = await createUser(db, admin, { ...base, name: "Anh Minh", email: "minh@x.vn", role: "INVESTOR", investorId: "inv-free" });
+    expect(await allowedPropertyIds(db, { id: u.id, name: u.name, role: u.role })).toEqual(["F"]);
+    await expect(createUser(db, admin, { ...base, name: "Cướp", email: "cuop@x.vn", role: "INVESTOR", investorId: "inv-a" })).rejects.toThrow(/đã có tài khoản/);
+    // Giao dịch rollback: không để lại tài khoản mồ côi
+    expect(await db.select().from(schema.users).where(eq(schema.users.email, "cuop@x.vn"))).toEqual([]);
+
+    const fresh = await createUser(db, admin, { ...base, name: "Chị Hoa", email: "hoa@x.vn", role: "INVESTOR" });
+    const [inv] = await db.select().from(schema.investors).where(eq(schema.investors.userId, fresh.id));
+    expect(inv.name).toBe("Chị Hoa");
+  });
+
+  it("khóa tài khoản chặn đăng nhập; không tự khóa mình", async () => {
+    const u = await createUser(db, admin, { ...base, name: "Kế toán 2", email: "kt2@x.vn", role: "ACCOUNTANT", propertyIds: ["X"] });
+    await setUserActive(db, admin, u.id, false);
+    await expect(verifyLogin(db, "kt2@x.vn", "matkhau123")).rejects.toMatchObject({ status: 401 });
+    await resetPassword(db, admin, u.id, "moimoi1234");
+    await setUserActive(db, admin, u.id, true);
+    expect((await verifyLogin(db, "kt2@x.vn", "moimoi1234")).id).toBe(u.id);
+    await expect(setUserActive(db, admin, admin.id, false)).rejects.toThrow(/tự khóa/);
+  });
+
+  it("sửa thông tin không được trùng tài khoản khác", async () => {
+    const u = await createUser(db, admin, { ...base, name: "Quản lý 2", phone: "0988000111", role: "MANAGER", propertyIds: ["Y"] });
+    await expect(updateUser(db, admin, u.id, { name: "Quản lý 2", phone: "0912345678" })).rejects.toThrow(/Số điện thoại đã có/);
+    await updateUser(db, admin, u.id, { name: "Quản lý Hai", phone: "0988000111", email: "ql2@x.vn" });
+    const [row] = await db.select().from(schema.users).where(eq(schema.users.id, u.id));
+    expect(row).toMatchObject({ name: "Quản lý Hai", email: "ql2@x.vn" });
   });
 });

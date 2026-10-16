@@ -242,7 +242,10 @@ textarea { min-height: 72px; resize: vertical; }
 .modal > footer { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; padding: 12px 20px; border-top: 1px solid var(--line); }
 .x { border: 0; background: none; font-size: 1.4rem; line-height: 1; cursor: pointer; color: var(--muted); }
 .check-item { display: flex; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
-.check-item input { width: 20px; height: 20px; accent-color: var(--accent); }
+.check-item input { width: 20px; height: 20px; flex: none; accent-color: var(--accent); }
+.check-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.check-item:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.role-list { max-height: none; }
 .thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
 .thumbs img { width: 84px; height: 84px; object-fit: cover; border-radius: 12px; border: 1px solid var(--line); }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 12px 16px; border-radius: 12px; z-index: 60; font-size: .9rem; max-width: calc(100% - 32px); }

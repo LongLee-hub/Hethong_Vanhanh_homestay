@@ -17,6 +17,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     ["/tasks", "Công việc", can(user, "workTask")],
     ["/attendance", "Chấm công", can(user, "clock") || can(user, "viewAllAttendance")],
     ["/dayladau", "Kết nối Dayladau", can(user, "admin")],
+    ["/users", "Tài khoản", can(user, "admin")],
   ].filter((x) => x[2]).map(([href, label]) => [href, label]) as [string, string][];
   return (
     <div className="app">
