@@ -2,8 +2,18 @@ import Link from "next/link";
 import { can } from "@/lib/auth/access";
 import { requireUser } from "@/lib/server";
 import { NavLinks } from "@/components/NavLinks";
+import { MobileNav } from "@/components/MobileNav";
 
 const ROLE_LABEL = { ADMIN: "Admin LOCI", INVESTOR: "Nhà đầu tư", MANAGER: "Quản lý cơ sở", ACCOUNTANT: "Kế toán", HOUSEKEEPER: "Buồng phòng" };
+
+// 4 mục đặt trên thanh tab dưới của điện thoại, theo việc mỗi vai trò mở nhiều nhất; còn lại nằm trong "Thêm".
+const MOBILE_PRIMARY = {
+  ADMIN: ["/", "/bookings", "/expenses", "/settlements"],
+  ACCOUNTANT: ["/", "/bookings", "/expenses", "/settlements"],
+  INVESTOR: ["/", "/bookings", "/settlements", "/reports"],
+  MANAGER: ["/", "/bookings", "/tasks", "/attendance"],
+  HOUSEKEEPER: ["/tasks", "/attendance", "/bookings"],
+};
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
@@ -32,7 +42,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </div>
       </header>
       <main className="main">{children}</main>
-      <nav className="bottom-nav"><NavLinks items={nav} /></nav>
+      <MobileNav items={nav} primary={MOBILE_PRIMARY[user.role]} user={{ name: user.name, role: ROLE_LABEL[user.role] }} />
     </div>
   );
 }
