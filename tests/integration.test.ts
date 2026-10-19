@@ -9,7 +9,8 @@ import type { DB } from "../lib/db";
 import { allowedPropertyIds, assertPropertyAccess, type SessionUser } from "../lib/auth/access";
 import { saveManualBooking, upsertBooking } from "../lib/services/bookings";
 import { createExpense, setCommonFinalized } from "../lib/services/expenses";
-import { getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } from "../lib/services/settlement";
+import { adjustmentDetails, commonCostBasis, getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } from "../lib/services/settlement";
+import { canViewPhoto } from "../lib/services/photos";
 import { SYNC_FULL_MAX_ORDERS, SYNC_MAX_ORDERS, syncBookings } from "../lib/dayladau/sync";
 import { createRoom, listConnections, mapListingToRoom, saveInvestorConnection, testConnection } from "../lib/dayladau/admin";
 import { addTaskPhoto, createTask, setTaskStatus, updateChecklist } from "../lib/services/tasks";
@@ -442,5 +443,43 @@ describe("Đơn đã cập nhật", () => {
     await upsertBooking(db, { ...base, externalId: "CHG-FRESH", bookedAt: today }, "SYNC");
     const kinds = Object.fromEntries((await bookingChanges(db, admin, since)).map((c) => [c.booking.externalId, c.kind]));
     expect(kinds).toMatchObject({ "CHG-OLD": "IMPORTED", "CHG-FRESH": "NEW" });
+  });
+});
+
+describe("Giao diện NĐT: công thức chi phí chung, điều chỉnh, quyền xem ảnh", () => {
+  it("công thức chi phí chung khớp cách chia trong quyết toán", async () => {
+    await createExpense(db, acc, { propertyId: null, categoryId: "salary", month: "2026-10", incurredOn: "2026-10-05", amount: 8_000_000, description: "Lương kế toán" });
+    await setCommonFinalized(db, acc, "2026-10", true);
+    const oct = await commonCostBasis(db, "2026-10");
+    expect(oct).toMatchObject({ total: 8_000_000, provisional: false, basisMonth: "2026-10" });
+    expect(Math.round(oct.perRoom * oct.rooms)).toBe(8_000_000);
+    const s = await getSettlement(db, invA, "inv-a", "2026-10");
+    const myRooms = s.lines.reduce((t, l) => t + l.roomCount, 0);
+    expect(Math.abs(Math.round(oct.perRoom * myRooms) - s.totalCommonCost)).toBeLessThanOrEqual(1);
+    // Tháng 11 chưa kê khai xong → tạm tính theo mức mỗi phòng của tháng 10
+    const nov = await commonCostBasis(db, "2026-11");
+    expect(nov).toMatchObject({ provisional: true, basisMonth: "2026-10", perRoom: Math.floor(8_000_000 / oct.rooms) });
+  });
+
+  it("chi tiết điều chỉnh: đúng NĐT, kèm đơn gốc và tháng gốc", async () => {
+    const rows = await adjustmentDetails(db, invA, "inv-a", "2026-09");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ propertyId: "X", originalMonth: "2026-08", amount: 1_700_000 });
+    expect(rows[0].externalId).toBeTruthy();
+    await expect(adjustmentDetails(db, invB, "inv-a", "2026-09")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("ảnh hóa đơn: chỉ người xem được chi phí đó mới xem được ảnh", async () => {
+    await createExpense(db, acc, { propertyId: "X", categoryId: "rent", month: "2026-10", incurredOn: "2026-10-06", amount: 500_000, description: "Sửa vòi nước", receiptUrls: ["loci-photos/expenses/2026-10-06/a.jpg"] });
+    await createExpense(db, acc, { propertyId: null, categoryId: "salary", month: "2026-11", incurredOn: "2026-11-02", amount: 100_000, description: "Văn phòng phẩm", receiptUrls: ["loci-photos/expenses/2026-11-02/c.jpg"] });
+    const own = "loci-photos/expenses/2026-10-06/a.jpg";
+    expect(await canViewPhoto(db, invA, own)).toBe(true);
+    expect(await canViewPhoto(db, invB, own)).toBe(false);
+    expect(await canViewPhoto(db, hk, own)).toBe(false);
+    // Chi phí chung: mọi người xem được tài chính đều thấy hóa đơn
+    expect(await canViewPhoto(db, invB, "loci-photos/expenses/2026-11-02/c.jpg")).toBe(true);
+    // Đường dẫn lạ hoặc không thuộc bản ghi nào
+    expect(await canViewPhoto(db, admin, "loci-photos/../secret.jpg")).toBe(false);
+    expect(await canViewPhoto(db, admin, "loci-photos/khong-co.jpg")).toBe(false);
   });
 });

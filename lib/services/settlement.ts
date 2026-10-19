@@ -3,7 +3,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
 import {
-  adjustments, bookingNights, expenses, investors, monthPeriods, properties, rooms, settlementLines, settlementUnlockLogs, settlements,
+  adjustments, bookingNights, bookings, expenses, investors, monthPeriods, properties, rooms, settlementLines, settlementUnlockLogs, settlements,
 } from "../db/schema";
 import { assertInvestorAccess, badRequest, notFound, requirePermission, type SessionUser } from "../auth/access";
 import { feePct } from "./settings";
@@ -103,6 +103,51 @@ export async function getSettlements(db: DB, user: SessionUser, investorId: stri
     }
     return { ...settleFrom(data, month), investorId, status: D.lastDay(month) < today ? "DRAFT" : "OPEN" };
   });
+}
+
+/** Cách tính chi phí chung mỗi phòng của một tháng, để hiện công thức cho NĐT. */
+export interface CommonCostBasis {
+  total: number; // tổng chi phí chung toàn hệ thống của tháng làm căn cứ
+  rooms: number; // số phòng hoạt động toàn hệ thống trong tháng đó
+  perRoom: number; // chi phí chung mỗi phòng
+  provisional: boolean; // true: chưa hoàn tất kê khai, tạm tính theo tháng trước
+  basisMonth: string;
+}
+
+/**
+ * Căn cứ chia chi phí chung, khớp với commonCostForMonth trong lib/domain:
+ * đã kê khai xong → tổng tháng này ÷ phòng tháng này; chưa xong → mức mỗi phòng của tháng trước.
+ * `locked`: tháng đã khóa sổ luôn dùng số đã kê khai của chính tháng đó.
+ */
+export async function commonCostBasis(db: DB, month: string, locked = false): Promise<CommonCostBasis> {
+  const pm = D.prevMonth(month);
+  const [roomRows, exps, finalized] = await Promise.all([
+    db.select({ id: rooms.id, propertyId: rooms.propertyId, openedOn: rooms.openedOn, closedOn: rooms.closedOn }).from(rooms),
+    db.select({ month: expenses.month, amount: expenses.amount }).from(expenses).where(and(isNull(expenses.propertyId), inArray(expenses.month, [month, pm]))),
+    locked ? Promise.resolve(true) : isCommonFinalized(db, month),
+  ]);
+  const roomCount = (m: string) => Object.values(D.activeRoomCountByProperty(roomRows, m)).reduce((s, n) => s + n, 0);
+  const totalOf = (m: string) => exps.filter((e) => e.month === m).reduce((s, e) => s + e.amount, 0);
+  const basisMonth = finalized ? month : pm;
+  const total = totalOf(basisMonth);
+  const n = roomCount(basisMonth);
+  const perRoom = n ? (finalized ? total / n : Math.floor(total / n)) : 0;
+  return { total, rooms: n, perRoom, provisional: !finalized, basisMonth };
+}
+
+/** Các khoản điều chỉnh được ghi vào tháng `month` cho các cơ sở của NĐT, kèm đơn gốc nếu có. */
+export async function adjustmentDetails(db: DB, user: SessionUser, investorId: string, month: string) {
+  await assertInvestorAccess(db, user, investorId);
+  return db
+    .select({
+      id: adjustments.id, propertyId: adjustments.propertyId, originalMonth: adjustments.originalMonth, amount: adjustments.amount,
+      reason: adjustments.reason, externalId: bookings.externalId, channel: bookings.channel,
+    })
+    .from(adjustments)
+    .innerJoin(properties, eq(properties.id, adjustments.propertyId))
+    .leftJoin(bookings, eq(bookings.id, adjustments.bookingId))
+    .where(and(eq(properties.investorId, investorId), eq(adjustments.appliedMonth, month)))
+    .orderBy(asc(adjustments.createdAt));
 }
 
 export async function lockSettlement(db: DB, user: SessionUser, investorId: string, month: string) {
