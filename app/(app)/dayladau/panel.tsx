@@ -93,9 +93,9 @@ function ConnectionForm({ inv, onDone }: { inv?: InvestorConnection; onDone: () 
 function InvestorCard({ inv, props, bookings, onEdit }: { inv: InvestorConnection; props: Prop[]; bookings: number; onEdit: () => void }) {
   const [test, setTest] = useState<ConnectionTest | null>(null);
   const [sync, setSync] = useState<{ ok: boolean; error?: string; summary?: SyncSummary } | null>(null);
-  const [busy, setBusy] = useState<"test" | "sync" | null>(null);
+  const [busy, setBusy] = useState<"test" | "sync" | "full" | null>(null);
   const [pending, start] = useTransition();
-  const run = (kind: "test" | "sync", fn: () => Promise<void>) => { setBusy(kind); start(async () => { await fn(); setBusy(null); }); };
+  const run = (kind: "test" | "sync" | "full", fn: () => Promise<void>) => { setBusy(kind); start(async () => { await fn(); setBusy(null); }); };
   const ready = !!(inv.hostId && inv.hasToken);
   const mapped = props.flatMap((p) => p.rooms).filter((r) => r.listingKey).length;
   const synced = bookings > 0 || !!sync?.summary?.created;
@@ -111,7 +111,7 @@ function InvestorCard({ inv, props, bookings, onEdit }: { inv: InvestorConnectio
     <>Bấm <b>Sửa</b> để điền host ID và access token.</>,
     <>Bấm <b>Kiểm tra kết nối</b> để xem danh sách listing trên Dayladau.</>,
     <>Chọn phòng cho từng listing ở bảng bên dưới rồi bấm <b>Lưu</b>. Đơn của listing chưa gắn sẽ bị bỏ qua.</>,
-    <>Bấm <b>Đồng bộ ngay</b> để lấy đơn về, hoặc chờ lần tự đồng bộ kế tiếp.</>,
+    <>Bấm <b>Đồng bộ ngay</b> để lấy đơn về, hoặc chờ lần tự đồng bộ kế tiếp. Lần đầu lấy toàn bộ đơn cũ, các lần sau chỉ lấy đơn mới nhất.</>,
   ][now];
   return (
     <section className="panel">
@@ -122,6 +122,7 @@ function InvestorCard({ inv, props, bookings, onEdit }: { inv: InvestorConnectio
           <button className="btn sm" onClick={onEdit}>Sửa</button>
           <button className="btn sm" disabled={!ready || pending} onClick={() => run("test", async () => setTest(await testConnectionAction(inv.id)))}>{busy === "test" ? "Đang kiểm tra…" : "Kiểm tra kết nối"}</button>
           <button className="btn sm primary" disabled={!ready || pending || !mapped} title={!mapped ? "Gắn listing với phòng trước" : ""} onClick={() => run("sync", async () => setSync(await syncNowAction(inv.id)))}>{busy === "sync" ? "Đang đồng bộ…" : "Đồng bộ ngay"}</button>
+          {synced && <button className="btn sm" disabled={!ready || pending || !mapped} title="Lấy lại toàn bộ đơn trên Dayladau, kể cả đơn cũ. Dùng sau khi gắn thêm listing." onClick={() => run("full", async () => setSync(await syncNowAction(inv.id, true)))}>{busy === "full" ? "Đang lấy đơn cũ…" : "Lấy toàn bộ đơn cũ"}</button>}
         </div>
       </header>
 

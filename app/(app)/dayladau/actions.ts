@@ -55,12 +55,13 @@ export async function createPropertyAction(_: State, f: FormData): Promise<State
   return r;
 }
 
-export async function syncNowAction(investorId: string): Promise<{ ok: boolean; error?: string; summary?: SyncSummary }> {
+/** full = lấy toàn bộ đơn cũ trên Dayladau (dùng sau khi gắn thêm listing), mặc định chỉ lấy đơn mới nhất. */
+export async function syncNowAction(investorId: string, full = false): Promise<{ ok: boolean; error?: string; summary?: SyncSummary }> {
   const user = await requireUser();
   try {
     requirePermission(user, "admin");
     const db = getDb();
-    const summary = await syncBookings(db, { investorIds: [investorId] });
+    const summary = await syncBookings(db, { investorIds: [investorId], full });
     await computeAlerts(db);
     revalidatePath("/dayladau");
     return { ok: summary.errors.length === 0, summary, error: summary.errors[0]?.message };

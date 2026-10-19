@@ -19,6 +19,8 @@ export interface SyncSummary {
 
 /** Mỗi lần đồng bộ chỉ lấy chừng này đơn mới nhất của mỗi NĐT (API trả đơn mới tạo trước). */
 export const SYNC_MAX_ORDERS = 300;
+/** Lần đồng bộ đầu của NĐT (chưa có đơn nào trong hệ thống) hoặc khi Admin bấm "Lấy toàn bộ đơn cũ": lấy hết lịch sử. */
+export const SYNC_FULL_MAX_ORDERS = 5000;
 
 async function raiseAlert(db: DB, type: string, key: string, message: string, propertyId?: string) {
   await db.insert(alerts).values({ type, key, message, propertyId: propertyId ?? null }).onConflictDoNothing();
@@ -26,12 +28,11 @@ async function raiseAlert(db: DB, type: string, key: string, message: string, pr
 
 export async function syncBookings(
   db: DB,
-  opts: { client?: DayladauClient; today?: string; decrypt?: (s: string) => string; investorIds?: string[]; maxOrders?: number } = {},
+  opts: { client?: DayladauClient; today?: string; decrypt?: (s: string) => string; investorIds?: string[]; maxOrders?: number; full?: boolean } = {},
 ): Promise<SyncSummary> {
   const client = opts.client ?? httpDayladauClient;
   const decrypt = opts.decrypt ?? decryptSecret;
   const today = opts.today ?? D.todayVN();
-  const maxOrders = opts.maxOrders ?? SYNC_MAX_ORDERS;
   const cfg = await getAllSettings(db);
   const [run] = await db.insert(syncRuns).values({}).returning();
   const sum: SyncSummary = { created: 0, updated: 0, unchanged: 0, skipped: 0, adjustments: 0, errors: [] };
@@ -47,6 +48,9 @@ export async function syncBookings(
       const pids = props.map((p) => p.id);
       // Phòng của NĐT này, tra theo mã listing Dayladau (id hoặc tên listing)
       const roomByListing = new Map(allRooms.filter((r) => r.dayladauRoomId && pids.includes(r.propertyId)).map((r) => [r.dayladauRoomId!, r]));
+      // NĐT mới (đã gắn phòng nhưng chưa có đơn nào về) thì lấy toàn bộ đơn cũ, các lần sau chỉ lấy đơn mới nhất
+      const first = roomByListing.size > 0 && !(await db.select({ id: bookings.id }).from(bookings).where(and(eq(bookings.source, "DAYLADAU"), inArray(bookings.propertyId, pids))).limit(1)).length;
+      const maxOrders = opts.maxOrders ?? (opts.full || first ? SYNC_FULL_MAX_ORDERS : SYNC_MAX_ORDERS);
       const raws = await client.listBookings({ hostId: inv.dayladauHostId!, token: decrypt(inv.dayladauTokenEncrypted!), maxOrders });
       const seen: string[] = [];
       const unmapped = new Map<string, { name: string; count: number }>();

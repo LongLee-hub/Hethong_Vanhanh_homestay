@@ -10,7 +10,7 @@ import { allowedPropertyIds, assertPropertyAccess, type SessionUser } from "../l
 import { saveManualBooking, upsertBooking } from "../lib/services/bookings";
 import { createExpense, setCommonFinalized } from "../lib/services/expenses";
 import { getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } from "../lib/services/settlement";
-import { syncBookings } from "../lib/dayladau/sync";
+import { SYNC_FULL_MAX_ORDERS, SYNC_MAX_ORDERS, syncBookings } from "../lib/dayladau/sync";
 import { createRoom, listConnections, mapListingToRoom, saveInvestorConnection, testConnection } from "../lib/dayladau/admin";
 import { addTaskPhoto, createTask, setTaskStatus, updateChecklist } from "../lib/services/tasks";
 import { createRoom as createRoomInProperty, updateRoom } from "../lib/services/rooms";
@@ -271,11 +271,17 @@ describe("Quản trị kết nối Dayladau", () => {
     const byListing = await db.select({ id: schema.rooms.id }).from(schema.rooms).where(eq(schema.rooms.dayladauRoomId, "503"));
     expect(byListing).toEqual([{ id: p104.id }]);
 
-    const r = await syncBookings(db, { client: { listBookings: async () => orders }, today: "2026-09-30", decrypt: dec, investorIds: ["inv-b"] });
+    const asked: number[] = [];
+    const client = { listBookings: async (o: { maxOrders?: number }) => { asked.push(o.maxOrders!); return orders; } };
+    const r = await syncBookings(db, { client, today: "2026-09-30", decrypt: dec, investorIds: ["inv-b"] });
     expect(r.created).toBe(1);
     expect(r.skipped).toBe(1); // 502 chưa gắn phòng
     const [b] = await db.select().from(schema.bookings).where(eq(schema.bookings.externalId, "B-1"));
     expect(b).toMatchObject({ roomId: "Z1", netAmount: 800_000, commissionAmount: 200_000 });
+    // Lần đầu lấy toàn bộ đơn cũ; khi đã có đơn thì chỉ lấy đơn mới nhất, trừ khi Admin bấm lấy toàn bộ
+    await syncBookings(db, { client, today: "2026-09-30", decrypt: dec, investorIds: ["inv-b"] });
+    await syncBookings(db, { client, today: "2026-09-30", decrypt: dec, investorIds: ["inv-b"], full: true });
+    expect(asked).toEqual([SYNC_FULL_MAX_ORDERS, SYNC_MAX_ORDERS, SYNC_FULL_MAX_ORDERS]);
   });
 
   it("kết nối lỗi trả thông báo, không ném lỗi", async () => {
