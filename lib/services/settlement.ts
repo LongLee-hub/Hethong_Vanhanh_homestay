@@ -53,7 +53,7 @@ async function loadInvestorData(db: DB, investorId: string, months: string[], ni
     db
       .select({ propertyId: expenses.propertyId, month: expenses.month, amount: expenses.amount })
       .from(expenses)
-      .where(and(inArray(expenses.month, expMonths), or(isNull(expenses.propertyId), inArray(expenses.propertyId, invProps)))),
+      .where(and(eq(expenses.approvalStatus, "APPROVED"), inArray(expenses.month, expMonths), or(isNull(expenses.propertyId), inArray(expenses.propertyId, invProps)))),
     db.select().from(adjustments).where(and(inArray(adjustments.propertyId, invProps), inArray(adjustments.appliedMonth, ms))),
     db.select().from(monthPeriods).where(inArray(monthPeriods.month, ms)),
     investorFeePct(db, investorId),
@@ -138,7 +138,7 @@ export async function commonCostBasis(db: DB, month: string, locked = false): Pr
   const pm = D.prevMonth(month);
   const [roomRows, exps, finalized] = await Promise.all([
     allRooms(db),
-    db.select({ month: expenses.month, amount: expenses.amount }).from(expenses).where(and(isNull(expenses.propertyId), inArray(expenses.month, [month, pm]))),
+    db.select({ month: expenses.month, amount: expenses.amount }).from(expenses).where(and(eq(expenses.approvalStatus, "APPROVED"), isNull(expenses.propertyId), inArray(expenses.month, [month, pm]))),
     locked ? Promise.resolve(true) : isCommonFinalized(db, month),
   ]);
   const roomCount = (m: string) => Object.values(D.activeRoomCountByProperty(roomRows, m)).reduce((s, n) => s + n, 0);

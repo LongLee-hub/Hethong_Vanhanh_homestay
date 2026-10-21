@@ -38,6 +38,7 @@ export async function updatePropertyAction(_: State, f: FormData): Promise<State
       name: s(f, "name"), address: s(f, "address") || null, investmentAmount: money(f, "investmentAmount"),
       investmentStartMonth: s(f, "investmentStartMonth") || null, occupancyKpiPct: Number(s(f, "occupancyKpiPct") || 0),
       variableCostPerNight: money(f, "variableCostPerNight"), fixedCostMonthly: money(f, "fixedCostMonthly"),
+      bankCodes: f.has("bankCodes") ? s(f, "bankCodes").split(/[,;\s]+/) : undefined,
     }),
   );
 }

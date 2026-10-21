@@ -116,6 +116,10 @@ function InvestorForm({ inv, defaultFeePct, onDone }: { inv?: Investor; defaultF
         )}
         <label className="field full"><span>Link hợp đồng</span><input type="text" inputMode="url" name="contractUrl" id={f("cUrl")} defaultValue={inv?.contractUrl ?? ""} placeholder="https://…" /></label>
         <label className="field full"><span>Ghi chú</span><textarea name="note" id={f("note")} defaultValue={inv?.note ?? ""} /></label>
+
+        <h3 className="full sub-title">Nhóm chat duyệt chi phí</h3>
+        <label className="field full"><span>Webhook bot Lark của nhóm có chủ nhà</span><input type="text" inputMode="url" name="larkWebhookUrl" id={f("lark")} defaultValue={inv?.larkWebhookUrl ?? ""} placeholder="https://open.larksuite.com/open-apis/bot/v2/hook/…" /></label>
+        <p className="hint full">Trong nhóm chat Lark có chủ nhà: Cài đặt nhóm → Bot → Thêm bot → Custom Bot, copy webhook dán vào đây. Kế toán kê khai chi phí, nhóm sẽ nhận tin kèm nút mở trang duyệt. Để trống thì gửi nhóm Lark chung.</p>
         <p className="hint full">Tài khoản Dayladau (host ID, access token) thêm riêng cho từng cơ sở ở thẻ nhà đầu tư sau khi lưu.</p>
       </ActionForm>
     </section>

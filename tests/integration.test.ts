@@ -8,7 +8,7 @@ import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import { allowedPropertyIds, assertPropertyAccess, type SessionUser } from "../lib/auth/access";
 import { saveManualBooking, upsertBooking } from "../lib/services/bookings";
-import { createExpense, setCommonFinalized } from "../lib/services/expenses";
+import { approveExpenses, createExpense, setCommonFinalized } from "../lib/services/expenses";
 import { getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } from "../lib/services/settlement";
 import { SYNC_FULL_MAX_ORDERS, SYNC_MAX_ORDERS, syncBookings } from "../lib/dayladau/sync";
 import { createRoom, listConnections, listingsForProperty, mapListingToRoom, saveDayladauAccount, saveInvestor, setPropertyAccount, testConnection, type InvestorInfo } from "../lib/dayladau/admin";
@@ -98,9 +98,12 @@ describe("Doanh thu, chi phí, quyết toán (giai đoạn 2)", () => {
   it("quyết toán tháng 8: X lãi 30tr, Y lỗ 5tr → phí 5tr, NĐT nhận 20tr", async () => {
     await saveManualBooking(db, mgr, { propertyId: "X", roomId: "X1", guestName: "Khách X", checkIn: "2026-08-01", checkOut: "2026-08-11", amount: 40_000_000, status: "CONFIRMED", transferProofUrl: "ck.jpg" });
     await saveManualBooking(db, admin, { propertyId: "Y", roomId: "Y1", guestName: "Khách Y", checkIn: "2026-08-01", checkOut: "2026-08-02", amount: 1_000_000, status: "CONFIRMED", transferProofUrl: "ck.jpg" });
-    await createExpense(db, acc, { propertyId: "X", categoryId: "rent", month: "2026-08", incurredOn: "2026-08-05", amount: 10_000_000, description: "Thuê nhà X" });
-    await createExpense(db, acc, { propertyId: "Y", categoryId: "rent", month: "2026-08", incurredOn: "2026-08-05", amount: 6_000_000, description: "Thuê nhà Y" });
+    const ex = await createExpense(db, acc, { propertyId: "X", categoryId: "rent", month: "2026-08", incurredOn: "2026-08-05", amount: 10_000_000, description: "Thuê nhà X" });
+    const ey = await createExpense(db, acc, { propertyId: "Y", categoryId: "rent", month: "2026-08", incurredOn: "2026-08-05", amount: 6_000_000, description: "Thuê nhà Y" });
     await setCommonFinalized(db, acc, "2026-08", true);
+    // Chưa duyệt: chi phí chưa được ghi nhận
+    expect((await getSettlement(db, invA, "inv-a", "2026-08")).lines.find((l) => l.propertyId === "X")!.profit).toBe(40_000_000);
+    await approveExpenses(db, invA, [ex.id, ey.id]);
     const s = await getSettlement(db, invA, "inv-a", "2026-08");
     expect(s.lines.find((l) => l.propertyId === "X")!.profit).toBe(30_000_000);
     expect(s.lines.find((l) => l.propertyId === "Y")!.profit).toBe(-5_000_000);

@@ -1,12 +1,13 @@
 // Tiện ích phía máy chủ cho trang và route API.
 import { cache } from "react";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { getDb } from "./db";
 import { HttpError, type SessionUser } from "./auth/access";
 import { SESSION_COOKIE, readSessionToken, refreshUser } from "./auth/session";
+import { getSetting } from "./services/settings";
 
 // cache: layout và trang cùng gọi trong một lượt tải, chỉ hỏi DB một lần
 export const currentUser = cache(async (): Promise<SessionUser | null> => {
@@ -17,7 +18,11 @@ export const currentUser = cache(async (): Promise<SessionUser | null> => {
 /** Dùng trong trang: chưa đăng nhập thì chuyển về /login. */
 export async function requireUser(): Promise<SessionUser> {
   const u = await currentUser();
-  if (!u) redirect("/login");
+  if (!u) {
+    // Phiên hết hạn: giữ trang đang mở để đăng nhập xong quay lại (middleware gắn sẵn header x-pathname nếu có)
+    const path = (await headers()).get("x-loci-path");
+    redirect(path && path !== "/" ? `/login?next=${encodeURIComponent(path)}` : "/login");
+  }
   return u;
 }
 
@@ -54,4 +59,14 @@ export async function action(fn: () => Promise<unknown>): Promise<{ ok: boolean;
 export function cronAuthorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
   return !!secret && req.headers.get("authorization") === `Bearer ${secret}`;
+}
+
+/** Địa chỉ public của app để dựng link gửi ra ngoài (Lark): APP_URL → cài đặt appUrl → header của request. */
+export async function appBaseUrl(): Promise<string> {
+  const fixed = process.env.APP_URL?.trim() || (await getSetting(getDb(), "appUrl"));
+  if (fixed) return fixed.replace(/\/+$/, "");
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
+  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  return `${proto}://${host}`;
 }

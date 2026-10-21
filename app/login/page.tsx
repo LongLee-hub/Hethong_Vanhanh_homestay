@@ -13,7 +13,9 @@ export default function LoginPage() {
     const data = await res.json();
     setBusy(false);
     if (!res.ok) return setError(data.error ?? "Đăng nhập không thành công");
-    location.href = data.role === "HOUSEKEEPER" ? "/tasks" : "/";
+    // Mở từ link (vd tin nhắc duyệt chi phí trên Lark): quay lại đúng trang đó. Chỉ nhận đường dẫn nội bộ.
+    const next = new URLSearchParams(location.search).get("next") ?? "";
+    location.href = /^\/(?!\/)[\w\-/?=&%.]*$/.test(next) ? next : data.role === "HOUSEKEEPER" ? "/tasks" : "/";
   }
   return (
     <form className="login panel" onSubmit={submit}>

@@ -23,6 +23,7 @@ export async function saveInvestorAction(_: State, f: FormData): Promise<State> 
       bankName: s(f, "bankName"), bankAccountNo: s(f, "bankAccountNo"), bankAccountName: s(f, "bankAccountName"),
       managementFeePct: numOrNull(f, "managementFeePct"), contractStartOn: s(f, "contractStartOn") || null, contractEndOn: s(f, "contractEndOn") || null,
       contractUrl: s(f, "contractUrl"), payoutDay: numOrNull(f, "payoutDay"), active: s(f, "active") !== "0", note: s(f, "note"),
+      larkWebhookUrl: s(f, "larkWebhookUrl"),
     }),
   );
   revalidatePath("/dayladau");

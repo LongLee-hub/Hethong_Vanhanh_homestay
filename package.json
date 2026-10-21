@@ -31,6 +31,7 @@
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.45.3",
+    "exceljs": "^4.4.0",
     "jose": "^6.2.12",
     "next": "^15.5.26",
     "postgres": "^3.4.9",

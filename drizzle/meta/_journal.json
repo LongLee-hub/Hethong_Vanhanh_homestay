@@ -57,6 +57,13 @@
       "when": 1792577907842,
       "tag": "0007_payout_lines",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792591921780,
+      "tag": "0008_expense_approval_bank",
+      "breakpoints": true
     }
   ]
 }

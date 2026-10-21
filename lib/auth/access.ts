@@ -30,6 +30,8 @@ const PERMS = {
   createManualBooking: ["ADMIN", "MANAGER", "ACCOUNTANT"],
   editExpense: ["ADMIN", "ACCOUNTANT"],
   markPaid: ["ADMIN", "ACCOUNTANT"],
+  approveExpense: ["ADMIN", "INVESTOR"], // NĐT duyệt chi phí cơ sở mình; chi phí chung chỉ Admin
+  importStatement: ["ADMIN", "ACCOUNTANT"],
   declareCommon: ["ADMIN", "ACCOUNTANT"],
   assignTask: ["ADMIN", "MANAGER"],
   workTask: ["ADMIN", "MANAGER", "ACCOUNTANT", "HOUSEKEEPER"],

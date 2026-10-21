@@ -89,6 +89,29 @@ Nếu đặt `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL` trong `.env` 
 
 **TODO(CONFIRM):** mức chênh tỷ giá chấp nhận được (đang 3%). Email nào tách thiếu hiện nhãn "Tách được một phần"; sau khi sửa bộ tách, bấm **Tách lại** để xử lý lại từ nội dung đã lưu, không cần đọc lại Gmail.
 
+## Chi phí: kê khai → chủ đầu tư duyệt → ghi nhận
+
+- **Kế toán kê khai** (trang *Chi phí*) → khoản chi ở trạng thái **Chờ duyệt**, chưa tính vào lãi lỗ, quyết toán, báo cáo NĐT.
+- App gửi tin vào **nhóm chat Lark có chủ nhà** kèm nút mở thẳng trang duyệt (`/expenses/<id>`; nhiều khoản thì `/expenses/pending`). Chưa đăng nhập thì đăng nhập xong quay lại đúng trang đó.
+  Đặt webhook của nhóm ở *Kết nối Dayladau → Sửa thông tin NĐT → Nhóm chat duyệt chi phí* (trong nhóm Lark: Cài đặt → Bot → Custom Bot). Chưa đặt thì gửi nhóm Lark chung (`larkWebhookUrl`). Chi phí chung luôn gửi nhóm chung để Admin duyệt.
+  Link dựng theo `APP_URL` (hoặc cài đặt `appUrl`) — trên VPS sau nginx cần đặt biến này.
+- **Chủ đầu tư bấm "Duyệt & xác nhận đã chi"** → khoản chi chuyển *Đã duyệt + Đã chi* và được ghi nhận. Có thể **Từ chối** kèm lý do; kế toán sửa lại là tự gửi duyệt lại.
+- Chi phí chung (toàn hệ thống) do **Admin** duyệt; Admin tự kê khai chi phí chung thì ghi nhận luôn. Không *Hoàn tất kê khai* được khi còn chi phí chung chưa duyệt.
+- **Sửa / xóa:** Admin sửa xóa mọi khoản (khoản đã duyệt giữ nguyên trạng thái; đổi sang cơ sở khác thì phải duyệt lại). Kế toán chỉ sửa xóa khoản chưa duyệt. Tháng đã khóa sổ thì không ai sửa/duyệt được — mở khóa sổ trước.
+- Chi phí nhập trước khi có bước duyệt được coi là đã duyệt (migration `0008`).
+
+## Sao kê ngân hàng
+
+Trang *Chi phí → Sao kê ngân hàng* (Admin, Kế toán): tải file Excel sao kê MB Bank → app đọc các giao dịch (chống trùng theo số bút toán, tải chồng kỳ không sao), đối chiếu với dòng *TỔNG TIỀN* của file.
+Mỗi khoản **tiền ra** được gợi ý sẵn:
+
+- **Cơ sở** theo mã viết tắt trong nội dung chuyển khoản (`khd-vp-…` → Vạn Phúc). Đặt mã ở *Cơ sở & phòng → Sửa thông tin → Mã trên sao kê*. `coso` = chi phí chung. Nội dung có hai mã thì để kế toán chọn. Hóa đơn điện nước không có mã thì học theo mã khách hàng đã ghi nhận lần trước.
+- **Loại** theo từ khóa (lương, BHXH, điện/nước, internet/netflix, amenities/nước giặt, sửa chữa…), không có thì theo người nhận lần trước.
+- **Tháng hạch toán** theo `t9`, `t10` trong nội dung (lương t9 trả đầu tháng 10 → tháng 9), không có thì theo ngày giao dịch.
+
+Kế toán chỉnh, chọn dòng rồi **Ghi nhận & gửi duyệt**: mỗi dòng thành một khoản chi *Đã chi* nhưng vẫn *Chờ duyệt* như kê khai tay. Dòng không phải chi phí (chuyển nhầm, hoàn tiền) bấm *Không phải chi phí*. Xóa khoản chi thì dòng sao kê trở lại chưa phân loại.
+Chỉ đọc file `.xlsx`; file `.xls` cũ mở bằng Excel lưu lại dạng `.xlsx`.
+
 ## Việc cần anh xác nhận trước khi bật đồng bộ thật
 
 Tất cả được đánh dấu `TODO(CONFIRM)` trong mã.

@@ -69,7 +69,7 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
           .select({ month: expenses.month, propertyId: expenses.propertyId, name: expenseCategories.name, amount: expenses.amount })
           .from(expenses)
           .innerJoin(expenseCategories, eq(expenseCategories.id, expenses.categoryId))
-          .where(and(inArray(expenses.month, list), inArray(expenses.propertyId, allPids)))
+          .where(and(eq(expenses.approvalStatus, "APPROVED"), inArray(expenses.month, list), inArray(expenses.propertyId, allPids)))
       : [],
     roomRevenue(db, propertyIds, month),
   ]);

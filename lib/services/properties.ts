@@ -14,6 +14,15 @@ export interface UpdatePropertyInput {
   occupancyKpiPct: number;
   variableCostPerNight: number;
   fixedCostMonthly: number;
+  /** Mã viết tắt trong nội dung chuyển khoản, vd ["vp"]. Không truyền = giữ nguyên. */
+  bankCodes?: string[];
+}
+
+/** Chuẩn hóa mã: chữ thường không dấu, bỏ trùng. */
+export function normalizeBankCodes(raw: string[] | string): string[] {
+  const list = Array.isArray(raw) ? raw : raw.split(/[,;\s]+/);
+  const out = list.map((c) => c.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/gi, "d").toLowerCase().replace(/[^a-z0-9]/g, "")).filter(Boolean);
+  return [...new Set(out)];
 }
 
 export async function updateProperty(db: DB, user: SessionUser, propertyId: string, input: UpdatePropertyInput): Promise<PropertyRow> {
@@ -21,9 +30,18 @@ export async function updateProperty(db: DB, user: SessionUser, propertyId: stri
   if (!input.name.trim()) throw badRequest("Nhập tên cơ sở");
   if (input.occupancyKpiPct < 0 || input.occupancyKpiPct > 100) throw badRequest("KPI kín phòng phải từ 0 đến 100%");
   if (input.investmentStartMonth && !/^\d{4}-\d{2}$/.test(input.investmentStartMonth)) throw badRequest("Tháng bắt đầu đầu tư không hợp lệ");
+  const { bankCodes, ...rest } = input;
+  const codes = bankCodes === undefined ? undefined : normalizeBankCodes(bankCodes);
+  if (codes?.some((c) => c.length < 2)) throw badRequest("Mã cơ sở trên sao kê phải từ 2 ký tự");
+  if (codes?.includes("coso")) throw badRequest('"coso" dành cho chi phí chung, chọn mã khác');
+  if (codes?.length) {
+    const others = await db.select({ id: properties.id, name: properties.name, codes: properties.bankCodes }).from(properties);
+    const clash = others.find((o) => o.id !== propertyId && o.codes.some((c) => codes.includes(c)));
+    if (clash) throw badRequest(`Mã ${clash.codes.filter((c) => codes.includes(c)).join(", ")} đã dùng cho ${clash.name}`);
+  }
   const [row] = await db
     .update(properties)
-    .set({ ...input, name: input.name.trim(), address: input.address?.trim() || null })
+    .set({ ...rest, ...(codes ? { bankCodes: codes } : {}), name: input.name.trim(), address: input.address?.trim() || null })
     .where(eq(properties.id, propertyId))
     .returning();
   if (!row) throw notFound("Không tìm thấy cơ sở");

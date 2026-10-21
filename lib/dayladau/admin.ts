@@ -9,6 +9,7 @@ import { decryptSecret, encryptSecret } from "../services/settings";
 import { fetchOrdersPage, PAGE_SIZE } from "./client";
 import { mapDayladauOrder } from "./mapping";
 import { DISMISSIBLE_ALERTS } from "./alert-types";
+import { isLarkWebhook } from "../services/expense-notify";
 import { attachListing, clearRoomListings, detachListing, listingRef, roomsByListing } from "./room-listings";
 
 const HOST_ID_RE = /^[A-Za-z0-9_-]{3,64}$/;
@@ -47,6 +48,8 @@ export interface InvestorInfo {
   payoutDay: number | null;
   active: boolean;
   note: string | null;
+  /** Webhook bot Lark của nhóm chat có chủ nhà (nhắc duyệt chi phí). */
+  larkWebhookUrl?: string | null;
 }
 
 export interface InvestorConnection extends InvestorInfo {
@@ -75,7 +78,7 @@ export async function listConnections(db: DB, user: SessionUser, decrypt = decry
     id: i.id, name: i.name, phone: i.phone, email: i.email, taxCode: i.taxCode, address: i.address,
     bankName: i.bankName, bankAccountNo: i.bankAccountNo, bankAccountName: i.bankAccountName,
     managementFeePct: i.managementFeePct, contractStartOn: i.contractStartOn, contractEndOn: i.contractEndOn,
-    contractUrl: i.contractUrl, payoutDay: i.payoutDay, active: i.active, note: i.note, hasAccount: !!i.userId,
+    contractUrl: i.contractUrl, payoutDay: i.payoutDay, active: i.active, note: i.note, larkWebhookUrl: i.larkWebhookUrl, hasAccount: !!i.userId,
     accounts: accs
       .filter((a) => a.investorId === i.id)
       .map((a) => ({
@@ -97,12 +100,17 @@ export async function saveInvestor(db: DB, user: SessionUser, input: { id?: stri
   for (const d of [input.contractStartOn, input.contractEndOn]) if (d && !DATE_RE.test(d)) throw badRequest("Ngày hợp đồng không hợp lệ");
   if (input.contractStartOn && input.contractEndOn && input.contractEndOn < input.contractStartOn) throw badRequest("Ngày kết thúc hợp đồng phải sau ngày bắt đầu");
   if (input.email && !/^[^\s@]+@[^\s@]+$/.test(input.email)) throw badRequest("Email không hợp lệ");
+  if (input.larkWebhookUrl?.trim() && !isLarkWebhook(input.larkWebhookUrl.trim())) {
+    throw badRequest("Webhook Lark không hợp lệ: dán địa chỉ dạng https://open.larksuite.com/open-apis/bot/v2/hook/…");
+  }
   const t = (v: string | null) => v?.trim() || null;
   const values = {
     name, phone: t(input.phone), email: t(input.email), taxCode: t(input.taxCode), address: t(input.address),
     bankName: t(input.bankName), bankAccountNo: t(input.bankAccountNo), bankAccountName: t(input.bankAccountName),
     managementFeePct: fee, contractStartOn: input.contractStartOn || null, contractEndOn: input.contractEndOn || null,
     contractUrl: t(input.contractUrl), payoutDay: input.payoutDay, active: input.active, note: t(input.note),
+    // Không truyền (form cũ / test) thì giữ nguyên webhook đang lưu
+    ...(input.larkWebhookUrl !== undefined ? { larkWebhookUrl: t(input.larkWebhookUrl) } : {}),
   };
   if (input.id) {
     const [row] = await db.update(investors).set(values).where(eq(investors.id, input.id)).returning();

@@ -8,7 +8,7 @@ import { getDb } from "@/lib/db";
 import { action, requireUser } from "@/lib/server";
 import { uploadPhoto } from "@/lib/storage";
 import { saveManualBooking } from "@/lib/services/bookings";
-import { createExpense, markPaid, setCommonFinalized } from "@/lib/services/expenses";
+import { setCommonFinalized } from "@/lib/services/expenses";
 import { lockSettlement, unlockSettlement } from "@/lib/services/settlement";
 import { addTaskPhoto, clockIn, clockOut, createTask, setTaskStatus, updateChecklist } from "@/lib/services/tasks";
 
@@ -39,32 +39,11 @@ export async function manualBookingAction(_: State, f: FormData): Promise<State>
   return r;
 }
 
-export async function expenseAction(_: State, f: FormData): Promise<State> {
+export async function finalizeCommonAction(_: State, f: FormData): Promise<State> {
   const user = await requireUser();
-  const r = await action(async () => {
-    const file = photo(f, "receipt");
-    const prop = String(f.get("propertyId"));
-    await createExpense(getDb(), user, {
-      propertyId: prop === "__common" ? null : prop, categoryId: String(f.get("categoryId")), month: String(f.get("month")),
-      incurredOn: String(f.get("incurredOn")), amount: money(f.get("amount")), description: String(f.get("description") ?? ""),
-      paymentStatus: f.get("paid") ? "PAID" : "UNPAID", receiptUrls: file ? [await uploadPhoto(file, "receipts")] : [],
-      taskId: String(f.get("taskId") || "") || null,
-    });
-  });
+  const r = await action(() => setCommonFinalized(getDb(), user, String(f.get("month")), f.get("value") === "1"));
   revalidatePath("/expenses");
   return r;
-}
-
-export async function markPaidAction(f: FormData) {
-  const user = await requireUser();
-  await markPaid(getDb(), user, f.getAll("ids").map(String));
-  revalidatePath("/expenses");
-}
-
-export async function finalizeCommonAction(f: FormData) {
-  const user = await requireUser();
-  await setCommonFinalized(getDb(), user, String(f.get("month")), f.get("value") === "1");
-  revalidatePath("/expenses");
 }
 
 export async function lockAction(_: State, f: FormData): Promise<State> {

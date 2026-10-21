@@ -1,3 +1,4 @@
+import Link from "next/link";
 import * as D from "@/lib/domain";
 import { getDb } from "@/lib/db";
 import { can } from "@/lib/auth/access";
@@ -5,11 +6,13 @@ import { NoAccess } from "@/components/NoAccess";
 import { requireUser } from "@/lib/server";
 import { categories, expensesForMonth, monthParam, visibleProperties } from "@/lib/queries";
 import { commonCostBasis, isCommonFinalized } from "@/lib/services/settlement";
-import { photoHref } from "@/lib/storage";
+import { pendingExpenses } from "@/lib/services/expenses";
 import { MonthNav, vnd } from "@/components/MonthNav";
 import { ActionForm } from "@/components/ActionForm";
 import { PhotoInput } from "@/components/PhotoInput";
-import { expenseAction, finalizeCommonAction, markPaidAction } from "../actions";
+import { finalizeCommonAction } from "../actions";
+import { declareExpenseAction } from "./actions";
+import { ApprovalPill, ExpenseFields, ExpenseTabs, Receipts } from "./shared";
 
 export default async function Expenses({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const user = await requireUser();
@@ -21,68 +24,71 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
   const cats = await categories(db);
   const catName = Object.fromEntries(cats.map((c) => [c.id, c.name]));
   const { direct, common } = await expensesForMonth(db, user, month);
-  const [finalized, basis] = await Promise.all([isCommonFinalized(db, month), commonCostBasis(db, month)]);
+  const [finalized, basis, pending] = await Promise.all([isCommonFinalized(db, month), commonCostBasis(db, month), pendingExpenses(db, user)]);
   const editable = can(user, "editExpense");
   const roomsByProp = D.activeRoomCountByProperty(props.flatMap((p) => p.rooms.map((r) => ({ ...r, propertyId: p.id }))), month);
-  const commonTotal = common.reduce((s, e) => s + e.amount, 0);
+  const sum = (rows: { amount: number }[]) => rows.reduce((s, e) => s + e.amount, 0);
+  const approved = direct.filter((e) => e.approvalStatus === "APPROVED");
+  const waiting = direct.filter((e) => e.approvalStatus === "PENDING");
+  const commonApproved = common.filter((e) => e.approvalStatus === "APPROVED");
   const myRooms = Object.values(roomsByProp).reduce((s, n) => s + n, 0);
   const mine = user.role === "INVESTOR";
-  const receipts = (urls: string[]) =>
-    urls.length ? (
-      <span className="receipts">{urls.map((u, i) => <a key={u} href={photoHref(u)} target="_blank" rel="noopener">Ảnh{urls.length > 1 ? ` ${i + 1}` : ""}</a>)}</span>
-    ) : (
-      <span className="muted">—</span>
-    );
+  const toApprove = can(user, "approveExpense") ? pending.filter((e) => e.propertyId !== null || user.role === "ADMIN") : [];
   return (
     <>
-      <div className="topbar"><h1>Chi phí</h1><MonthNav month={month} path="/expenses" /></div>
+      <div className="topbar">
+        <h1>Chi phí</h1>
+        <MonthNav month={month} path="/expenses" />
+        <ExpenseTabs current="list" pending={pending.length} bank={can(user, "importStatement")} month={month} />
+      </div>
+
+      {toApprove.length > 0 && (
+        <div className="banner info">
+          <span>Có <b>{toApprove.length}</b> khoản chi ({vnd(sum(toApprove))}) đang chờ {mine ? "anh/chị" : "bạn"} duyệt. Chi phí chỉ được tính vào lãi lỗ sau khi duyệt.</span>
+          <Link className="btn sm" href="/expenses/pending">Xem và duyệt</Link>
+        </div>
+      )}
+
       <section className="panel">
-        <form action={markPaidAction}>
-          <div className="tbl-wrap"><table>
-            <thead><tr>{editable && <th />}<th>Ngày</th><th>Cơ sở</th><th>Loại</th><th>Mô tả</th><th className="n">Số tiền</th><th>Thanh toán</th><th>Hóa đơn</th></tr></thead>
-            <tbody>
-              {direct.map((e) => (
-                <tr key={e.id}>
-                  {editable && <td>{e.paymentStatus === "UNPAID" && <input type="checkbox" name="ids" value={e.id} id={`ex-${e.id}`} aria-label="Chọn" />}</td>}
-                  <td className="num">{D.formatDateVN(e.incurredOn)}</td><td>{name[e.propertyId!]}</td><td>{catName[e.categoryId]}</td><td>{e.description}</td>
-                  <td className="n"><b>{vnd(e.amount)}</b></td>
-                  <td>{e.paymentStatus === "PAID" ? <span className="pill ok">Đã TT</span> : <span className="pill warn">Chưa TT</span>}</td>
-                  <td>{receipts(e.receiptUrls)}</td>
-                </tr>
-              ))}
-              <tr className="total"><td colSpan={editable ? 5 : 4}>Tổng chi phí trực tiếp</td><td className="n">{vnd(direct.reduce((s, e) => s + e.amount, 0))}</td><td colSpan={2} /></tr>
-            </tbody>
-          </table></div>
-          {editable && <button className="btn sm" style={{ marginTop: 10 }}>Đánh dấu đã thanh toán</button>}
-        </form>
+        <div className="tbl-wrap"><table>
+          <thead><tr><th>Ngày</th><th>Cơ sở</th><th>Loại</th><th>Mô tả</th><th className="n">Số tiền</th><th>Trạng thái</th><th>Hóa đơn</th></tr></thead>
+          <tbody>
+            {direct.map((e) => (
+              <tr key={e.id}>
+                <td className="num">{D.formatDateVN(e.incurredOn)}</td><td>{name[e.propertyId!]}</td><td>{catName[e.categoryId]}</td>
+                <td><Link href={`/expenses/${e.id}`}>{e.description}</Link>{e.bankTransactionId && <span className="hint"> · sao kê</span>}{e.approvalStatus === "REJECTED" && e.rejectReason && <div className="hint">Lý do: {e.rejectReason}</div>}</td>
+                <td className="n"><b>{vnd(e.amount)}</b></td>
+                <td><ApprovalPill status={e.approvalStatus} /></td>
+                <td><Receipts urls={e.receiptUrls} /></td>
+              </tr>
+            ))}
+            {!direct.length && <tr><td colSpan={7} className="muted small">Chưa có khoản chi nào trong tháng.</td></tr>}
+            <tr className="total"><td colSpan={4}>Đã ghi nhận (đã duyệt)</td><td className="n">{vnd(sum(approved))}</td><td colSpan={2} /></tr>
+            {waiting.length > 0 && <tr><td colSpan={4} className="muted">Đang chờ duyệt — chưa tính</td><td className="n muted">{vnd(sum(waiting))}</td><td colSpan={2} /></tr>}
+          </tbody>
+        </table></div>
       </section>
 
       <div className="grid g2" style={{ marginTop: 16 }}>
         {editable && (
           <section className="panel">
-            <header><h2>Nhập chi phí</h2></header>
-            <ActionForm action={expenseAction} submit="Lưu chi phí" okText="Đã lưu">
-              <label className="field full"><span>Cơ sở</span>
-                <select name="propertyId" id="propertyId">
-                  {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  {can(user, "declareCommon") && <option value="__common">Chi phí chung (toàn hệ thống)</option>}
-                </select>
-              </label>
-              <label className="field"><span>Loại</span><select name="categoryId" id="categoryId">{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-              <label className="field"><span>Số tiền (VND)</span><input type="text" inputMode="numeric" name="amount" id="amount" required /></label>
-              <label className="field"><span>Tháng hạch toán</span><input type="month" name="month" id="month" defaultValue={month} required /></label>
-              <label className="field"><span>Ngày phát sinh</span><input type="date" name="incurredOn" id="incurredOn" defaultValue={D.todayVN()} required /></label>
-              <label className="field full"><span>Mô tả</span><input type="text" name="description" id="description" required /></label>
-              <label className="field"><span><input type="checkbox" name="paid" id="paid" /> NĐT đã thanh toán</span></label>
+            <header><div><h2>Kê khai chi phí</h2><p>Gửi nhóm chat của chủ nhà để duyệt; chỉ ghi nhận sau khi chủ đầu tư duyệt và xác nhận đã chi.</p></div></header>
+            <ActionForm action={declareExpenseAction} submit="Kê khai và gửi duyệt">
+              <ExpenseFields props={props} cats={cats} allowCommon={can(user, "declareCommon")} idPrefix="new" value={{ propertyId: props[0]?.id ?? null, categoryId: cats[0]?.id ?? "", amount: 0, month, incurredOn: D.todayVN(), description: "" }} />
               <PhotoInput name="receipt" label="Ảnh hóa đơn" />
             </ActionForm>
           </section>
         )}
         <section className="panel">
-          <header><div><h2>Chi phí chung {D.formatMonthVN(month).toLowerCase()}</h2><p>Chia đều theo phòng toàn hệ thống</p></div>{finalized ? <span className="pill ok">Đã hoàn tất kê khai</span> : <span className="pill fc">Đang kê khai</span>}</header>
+          <header><div><h2>Chi phí chung {D.formatMonthVN(month).toLowerCase()}</h2><p>Chia đều theo phòng toàn hệ thống · Admin duyệt</p></div>{finalized ? <span className="pill ok">Đã hoàn tất kê khai</span> : <span className="pill fc">Đang kê khai</span>}</header>
           <div className="tbl-wrap"><table><tbody>
-            {common.map((e) => <tr key={e.id}><td>{catName[e.categoryId]}</td><td>{e.description}</td><td className="n">{vnd(e.amount)}</td><td>{receipts(e.receiptUrls)}</td></tr>)}
-            <tr className="total"><td colSpan={2}>Tổng</td><td className="n">{vnd(commonTotal)}</td><td /></tr>
+            {common.map((e) => (
+              <tr key={e.id}>
+                <td>{catName[e.categoryId]}</td><td><Link href={`/expenses/${e.id}`}>{e.description}</Link></td>
+                <td className="n">{vnd(e.amount)}</td><td>{e.approvalStatus !== "APPROVED" && <ApprovalPill status={e.approvalStatus} />}</td><td><Receipts urls={e.receiptUrls} /></td>
+              </tr>
+            ))}
+            <tr className="total"><td colSpan={2}>Tổng đã duyệt</td><td className="n">{vnd(sum(commonApproved))}</td><td colSpan={2} /></tr>
           </tbody></table></div>
           <p className="small muted">
             {basis.provisional
@@ -91,10 +97,9 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
             {" "}{mine ? "Bạn" : "Phạm vi bạn xem"} có {myRooms} phòng, phần được chia khoảng {vnd(Math.round(basis.perRoom * myRooms))}.
           </p>
           {can(user, "declareCommon") && (
-            <form action={finalizeCommonAction}>
+            <ActionForm action={finalizeCommonAction} submit={finalized ? "Mở lại kê khai" : "Hoàn tất kê khai"} submitClass="btn" className="row">
               <input type="hidden" name="month" value={month} /><input type="hidden" name="value" value={finalized ? "0" : "1"} />
-              <button className="btn">{finalized ? "Mở lại kê khai" : "Hoàn tất kê khai"}</button>
-            </form>
+            </ActionForm>
           )}
         </section>
       </div>

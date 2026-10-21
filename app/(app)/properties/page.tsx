@@ -192,6 +192,8 @@ export default async function Properties({ searchParams }: { searchParams: Promi
                       <label className="field"><span>KPI kín phòng (%)</span><input type="number" min={0} max={100} name="occupancyKpiPct" id={`p-kpi-${p.id}`} defaultValue={p.occupancyKpiPct} /></label>
                       <label className="field"><span>Chi phí biến đổi / đêm</span><input type="text" inputMode="numeric" name="variableCostPerNight" id={`p-var-${p.id}`} defaultValue={p.variableCostPerNight || ""} /></label>
                       <label className="field"><span>Chi phí cố định / tháng</span><input type="text" inputMode="numeric" name="fixedCostMonthly" id={`p-fix-${p.id}`} defaultValue={p.fixedCostMonthly || ""} /></label>
+                      <label className="field"><span>Mã trên sao kê</span><input type="text" name="bankCodes" id={`p-codes-${p.id}`} defaultValue={p.bankCodes.join(", ")} placeholder="vd: vp" /></label>
+                      <p className="hint full">Mã viết tắt kế toán ghi trong nội dung chuyển khoản (vd &quot;khd-vp-nuoc giat&quot; → vp). Dùng để tự gợi ý cơ sở khi đọc sao kê; nhiều mã cách nhau dấu phẩy.</p>
                     </ActionForm>
                     <ActionForm action={setPropertyAccountAction} submit="Đổi tài khoản Dayladau" okText="Đã lưu" className="row">
                       <input type="hidden" name="propertyId" value={p.id} />

@@ -47,6 +47,8 @@ export const investors = pgTable("investors", {
   payoutDay: integer("payout_day"), // ngày chuyển tiền hằng tháng (1–28)
   active: boolean("active").notNull().default(true),
   note: text("note"),
+  /** Webhook bot Lark của nhóm chat có chủ nhà: nhận tin nhắc duyệt chi phí. Trống = gửi nhóm Lark chung. */
+  larkWebhookUrl: text("lark_webhook_url"),
   createdAt: ts("created_at").notNull().defaultNow(),
   /** @deprecated Đã chuyển sang dayladau_accounts (migration 0003). Không đọc/ghi; sẽ xóa ở migration sau. */
   dayladauHostId: text("dayladau_host_id"),
@@ -81,6 +83,8 @@ export const properties = pgTable("properties", {
   occupancyKpiPct: integer("occupancy_kpi_pct").notNull().default(70),
   variableCostPerNight: money("variable_cost_per_night"),
   fixedCostMonthly: money("fixed_cost_monthly"),
+  /** Mã viết tắt trong nội dung chuyển khoản (vd "vp", "pkb") để gợi ý cơ sở khi đọc sao kê. */
+  bankCodes: text("bank_codes").array().notNull().default(sql`'{}'::text[]`),
   active: boolean("active").notNull().default(true),
 });
 
@@ -190,6 +194,8 @@ export const reviews = pgTable("reviews", {
 // ---------- 4.3 Chi phí ----------
 export const costScopeEnum = pgEnum("cost_scope", ["DIRECT", "COMMON"]);
 export const paymentStatusEnum = pgEnum("payment_status", ["UNPAID", "PAID"]);
+/** Kế toán kê khai → PENDING; chủ đầu tư (chi phí chung: Admin) duyệt → APPROVED mới tính vào lãi lỗ. */
+export const expenseApprovalEnum = pgEnum("expense_approval", ["PENDING", "APPROVED", "REJECTED"]);
 
 export const expenseCategories = pgTable("expense_categories", {
   id: id(),
@@ -214,8 +220,58 @@ export const expenses = pgTable(
     taskId: text("task_id"),
     createdById: text("created_by_id").notNull(),
     createdAt: ts("created_at").notNull().defaultNow(),
+    // Duyệt chi: chỉ APPROVED được ghi nhận vào quyết toán, báo cáo
+    approvalStatus: expenseApprovalEnum("approval_status").notNull().default("PENDING"),
+    approvedById: text("approved_by_id"),
+    approvedAt: ts("approved_at"),
+    rejectReason: text("reject_reason"),
+    updatedById: text("updated_by_id"),
+    updatedAt: ts("updated_at"),
+    /** Dòng sao kê sinh ra khoản chi này (nếu ghi nhận từ sao kê). */
+    bankTransactionId: text("bank_transaction_id").unique(),
   },
-  (t) => [index("expenses_month_prop").on(t.month, t.propertyId)],
+  (t) => [index("expenses_month_prop").on(t.month, t.propertyId), index("expenses_approval").on(t.approvalStatus)],
+);
+
+// ---------- Sao kê ngân hàng ----------
+/** Một lần tải file sao kê lên. */
+export const bankStatements = pgTable("bank_statements", {
+  id: id(),
+  bank: text("bank").notNull(), // "MB"
+  accountNo: text("account_no").notNull(),
+  accountName: text("account_name"),
+  fromDate: day("from_date"),
+  toDate: day("to_date"),
+  openingBalance: bigint("opening_balance", { mode: "number" }),
+  closingBalance: bigint("closing_balance", { mode: "number" }),
+  fileName: text("file_name"),
+  uploadedById: text("uploaded_by_id").notNull(),
+  uploadedAt: ts("uploaded_at").notNull().defaultNow(),
+});
+
+/** NEW: tiền ra chưa phân loại · RECORDED: đã ghi nhận chi phí · IGNORED: không phải chi phí · INCOME: tiền vào */
+export const bankTxnStatusEnum = pgEnum("bank_txn_status", ["NEW", "RECORDED", "IGNORED", "INCOME"]);
+
+export const bankTransactions = pgTable(
+  "bank_transactions",
+  {
+    id: id(),
+    statementId: text("statement_id").notNull().references(() => bankStatements.id, { onDelete: "cascade" }),
+    accountNo: text("account_no").notNull(),
+    ref: text("ref").notNull(), // số bút toán, chống nhập trùng khi tải lại sao kê chồng kỳ
+    txnAt: ts("txn_at").notNull(),
+    bookedOn: day("booked_on").notNull(),
+    debit: money("debit"), // tiền ra
+    credit: money("credit"), // tiền vào
+    balance: bigint("balance", { mode: "number" }),
+    counterparty: text("counterparty"),
+    content: text("content").notNull(),
+    status: bankTxnStatusEnum("status").notNull(),
+    note: text("note"), // lý do bỏ qua
+    handledById: text("handled_by_id"),
+    handledAt: ts("handled_at"),
+  },
+  (t) => [uniqueIndex("bank_txn_ref").on(t.accountNo, t.ref), index("bank_txn_status").on(t.status, t.bookedOn)],
 );
 
 export const monthPeriods = pgTable("month_periods", {

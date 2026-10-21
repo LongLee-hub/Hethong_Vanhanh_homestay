@@ -61,12 +61,28 @@ export function decryptSecret(payload: string): string {
 }
 
 // ---- Lark ----
+export type LarkSender = (url: string, body: unknown) => Promise<boolean | void>;
+
+/** Gửi tới webhook bot Lark. Lỗi mạng chỉ ghi log, không làm hỏng thao tác chính. */
+export const postLark: LarkSender = async (url, body) => {
+  try {
+    const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const text = await r.text().catch(() => "");
+    // Lark trả HTTP 200 kèm code ≠ 0 khi webhook sai / bot bị gỡ khỏi nhóm
+    const code = (() => { try { return JSON.parse(text).code ?? JSON.parse(text).StatusCode ?? 0; } catch { return 0; } })();
+    if (!r.ok || code !== 0) {
+      console.error("Gửi Lark lỗi", r.status, text.slice(0, 300));
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("Gửi Lark lỗi", e);
+    return false;
+  }
+};
+
 export async function notifyLark(db: DB, text: string) {
   const url = await getSetting(db, "larkWebhookUrl");
   if (!url) return;
-  try {
-    await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ msg_type: "text", content: { text } }) });
-  } catch (e) {
-    console.error("Gửi Lark lỗi", e);
-  }
+  await postLark(url, { msg_type: "text", content: { text } });
 }
