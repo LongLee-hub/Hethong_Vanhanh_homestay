@@ -320,6 +320,14 @@ textarea { min-height: 72px; resize: vertical; }
   .topbar h1 { width: 100%; }
 }
 @media (prefers-reduced-motion: no-preference) { .toast { animation: rise .2s ease-out; } @keyframes rise { from { transform: translate(-50%, 8px); opacity: 0; } } }
+
+/* Khung chờ khi chuyển trang (app/(app)/loading.tsx) */
+.skel { display: block; max-width: 100%; border-radius: 8px; background: var(--surface-2); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (prefers-reduced-motion: no-preference) {
+  .skel { animation: skel-pulse 1.2s ease-in-out infinite; }
+  @keyframes skel-pulse { 50% { opacity: .5; } }
+}
 .login { max-width: 400px; margin: 12vh auto; padding: 32px; display: grid; gap: 16px; border-radius: 24px; box-shadow: var(--shadow); }
 .login .btn { justify-content: center; padding-block: 14px; }
 form.inline { display: inline; }

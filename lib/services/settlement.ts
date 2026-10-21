@@ -1,4 +1,5 @@
 // Quyết toán, khóa sổ, hoàn vốn, dự kiến (Đặc tả 5.3–5.8). Đọc DB rồi gọi hàm thuần trong lib/domain.
+import { cache } from "react";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
@@ -12,6 +13,11 @@ export async function isCommonFinalized(db: DB, month: string): Promise<boolean>
   const [p] = await db.select().from(monthPeriods).where(eq(monthPeriods.month, month)).limit(1);
   return !!p?.commonCostsFinalized;
 }
+
+/** Mọi phòng toàn hệ thống, để chia chi phí chung. cache: trang tính cho nhiều NĐT chỉ đọc bảng phòng một lần. */
+const allRooms = cache((db: DB) =>
+  db.select({ id: rooms.id, propertyId: rooms.propertyId, openedOn: rooms.openedOn, closedOn: rooms.closedOn }).from(rooms),
+);
 
 /** Dữ liệu một NĐT cần để tính quyết toán/dự kiến cho các tháng `months`, lấy trong một lượt hỏi DB (các câu chạy song song). */
 interface InvestorData {
@@ -30,7 +36,7 @@ async function loadInvestorData(db: DB, investorId: string, months: string[], ni
   const invProps = db.select({ id: properties.id }).from(properties).where(eq(properties.investorId, investorId));
   const [props, roomRows, nightRows, exps, adjs, periods, pct] = await Promise.all([
     db.select().from(properties).where(eq(properties.investorId, investorId)),
-    db.select().from(rooms),
+    allRooms(db),
     db
       .select()
       .from(bookingNights)
@@ -45,7 +51,7 @@ async function loadInvestorData(db: DB, investorId: string, months: string[], ni
   ]);
   return {
     props,
-    rooms: roomRows.map((r) => ({ id: r.id, propertyId: r.propertyId, openedOn: r.openedOn, closedOn: r.closedOn })),
+    rooms: roomRows,
     nights: nightRows.map((n) => ({ bookingId: n.bookingId, propertyId: n.propertyId, roomId: n.roomId, nightDate: n.nightDate, netAmount: n.netAmount, kind: n.kind })),
     expenses: exps,
     adjustments: adjs.map((a) => ({ propertyId: a.propertyId, appliedMonth: a.appliedMonth, amount: a.amount })),
@@ -122,7 +128,7 @@ export interface CommonCostBasis {
 export async function commonCostBasis(db: DB, month: string, locked = false): Promise<CommonCostBasis> {
   const pm = D.prevMonth(month);
   const [roomRows, exps, finalized] = await Promise.all([
-    db.select({ id: rooms.id, propertyId: rooms.propertyId, openedOn: rooms.openedOn, closedOn: rooms.closedOn }).from(rooms),
+    allRooms(db),
     db.select({ month: expenses.month, amount: expenses.amount }).from(expenses).where(and(isNull(expenses.propertyId), inArray(expenses.month, [month, pm]))),
     locked ? Promise.resolve(true) : isCommonFinalized(db, month),
   ]);

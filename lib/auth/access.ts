@@ -1,4 +1,5 @@
 // Xác thực và phân quyền. Mọi truy vấn có property_id PHẢI lọc qua allowedPropertyIds (Đặc tả mục 2).
+import { cache } from "react";
 import { and, eq, inArray } from "drizzle-orm";
 import type { DB } from "../db";
 import { investors, properties, userPropertyAccess } from "../db/schema";
@@ -49,8 +50,11 @@ export function requirePermission(user: SessionUser, p: Permission) {
   if (!can(user, p)) throw forbidden();
 }
 
+// cache: trong một lượt dựng trang, các lời gọi cùng db và user chỉ hỏi DB một lần.
+// Ngoài lúc dựng trang (route API, server action, job, test) cache không giữ kết quả, mỗi lần gọi đều đọc mới.
+
 /** Các cơ sở người dùng được truy cập. NĐT: đúng các cơ sở mình sở hữu. */
-export async function allowedPropertyIds(db: DB, user: SessionUser): Promise<string[]> {
+export const allowedPropertyIds = cache(async (db: DB, user: SessionUser): Promise<string[]> => {
   if (user.role === "ADMIN") {
     return (await db.select({ id: properties.id }).from(properties)).map((r) => r.id);
   }
@@ -64,7 +68,7 @@ export async function allowedPropertyIds(db: DB, user: SessionUser): Promise<str
   }
   const rows = await db.select({ id: userPropertyAccess.propertyId }).from(userPropertyAccess).where(eq(userPropertyAccess.userId, user.id));
   return rows.map((r) => r.id);
-}
+});
 
 export async function assertPropertyAccess(db: DB, user: SessionUser, propertyId: string) {
   const ids = await allowedPropertyIds(db, user);
@@ -73,7 +77,7 @@ export async function assertPropertyAccess(db: DB, user: SessionUser, propertyId
 }
 
 /** NĐT mà người dùng được xem quyết toán. */
-export async function allowedInvestorIds(db: DB, user: SessionUser): Promise<string[]> {
+export const allowedInvestorIds = cache(async (db: DB, user: SessionUser): Promise<string[]> => {
   if (!can(user, "viewFee")) return [];
   if (user.role === "INVESTOR") {
     return (await db.select({ id: investors.id }).from(investors).where(eq(investors.userId, user.id))).map((r) => r.id);
@@ -82,7 +86,7 @@ export async function allowedInvestorIds(db: DB, user: SessionUser): Promise<str
   if (!pids.length) return [];
   const rows = await db.selectDistinct({ id: properties.investorId }).from(properties).where(inArray(properties.id, pids));
   return rows.map((r) => r.id);
-}
+});
 
 export async function assertInvestorAccess(db: DB, user: SessionUser, investorId: string) {
   if (!(await allowedInvestorIds(db, user)).includes(investorId)) throw notFound("Không tìm thấy nhà đầu tư");
