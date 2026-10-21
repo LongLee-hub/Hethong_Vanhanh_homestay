@@ -363,3 +363,62 @@ export const syncRuns = pgTable("sync_runs", {
   skipped: integer("skipped").notNull().default(0),
   errors: jsonb("errors"),
 });
+
+// ---------- 4.7 Payout Airbnb từ Gmail ----------
+// Mỗi NĐT kết nối Gmail nhận email payout của tài khoản Airbnb. Chỉ đọc (gmail.readonly).
+
+export const gmailAccounts = pgTable("gmail_accounts", {
+  id: id(),
+  investorId: text("investor_id").notNull().references(() => investors.id),
+  email: text("email").notNull().unique(),
+  refreshTokenEncrypted: text("refresh_token_encrypted").notNull(), // AES-256-GCM, không bao giờ trả ra client
+  connectedById: text("connected_by_id"),
+  active: boolean("active").notNull().default(true),
+  lastSyncedAt: ts("last_synced_at"),
+  lastSyncStatus: text("last_sync_status"), // OK | FAILED
+  lastSyncError: text("last_sync_error"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+});
+
+export const payoutParseEnum = pgEnum("payout_parse_status", ["OK", "PARTIAL", "FAILED"]);
+
+/** Một email payout = một lần Airbnb chuyển tiền (có thể gộp nhiều đơn). */
+export const airbnbPayouts = pgTable(
+  "airbnb_payouts",
+  {
+    id: id(),
+    gmailAccountId: text("gmail_account_id").notNull().references(() => gmailAccounts.id),
+    investorId: text("investor_id").notNull().references(() => investors.id),
+    gmailMessageId: text("gmail_message_id").notNull(),
+    receivedAt: ts("received_at").notNull(),
+    payoutDate: day("payout_date").notNull(), // ngày gửi tiền (theo email), giờ VN
+    amount: money("amount"), // tổng tiền chuyển, VND
+    currency: text("currency").notNull().default("VND"),
+    subject: text("subject"),
+    bodyText: text("body_text"), // nội dung đã bỏ HTML, giữ lại để tách lại khi đổi bộ tách
+    parseStatus: payoutParseEnum("parse_status").notNull(),
+    parseNote: text("parse_note"),
+  },
+  (t) => [uniqueIndex("payouts_account_msg").on(t.gmailAccountId, t.gmailMessageId), index("payouts_inv_date").on(t.investorId, t.payoutDate)],
+);
+
+export const payoutMatchEnum = pgEnum("payout_match_status", ["MATCHED", "AMOUNT_DIFF", "NOT_FOUND"]);
+
+/** Từng đơn trong một email payout, khớp với bookings theo mã xác nhận Airbnb (HM…). */
+export const airbnbPayoutItems = pgTable(
+  "airbnb_payout_items",
+  {
+    id: id(),
+    payoutId: text("payout_id").notNull().references(() => airbnbPayouts.id, { onDelete: "cascade" }),
+    confirmationCode: text("confirmation_code"),
+    guestName: text("guest_name"),
+    listingName: text("listing_name"),
+    checkIn: day("check_in"),
+    checkOut: day("check_out"),
+    amount: bigint("amount", { mode: "number" }), // null = email không ghi tiền riêng từng đơn
+    bookingId: text("booking_id").references(() => bookings.id, { onDelete: "set null" }),
+    matchStatus: payoutMatchEnum("match_status").notNull().default("NOT_FOUND"),
+    diffAmount: bigint("diff_amount", { mode: "number" }), // tiền payout − thực nhận ghi trong hệ thống
+  },
+  (t) => [index("payout_items_payout").on(t.payoutId), index("payout_items_code").on(t.confirmationCode), index("payout_items_booking").on(t.bookingId)],
+);

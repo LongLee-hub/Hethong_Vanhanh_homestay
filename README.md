@@ -64,6 +64,28 @@ Mỗi nhà đầu tư có **host ID** và **access token** riêng (giống `HOST
 
 **Bản chạy thử** — Quản trị → *Đồng bộ Dayladau*: trang trên claude.ai không được gọi thẳng ra Dayladau, nên app tạo link API theo host ID + token, anh mở link, copy nội dung dán lại, app map và nhập đơn theo đúng quy tắc trên. Token lưu trong vùng riêng của tài khoản người nhập.
 
+## Payout Airbnb từ Gmail
+
+Trang **Payout Airbnb** đọc email "đã gửi khoản thanh toán" của Airbnb trong Gmail của từng nhà đầu tư, tách từng đơn trong email (mã HM…, ngày ở, số tiền) và đối soát với đơn trong hệ thống:
+
+- **Khớp**: tìm thấy đơn và số tiền lệch không quá 2.000 ₫.
+- **Lệch tiền**: tìm thấy đơn nhưng tiền Airbnb chuyển khác "thực nhận" đang ghi.
+- **Chưa thấy đơn**: mã HM không có trong dữ liệu Dayladau và không khớp được theo tên khách + ngày nhận phòng.
+- **Đơn chưa thấy payout**: đơn Airbnb đã nhận phòng quá 3 ngày mà chưa có trong email payout nào.
+
+Ai làm gì: Admin kết nối Gmail cho mọi NĐT; NĐT tự kết nối Gmail của mình; Kế toán chỉ xem. App chỉ xin quyền **đọc** Gmail (`gmail.readonly`), refresh token mã hóa AES-256-GCM như token Dayladau. Email được đọc mỗi lần đồng bộ (cùng lịch với Dayladau), hoặc bấm **Đọc thư ngay**.
+
+**Cài đặt Google (một lần):**
+
+1. Google Cloud Console → tạo project → bật **Gmail API**.
+2. *OAuth consent screen*: loại External, thêm scope `gmail.readonly`, thêm Gmail của các NĐT vào *Test users*.
+3. *Credentials* → *OAuth client ID* loại Web application, redirect URI `https://<địa chỉ app>/api/gmail/callback`. Điền `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL` vào `.env`.
+4. `npm run db:migrate` để tạo bảng mới.
+
+> Lưu ý: khi app Google còn ở trạng thái *Testing*, refresh token hết hạn sau 7 ngày và hộp thư sẽ báo lỗi `invalid_grant`. Chuyển sang *In production* (không cần xác minh nếu dưới 100 người dùng, người dùng sẽ thấy cảnh báo "app chưa xác minh" khi đồng ý) để token không tự hết hạn.
+
+**TODO(CONFIRM):** bộ tách email (`lib/airbnb/payout-parser.ts`) viết theo cấu trúc email payout phổ biến của Airbnb, cần đối chiếu với email thật. Email nào tách thiếu hiện nhãn "Tách được một phần"; sau khi sửa bộ tách, bấm **Tách lại** để xử lý lại từ nội dung đã lưu, không cần đọc lại Gmail.
+
 ## Việc cần anh xác nhận trước khi bật đồng bộ thật
 
 Tất cả được đánh dấu `TODO(CONFIRM)` trong mã.
