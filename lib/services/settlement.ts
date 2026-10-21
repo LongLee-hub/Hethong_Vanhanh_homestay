@@ -24,6 +24,15 @@ interface InvestorData {
   pct: number;
 }
 
+/** Phí quản lý của NĐT: mức trong hợp đồng, NĐT chưa đặt thì dùng mức chung. */
+export async function investorFeePct(db: DB, investorId: string): Promise<number> {
+  const [[inv], global] = await Promise.all([
+    db.select({ pct: investors.managementFeePct }).from(investors).where(eq(investors.id, investorId)).limit(1),
+    feePct(db),
+  ]);
+  return inv?.pct ?? global;
+}
+
 async function loadInvestorData(db: DB, investorId: string, months: string[], nightsFrom?: string): Promise<InvestorData> {
   const ms = [...months].sort();
   const expMonths = [...new Set(ms.flatMap((m) => [D.prevMonth(m), m]))];
@@ -41,7 +50,7 @@ async function loadInvestorData(db: DB, investorId: string, months: string[], ni
       .where(and(inArray(expenses.month, expMonths), or(isNull(expenses.propertyId), inArray(expenses.propertyId, invProps)))),
     db.select().from(adjustments).where(and(inArray(adjustments.propertyId, invProps), inArray(adjustments.appliedMonth, ms))),
     db.select().from(monthPeriods).where(inArray(monthPeriods.month, ms)),
-    feePct(db),
+    investorFeePct(db, investorId),
   ]);
   return {
     props,
@@ -66,7 +75,7 @@ export async function computeSettlement(db: DB, investorId: string, month: strin
   return settleFrom(await loadInvestorData(db, investorId, [month]), month);
 }
 
-export type SettlementView = D.InvestorSettlement & { investorId: string; status: "DRAFT" | "LOCKED" | "OPEN"; lockedAt?: Date | null };
+export type SettlementView = D.InvestorSettlement & { investorId: string; status: "DRAFT" | "LOCKED" | "OPEN"; lockedAt?: Date | null; feePct: number };
 
 /** Quyết toán để hiển thị: tháng đã khóa đọc từ bảng lưu, không tính lại (5.5). */
 export async function getSettlement(db: DB, user: SessionUser, investorId: string, month: string): Promise<SettlementView> {
@@ -91,7 +100,7 @@ export async function getSettlements(db: DB, user: SessionUser, investorId: stri
     if (s?.status === "LOCKED") {
       const lines = lockedLines.filter((r) => r.month === month).map((r) => r.line);
       return {
-        investorId, month, status: "LOCKED", lockedAt: s.lockedAt, commonProvisional: false,
+        investorId, month, status: "LOCKED", lockedAt: s.lockedAt, commonProvisional: false, feePct: s.feePct ?? data.pct,
         totalRevenue: s.totalRevenue, totalDirectCost: s.totalDirectCost, totalCommonCost: s.totalCommonCost,
         totalProfit: s.totalProfit, managementFee: s.managementFee, investorNet: s.investorNet,
         lines: lines.map((l) => ({
@@ -101,7 +110,7 @@ export async function getSettlements(db: DB, user: SessionUser, investorId: stri
         })),
       };
     }
-    return { ...settleFrom(data, month), investorId, status: D.lastDay(month) < today ? "DRAFT" : "OPEN" };
+    return { ...settleFrom(data, month), investorId, status: D.lastDay(month) < today ? "DRAFT" : "OPEN", feePct: data.pct };
   });
 }
 
@@ -111,13 +120,14 @@ export async function lockSettlement(db: DB, user: SessionUser, investorId: stri
   if (!inv) throw notFound("Không tìm thấy nhà đầu tư");
   const chk = D.canLockMonth(month, D.todayVN(), await isCommonFinalized(db, month));
   if (!chk.ok) throw badRequest(chk.reason!);
-  const c = await computeSettlement(db, investorId, month);
+  const data = await loadInvestorData(db, investorId, [month]);
+  const c = settleFrom(data, month);
   await db.transaction(async (tx) => {
     const [existing] = await tx.select().from(settlements).where(and(eq(settlements.investorId, investorId), eq(settlements.month, month))).limit(1);
     if (existing?.status === "LOCKED") throw badRequest("Tháng này đã khóa sổ");
     const values = {
       investorId, month, status: "LOCKED" as const, totalRevenue: c.totalRevenue, totalDirectCost: c.totalDirectCost, totalCommonCost: c.totalCommonCost,
-      totalProfit: c.totalProfit, managementFee: c.managementFee, investorNet: c.investorNet, lockedAt: new Date(), lockedById: user.id,
+      totalProfit: c.totalProfit, managementFee: c.managementFee, feePct: data.pct, investorNet: c.investorNet, lockedAt: new Date(), lockedById: user.id,
     };
     let id = existing?.id;
     if (id) {

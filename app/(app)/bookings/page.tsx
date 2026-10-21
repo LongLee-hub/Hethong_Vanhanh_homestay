@@ -36,10 +36,10 @@ async function LiveBookings({ month, user }: { month: string; user: Parameters<t
   const { orders, errors, unreadable } = await liveOrdersForMonth(getDb(), user, month);
   const ok = orders.filter((o) => o.status === "CONFIRMED");
   const count = (s: LiveSyncState) => orders.filter((o) => o.sync === s).length;
-  const multiInv = new Set(orders.map((o) => o.investorName)).size > 1;
+  const multiAcc = new Set(orders.map((o) => `${o.investorName} · ${o.accountLabel}`)).size > 1;
   return (
     <>
-      {errors.map((e) => <div key={e.investorName} className="banner bad">{e.investorName}: {e.message}</div>)}
+      {errors.map((e) => <div key={`${e.investorName}|${e.accountLabel}`} className="banner bad">{e.investorName} · {e.accountLabel}: {e.message}</div>)}
       <div className="cards">
         <div className="stat"><span className="lbl">Đơn trên Dayladau</span><span className="v">{orders.length}</span><span className="s">{ok.length} xác nhận · {orders.length - ok.length} hủy</span></div>
         <div className="stat"><span className="lbl">Tiền host nhận</span><span className="v">{vnd(ok.reduce((s, o) => s + o.hostAmount, 0))}</span><span className="s">Các đơn xác nhận, cả phần kéo sang tháng khác</span></div>
@@ -53,7 +53,7 @@ async function LiveBookings({ month, user }: { month: string; user: Parameters<t
           <tbody>
             {orders.map((o) => (
               <tr key={o.externalId}>
-                <td><b>{o.guestName ?? "Khách"}</b><div className="small muted">{o.externalId}{multiInv ? ` · ${o.investorName}` : ""}</div></td>
+                <td><b>{o.guestName ?? "Khách"}</b><div className="small muted">{o.externalId}{multiAcc ? ` · ${o.investorName} · ${o.accountLabel}` : ""}</div></td>
                 <td>{o.roomLabel ?? <span className="muted">{o.listingName}</span>}</td>
                 <td><span className="pill">{CHANNEL[o.channel] ?? o.channel}</span></td>
                 <td className="num">{D.formatDateVN(o.checkIn)} – {D.formatDateVN(o.checkOut)}</td>

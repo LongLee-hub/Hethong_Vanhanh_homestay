@@ -5,7 +5,6 @@ import * as D from "../domain";
 import type { DB } from "../db";
 import { bookingNights, expenseCategories, expenses, properties, rooms } from "../db/schema";
 import { notFound, type SessionUser } from "../auth/access";
-import { feePct } from "./settings";
 import { getSettlements } from "./settlement";
 
 /** Loại chi phí được tách khỏi CP Homestay, nhận theo tên loại. */
@@ -56,7 +55,7 @@ export interface InvestorReport {
 /** propertyId = null: gộp toàn bộ cơ sở của NĐT. */
 export async function buildInvestorReport(db: DB, user: SessionUser, investorId: string, month: string, propertyId: string | null): Promise<InvestorReport> {
   const list = [D.prevMonth(D.prevMonth(D.prevMonth(month))), D.prevMonth(D.prevMonth(month)), D.prevMonth(month), month];
-  const [pct, settled] = await Promise.all([feePct(db), getSettlements(db, user, investorId, list)]);
+  const settled = await getSettlements(db, user, investorId, list);
   const scoped = settled.map((s) => ({ s, lines: propertyId ? s.lines.filter((l) => l.propertyId === propertyId) : s.lines }));
   if (propertyId && scoped.some((x) => !x.lines.length)) throw notFound("Cơ sở không thuộc nhà đầu tư này");
   const current = settled[settled.length - 1];
@@ -82,7 +81,7 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
     const direct = lines.reduce((t, l) => t + l.directCost, 0);
     const common = lines.reduce((t, l) => t + l.commonCostAlloc, 0);
     // Phí quản lý tính trên lãi của NĐT; xem riêng 1 cơ sở thì tính trên lãi của cơ sở đó.
-    const host = propertyId ? D.managementFee(lines[0].profit, pct) : s.managementFee;
+    const host = propertyId ? D.managementFee(lines[0].profit, s.feePct) : s.managementFee;
 
     const byCat: Record<string, number> = {};
     for (const r of catRows) {

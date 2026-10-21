@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { action, requireUser } from "@/lib/server";
 import { badRequest, HttpError } from "@/lib/auth/access";
-import { createProperty, createRoom, testConnection, type ListingSummary } from "@/lib/dayladau/admin";
+import { createProperty, createRoom, listingsForProperty, setPropertyAccount, type ListingSummary } from "@/lib/dayladau/admin";
 import { setPropertyActive, updateProperty } from "@/lib/services/properties";
 import { closeRoom, reopenRoom, transferRoom, updateRoom } from "@/lib/services/rooms";
 import * as D from "@/lib/domain";
@@ -23,7 +23,12 @@ async function run(fn: Parameters<typeof action>[0]): Promise<State> {
 
 export async function createPropertyAction(_: State, f: FormData): Promise<State> {
   const user = await requireUser();
-  return run(() => createProperty(getDb(), user, { investorId: s(f, "investorId"), name: s(f, "name"), investmentAmount: money(f, "investmentAmount"), investmentStartMonth: s(f, "investmentStartMonth") }));
+  return run(() =>
+    createProperty(getDb(), user, {
+      investorId: s(f, "investorId"), name: s(f, "name"), investmentAmount: money(f, "investmentAmount"), investmentStartMonth: s(f, "investmentStartMonth"),
+      dayladauAccountId: s(f, "dayladauAccountId") || null,
+    }),
+  );
 }
 
 export async function updatePropertyAction(_: State, f: FormData): Promise<State> {
@@ -42,11 +47,19 @@ export async function setPropertyActiveAction(_: State, f: FormData): Promise<St
   return run(() => setPropertyActive(getDb(), user, s(f, "propertyId"), s(f, "active") === "1", D.todayVN()));
 }
 
-/** Danh sách listing (phòng) Dayladau của chủ đầu tư, đọc từ trang đơn đầu tiên của API. */
-export async function listingsAction(investorId: string): Promise<{ ok: boolean; error?: string; listings: ListingSummary[] }> {
+/** Chọn tài khoản Dayladau cho cơ sở; đổi tài khoản thì bỏ gắn listing ở các phòng của cơ sở. */
+export async function setPropertyAccountAction(_: State, f: FormData): Promise<State> {
+  const user = await requireUser();
+  const r = await run(() => setPropertyAccount(getDb(), user, s(f, "propertyId"), s(f, "dayladauAccountId") || null));
+  revalidatePath("/dayladau");
+  return r;
+}
+
+/** Danh sách listing (phòng) Dayladau của tài khoản mà cơ sở đang dùng, đọc từ trang đơn đầu tiên của API. */
+export async function listingsAction(propertyId: string): Promise<{ ok: boolean; error?: string; listings: ListingSummary[] }> {
   const user = await requireUser();
   try {
-    const t = await testConnection(getDb(), user, investorId);
+    const t = await listingsForProperty(getDb(), user, propertyId);
     return { ok: t.ok, error: t.error, listings: t.listings };
   } catch (e) {
     return { ok: false, error: e instanceof HttpError ? e.message : "Lỗi máy chủ", listings: [] };

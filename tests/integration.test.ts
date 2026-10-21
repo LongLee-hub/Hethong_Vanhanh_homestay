@@ -11,7 +11,9 @@ import { saveManualBooking, upsertBooking } from "../lib/services/bookings";
 import { createExpense, setCommonFinalized } from "../lib/services/expenses";
 import { getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } from "../lib/services/settlement";
 import { syncBookings } from "../lib/dayladau/sync";
-import { createRoom, listConnections, mapListingToRoom, saveInvestorConnection, testConnection } from "../lib/dayladau/admin";
+import { createRoom, listConnections, listingsForProperty, mapListingToRoom, saveDayladauAccount, saveInvestor, setPropertyAccount, testConnection, type InvestorInfo } from "../lib/dayladau/admin";
+import { liveOrdersForMonth } from "../lib/dayladau/live";
+import { transferRoom } from "../lib/services/rooms";
 import { addTaskPhoto, createTask, setTaskStatus, updateChecklist } from "../lib/services/tasks";
 import { createRoom as createRoomInProperty, updateRoom } from "../lib/services/rooms";
 import { buildInvestorReport } from "../lib/services/investor-report";
@@ -27,6 +29,10 @@ const invB: SessionUser = { id: "u-inv-b", name: "NĐT B", role: "INVESTOR" };
 const acc: SessionUser = { id: "u-acc", name: "Kế toán", role: "ACCOUNTANT" };
 const hk: SessionUser = { id: "u-hk", name: "Buồng phòng", role: "HOUSEKEEPER" };
 const mgr: SessionUser = { id: "u-mgr", name: "Quản lý", role: "MANAGER" };
+const emptyInfo: InvestorInfo = {
+  name: "", phone: null, email: null, taxCode: null, address: null, bankName: null, bankAccountNo: null, bankAccountName: null,
+  managementFeePct: null, contractStartOn: null, contractEndOn: null, contractUrl: null, payoutDay: null, active: true, note: null,
+};
 
 beforeAll(async () => {
   const pg = new PGlite();
@@ -45,17 +51,18 @@ beforeAll(async () => {
     { id: mgr.id, name: mgr.name, role: "MANAGER", passwordHash: "x" },
   ]);
   await db.insert(s.investors).values([
-    { id: "inv-a", name: "NĐT A", userId: invA.id, dayladauHostId: "HOST-A", dayladauTokenEncrypted: "tok-a" },
+    { id: "inv-a", name: "NĐT A", userId: invA.id },
     { id: "inv-b", name: "NĐT B", userId: invB.id },
   ]);
+  await db.insert(s.dayladauAccounts).values({ id: "acc-a", investorId: "inv-a", label: "TK A", hostId: "HOST-A", tokenEncrypted: "tok-a" });
   await db.insert(s.properties).values([
-    { id: "X", investorId: "inv-a", name: "Vạn Phúc", investmentAmount: 600_000_000, investmentStartMonth: "2026-07" },
-    { id: "Y", investorId: "inv-a", name: "Phan Kế Bính" },
+    { id: "X", investorId: "inv-a", name: "Vạn Phúc", investmentAmount: 600_000_000, investmentStartMonth: "2026-07", dayladauAccountId: "acc-a" },
+    { id: "Y", investorId: "inv-a", name: "Phan Kế Bính", dayladauAccountId: "acc-a" },
     { id: "Z", investorId: "inv-b", name: "Nguyễn Tư Giản" },
   ]);
   await db.insert(s.rooms).values([
-    { id: "X1", propertyId: "X", name: "P101", openedOn: "2026-01-01", dayladauRoomId: "DR-X1" },
-    { id: "Y1", propertyId: "Y", name: "P101", openedOn: "2026-01-01", dayladauRoomId: "DR-Y1" },
+    { id: "X1", propertyId: "X", name: "P101", openedOn: "2026-01-01", dayladauAccountId: "acc-a", dayladauRoomId: "DR-X1" },
+    { id: "Y1", propertyId: "Y", name: "P101", openedOn: "2026-01-01", dayladauAccountId: "acc-a", dayladauRoomId: "DR-Y1" },
     { id: "Z1", propertyId: "Z", name: "P101", openedOn: "2026-01-01" },
     { id: "Z2", propertyId: "Z", name: "P102", openedOn: "2026-01-01" },
   ]);
@@ -224,28 +231,31 @@ describe("Công việc (giai đoạn 4)", () => {
 describe("Quản trị kết nối Dayladau", () => {
   const enc = (t: string) => `enc:${t}`;
   const dec = (t: string) => t.replace(/^enc:/, "");
+  let accB = "";
 
-  it("chỉ Admin được lưu host ID và token", async () => {
-    await expect(saveInvestorConnection(db, acc, { name: "X", hostId: "abc123", token: "t".repeat(20) }, enc)).rejects.toMatchObject({ status: 403 });
+  it("chỉ Admin được lưu nhà đầu tư, host ID và token", async () => {
+    await expect(saveDayladauAccount(db, acc, { investorId: "inv-b", label: "X", hostId: "abc123", token: "t".repeat(20) }, enc)).rejects.toMatchObject({ status: 403 });
+    await expect(saveInvestor(db, acc, { ...emptyInfo, name: "X" })).rejects.toMatchObject({ status: 403 });
   });
 
   it("lưu token dạng mã hóa, không trả token ra ngoài", async () => {
-    const c = await saveInvestorConnection(db, admin, { id: "inv-b", name: "NĐT B", hostId: "host-b-01", token: "secret-token-bbbbbbbbbbbb1234" }, enc);
-    expect(c).toMatchObject({ hostId: "host-b-01", hasToken: true, tokenHint: "…1234" });
-    expect(JSON.stringify(c)).not.toContain("secret-token");
-    const [row] = await db.select().from(schema.investors).where(eq(schema.investors.id, "inv-b"));
-    expect(row.dayladauTokenEncrypted).toBe("enc:secret-token-bbbbbbbbbbbb1234");
+    const a = await saveDayladauAccount(db, admin, { investorId: "inv-b", label: "TK NTG", hostId: "host-b-01", token: "secret-token-bbbbbbbbbbbb1234", propertyIds: ["Z"] }, enc);
+    accB = a.id;
+    expect(JSON.stringify(a)).not.toContain("secret-token");
+    const [row] = await db.select().from(schema.dayladauAccounts).where(eq(schema.dayladauAccounts.id, accB));
+    expect(row).toMatchObject({ tokenEncrypted: "enc:secret-token-bbbbbbbbbbbb1234", tokenLast4: "1234" });
     // Sửa tên, để trống token → giữ token cũ
-    await saveInvestorConnection(db, admin, { id: "inv-b", name: "NĐT B mới", hostId: "host-b-01" }, enc);
-    const [row2] = await db.select().from(schema.investors).where(eq(schema.investors.id, "inv-b"));
-    expect(row2.dayladauTokenEncrypted).toBe("enc:secret-token-bbbbbbbbbbbb1234");
+    await saveDayladauAccount(db, admin, { id: accB, investorId: "inv-b", label: "TK NTG mới", hostId: "host-b-01" }, enc);
+    const [row2] = await db.select().from(schema.dayladauAccounts).where(eq(schema.dayladauAccounts.id, accB));
+    expect(row2).toMatchObject({ label: "TK NTG mới", tokenEncrypted: "enc:secret-token-bbbbbbbbbbbb1234" });
     const list = await listConnections(db, admin, dec);
-    expect(list.find((i) => i.id === "inv-b")?.tokenHint).toBe("…1234");
+    expect(list.find((i) => i.id === "inv-b")?.accounts).toEqual([expect.objectContaining({ hostId: "host-b-01", tokenHint: "…1234", propertyIds: ["Z"] })]);
+    expect(JSON.stringify(list)).not.toContain("secret-token");
   });
 
   it("chặn host ID trùng và token có ký tự lạ", async () => {
-    await expect(saveInvestorConnection(db, admin, { name: "Mới", hostId: "host-b-01", token: "x".repeat(20) }, enc)).rejects.toThrow(/đã gắn/);
-    await expect(saveInvestorConnection(db, admin, { name: "Mới", hostId: "host-new", token: "abc def ghi jkl mno" }, enc)).rejects.toThrow(/token/);
+    await expect(saveDayladauAccount(db, admin, { investorId: "inv-a", label: "Mới", hostId: "host-b-01", token: "x".repeat(20) }, enc)).rejects.toThrow(/đã có tài khoản/);
+    await expect(saveDayladauAccount(db, admin, { investorId: "inv-a", label: "Mới", hostId: "host-new", token: "abc def ghi jkl mno" }, enc)).rejects.toThrow(/token/);
   });
 
   it("kiểm tra kết nối liệt kê listing và trạng thái; gắn listing rồi đồng bộ được", async () => {
@@ -253,33 +263,36 @@ describe("Quản trị kết nối Dayladau", () => {
       { id: "B-1", total_billed: 1_000_000, status: "confirmed", listing: { id: 501, name: "NTG P101" }, reservation: { start_time: "2026-09-20", end_time: "2026-09-21" }, items: [{ amount: 1_000_000, commission_rates: [{ type: "host", rate: 0.8 }] }] },
       { id: "B-2", total_billed: 900_000, status: "canceled", listing: { id: 502, name: "NTG P102" }, reservation: { start_time: "2026-09-22", end_time: "2026-09-23" }, items: [] },
     ];
-    const t = await testConnection(db, admin, "inv-b", { fetchPage: async () => orders, decrypt: dec });
+    const t = await testConnection(db, admin, accB, { fetchPage: async () => orders, decrypt: dec });
     expect(t.ok).toBe(true);
     expect(t.listings.map((l) => [l.key, l.roomId])).toEqual([["501", null], ["502", null]]);
     expect(t.statuses).toEqual(expect.arrayContaining([{ status: "canceled", orders: 1, treatedAs: "CANCELLED" }]));
     expect(t.samples[0]).toMatchObject({ id: "B-1", hostAmount: 800_000 });
     expect(JSON.stringify(t)).not.toMatch(/fullname|phone/);
 
-    await mapListingToRoom(db, admin, "inv-b", "501", "Z1");
-    await expect(mapListingToRoom(db, admin, "inv-b", "502", "X1")).rejects.toThrow(/không thuộc/);
+    await mapListingToRoom(db, admin, accB, "501", "Z1");
+    // Phòng của cơ sở dùng tài khoản khác
+    await expect(mapListingToRoom(db, admin, accB, "502", "X1")).rejects.toThrow(/không thuộc/);
     await createRoom(db, admin, { propertyId: "Z", name: "P103", openedOn: "2026-01-01", listingKey: "503" });
     // Thiếu / sai cơ sở: báo lỗi nghiệp vụ, không để lọt lỗi khóa ngoại thành "Lỗi máy chủ"
     await expect(createRoom(db, admin, { propertyId: "", name: "P104", openedOn: "2026-01-01", listingKey: "504" })).rejects.toThrow(/Chọn cơ sở/);
     await expect(createRoom(db, admin, { propertyId: "khong-co", name: "P104", openedOn: "2026-01-01", listingKey: "504" })).rejects.toThrow(/cơ sở/);
-    // Tạo phòng mới cho listing đang gắn phòng khác cùng nhà đầu tư: chuyển listing sang phòng mới
+    // Tạo phòng mới cho listing đang gắn phòng khác cùng tài khoản: chuyển listing sang phòng mới
     const p104 = await createRoom(db, admin, { propertyId: "Z", name: "P104", openedOn: "2026-01-01", listingKey: "503" });
     const byListing = await db.select({ id: schema.rooms.id }).from(schema.rooms).where(eq(schema.rooms.dayladauRoomId, "503"));
     expect(byListing).toEqual([{ id: p104.id }]);
 
-    const r = await syncBookings(db, { client: { listBookings: async () => orders }, today: "2026-09-30", decrypt: dec, investorIds: ["inv-b"] });
+    const r = await syncBookings(db, { client: { listBookings: async () => orders }, today: "2026-09-30", decrypt: dec, accountIds: [accB] });
     expect(r.created).toBe(1);
     expect(r.skipped).toBe(1); // 502 chưa gắn phòng
     const [b] = await db.select().from(schema.bookings).where(eq(schema.bookings.externalId, "B-1"));
     expect(b).toMatchObject({ roomId: "Z1", netAmount: 800_000, commissionAmount: 200_000 });
+    const [a] = await db.select().from(schema.dayladauAccounts).where(eq(schema.dayladauAccounts.id, accB));
+    expect(a.lastSyncStatus).toBe("OK");
   });
 
   it("kết nối lỗi trả thông báo, không ném lỗi", async () => {
-    const t = await testConnection(db, admin, "inv-b", { fetchPage: async () => { throw new Error("Host ID hoặc access token không hợp lệ (HTTP 401)"); }, decrypt: dec });
+    const t = await testConnection(db, admin, accB, { fetchPage: async () => { throw new Error("Host ID hoặc access token không hợp lệ (HTTP 401)"); }, decrypt: dec });
     expect(t).toMatchObject({ ok: false, error: expect.stringMatching(/không hợp lệ/) });
   });
 });
@@ -436,5 +449,115 @@ describe("Đơn đã cập nhật", () => {
     await upsertBooking(db, { ...base, externalId: "CHG-FRESH", bookedAt: today }, "SYNC");
     const kinds = Object.fromEntries((await bookingChanges(db, admin, since)).map((c) => [c.booking.externalId, c.kind]));
     expect(kinds).toMatchObject({ "CHG-OLD": "IMPORTED", "CHG-FRESH": "NEW" });
+  });
+});
+
+describe("Một NĐT nhiều cơ sở, mỗi cơ sở một tài khoản Dayladau", () => {
+  const plain = (t: string) => t;
+  let accM1 = "";
+  let accM2 = "";
+  // Listing không có id: mã listing là tên, trùng nhau giữa hai tài khoản
+  const order = (id: string, checkIn: string, checkOut: string) => ({
+    id, total_billed: 2_000_000, status: "confirmed", listing: { name: "P101" },
+    reservation: { start_time: `${checkIn}T14:00:00+07:00`, end_time: `${checkOut}T12:00:00+07:00` },
+    items: [{ amount: 2_000_000, commission_rates: [{ type: "host", rate: 0.9 }] }],
+  });
+
+  beforeAll(async () => {
+    await db.insert(schema.investors).values({ id: "inv-m", name: "NĐT nhiều cơ sở" });
+    await db.insert(schema.properties).values([
+      { id: "M1", investorId: "inv-m", name: "Hội An" },
+      { id: "M2", investorId: "inv-m", name: "Đà Lạt" },
+    ]);
+    await db.insert(schema.rooms).values([
+      { id: "M1a", propertyId: "M1", name: "P101", openedOn: "2026-01-01" },
+      { id: "M2a", propertyId: "M2", name: "P101", openedOn: "2026-01-01" },
+    ]);
+    accM1 = (await saveDayladauAccount(db, admin, { investorId: "inv-m", label: "TK Hội An", hostId: "host-m1", token: "token-m1-aaaaaaaaaaaa", propertyIds: ["M1"] }, plain)).id;
+    accM2 = (await saveDayladauAccount(db, admin, { investorId: "inv-m", label: "TK Đà Lạt", hostId: "host-m2", token: "token-m2-bbbbbbbbbbbb", propertyIds: ["M2"] }, plain)).id;
+  });
+
+  it("lưu thông tin NĐT, kiểm tra phí, ngày chuyển tiền, hạn hợp đồng", async () => {
+    const info = { ...emptyInfo, id: "inv-m", name: " NĐT nhiều cơ sở ", managementFeePct: 30, bankName: " VCB ", bankAccountNo: "0123", payoutDay: 10, contractStartOn: "2026-01-01", contractEndOn: "2028-12-31" };
+    await expect(saveInvestor(db, admin, { ...info, managementFeePct: 101 })).rejects.toThrow(/Phí quản lý/);
+    await expect(saveInvestor(db, admin, { ...info, payoutDay: 31 })).rejects.toThrow(/Ngày chuyển tiền/);
+    await expect(saveInvestor(db, admin, { ...info, contractEndOn: "2025-12-31" })).rejects.toThrow(/kết thúc/);
+    const row = await saveInvestor(db, admin, info);
+    expect(row).toMatchObject({ name: "NĐT nhiều cơ sở", managementFeePct: 30, bankName: "VCB", payoutDay: 10, contractEndOn: "2028-12-31", active: true });
+  });
+
+  it("tài khoản chỉ dùng cho cơ sở của chính NĐT đó", async () => {
+    await expect(saveDayladauAccount(db, admin, { id: accM1, investorId: "inv-m", label: "TK Hội An", hostId: "host-m1", propertyIds: ["M1", "X"] }, plain)).rejects.toThrow(/không thuộc/);
+    await expect(setPropertyAccount(db, admin, "M1", "acc-a")).rejects.toThrow(/nhà đầu tư khác/);
+    await expect(listingsForProperty(db, admin, "W")).rejects.toThrow(/chưa chọn tài khoản/);
+  });
+
+  it("cùng mã listing ở hai tài khoản gắn được hai phòng khác nhau", async () => {
+    await mapListingToRoom(db, admin, accM1, "P101", "M1a");
+    await mapListingToRoom(db, admin, accM2, "P101", "M2a");
+    // Phòng của cơ sở dùng tài khoản kia thì không gắn được
+    await expect(mapListingToRoom(db, admin, accM1, "P101", "M2a")).rejects.toThrow(/không thuộc/);
+    await mapListingToRoom(db, admin, accM1, "P101", "M1a");
+    const rows = await db.select({ id: schema.rooms.id, acc: schema.rooms.dayladauAccountId }).from(schema.rooms).where(eq(schema.rooms.dayladauRoomId, "P101"));
+    expect(rows.sort((a, b) => a.id.localeCompare(b.id))).toEqual([{ id: "M1a", acc: accM1 }, { id: "M2a", acc: accM2 }]);
+  });
+
+  it("đồng bộ gọi riêng từng tài khoản, đơn về đúng cơ sở", async () => {
+    const byHost: Record<string, ReturnType<typeof order>[]> = { "host-m1": [order("M-1", "2026-09-10", "2026-09-12")], "host-m2": [order("M-2", "2026-09-15", "2026-09-16")] };
+    const calls: string[] = [];
+    const client = { listBookings: async ({ hostId, token }: { hostId: string; token: string }) => { calls.push(`${hostId}:${token}`); return byHost[hostId] ?? []; } };
+    const r = await syncBookings(db, { client, today: "2026-09-30", decrypt: plain, investorIds: ["inv-m"] });
+    expect(calls.sort()).toEqual(["host-m1:token-m1-aaaaaaaaaaaa", "host-m2:token-m2-bbbbbbbbbbbb"]);
+    expect(r).toMatchObject({ created: 2, skipped: 0, errors: [] });
+    const bs = await db.select({ ext: schema.bookings.externalId, prop: schema.bookings.propertyId, room: schema.bookings.roomId }).from(schema.bookings).where(eq(schema.bookings.externalId, "M-1"));
+    expect(bs).toEqual([{ ext: "M-1", prop: "M1", room: "M1a" }]);
+    const [m2] = await db.select({ room: schema.bookings.roomId }).from(schema.bookings).where(eq(schema.bookings.externalId, "M-2"));
+    expect(m2.room).toBe("M2a");
+  });
+
+  it("đồng bộ một tài khoản không báo nhầm đơn của tài khoản kia là đã mất", async () => {
+    const client = { listBookings: async ({ hostId }: { hostId: string }) => (hostId === "host-m1" ? [order("M-1", "2026-09-10", "2026-09-12")] : []) };
+    await syncBookings(db, { client, today: "2026-09-30", decrypt: plain, accountIds: [accM1] });
+    const missing = await db.select().from(schema.alerts).where(and(eq(schema.alerts.type, "BOOKING_MISSING"), eq(schema.alerts.propertyId, "M2")));
+    expect(missing).toEqual([]);
+  });
+
+  it("một tài khoản lỗi không ảnh hưởng tài khoản còn lại; ghi trạng thái theo tài khoản", async () => {
+    const client = { listBookings: async ({ hostId }: { hostId: string }) => { if (hostId === "host-m2") throw new Error("Token hết hạn"); return [order("M-1", "2026-09-10", "2026-09-12")]; } };
+    const r = await syncBookings(db, { client, today: "2026-09-30", decrypt: plain, investorIds: ["inv-m"] });
+    expect(r.unchanged).toBe(1);
+    expect(r.errors).toEqual([{ accountId: accM2, investorId: "inv-m", message: "Token hết hạn" }]);
+    const accs = await db.select().from(schema.dayladauAccounts).where(eq(schema.dayladauAccounts.investorId, "inv-m"));
+    expect(Object.fromEntries(accs.map((a) => [a.label, a.lastSyncStatus]))).toEqual({ "TK Hội An": "OK", "TK Đà Lạt": "FAILED" });
+    const failed = await db.select({ key: schema.alerts.key }).from(schema.alerts).where(eq(schema.alerts.type, "SYNC_FAILED"));
+    expect(failed.map((f) => f.key)).toContain(`SYNC_FAILED:${accM2}:2026-09-30`);
+  });
+
+  it("tài khoản tạm dừng thì không đồng bộ", async () => {
+    await saveDayladauAccount(db, admin, { id: accM2, investorId: "inv-m", label: "TK Đà Lạt", hostId: "host-m2", active: false }, plain);
+    const calls: string[] = [];
+    await syncBookings(db, { client: { listBookings: async ({ hostId }) => { calls.push(hostId); return []; } }, today: "2026-09-30", decrypt: plain, investorIds: ["inv-m"] });
+    expect(calls).toEqual(["host-m1"]);
+    await saveDayladauAccount(db, admin, { id: accM2, investorId: "inv-m", label: "TK Đà Lạt", hostId: "host-m2", active: true }, plain);
+  });
+
+  it("quyết toán dùng phí quản lý theo hợp đồng NĐT và lưu mức phí khi khóa sổ", async () => {
+    const s = await getSettlement(db, admin, "inv-m", "2026-09");
+    expect(s.feePct).toBe(30);
+    expect(s.managementFee).toBe(s.totalProfit > 0 ? Math.floor((s.totalProfit * 30) / 100) : 0);
+  });
+
+  it("đổi tài khoản của cơ sở hoặc chuyển phòng sang cơ sở dùng tài khoản khác thì bỏ gắn listing", async () => {
+    await createRoom(db, admin, { propertyId: "M1", name: "P102", openedOn: "2026-01-01", listingKey: "L-9" });
+    const [p102] = await db.select().from(schema.rooms).where(eq(schema.rooms.dayladauRoomId, "L-9"));
+    const moved = await transferRoom(db, admin, { roomId: p102.id, targetPropertyId: "M2" });
+    expect(moved).toMatchObject({ propertyId: "M2", dayladauAccountId: null, dayladauRoomId: null });
+
+    await setPropertyAccount(db, admin, "M2", accM1);
+    const [m2a] = await db.select().from(schema.rooms).where(eq(schema.rooms.id, "M2a"));
+    expect(m2a).toMatchObject({ dayladauAccountId: null, dayladauRoomId: null });
+    const list = await listConnections(db, admin, plain);
+    const accs = list.find((i) => i.id === "inv-m")!.accounts;
+    expect(Object.fromEntries(accs.map((a) => [a.label, a.propertyIds.sort()]))).toEqual({ "TK Hội An": ["M1", "M2"], "TK Đà Lạt": [] });
   });
 });

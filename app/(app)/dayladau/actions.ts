@@ -4,33 +4,56 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { HttpError, requirePermission } from "@/lib/auth/access";
 import { action, requireUser } from "@/lib/server";
-import { createProperty, createRoom, dismissSyncAlert, mapListingToRoom, saveInvestorConnection, testConnection, type ConnectionTest } from "@/lib/dayladau/admin";
+import {
+  createProperty, createRoom, dismissSyncAlert, mapListingToRoom, saveDayladauAccount, saveInvestor, testConnection, type ConnectionTest,
+} from "@/lib/dayladau/admin";
 import { syncBookings, type SyncSummary } from "@/lib/dayladau/sync";
 import { computeAlerts } from "@/lib/services/alerts";
 import * as D from "@/lib/domain";
 
 type State = { ok: boolean; error?: string } | null;
 const s = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
+const numOrNull = (f: FormData, k: string) => (s(f, k) ? Number(s(f, k).replace(",", ".")) : null);
 
-export async function saveConnectionAction(_: State, f: FormData): Promise<State> {
+export async function saveInvestorAction(_: State, f: FormData): Promise<State> {
   const user = await requireUser();
-  const r = await action(() => saveInvestorConnection(getDb(), user, { id: s(f, "id") || undefined, name: s(f, "name"), hostId: s(f, "hostId"), token: s(f, "token") || undefined }));
+  const r = await action(() =>
+    saveInvestor(getDb(), user, {
+      id: s(f, "id") || undefined, name: s(f, "name"), phone: s(f, "phone"), email: s(f, "email"), taxCode: s(f, "taxCode"), address: s(f, "address"),
+      bankName: s(f, "bankName"), bankAccountNo: s(f, "bankAccountNo"), bankAccountName: s(f, "bankAccountName"),
+      managementFeePct: numOrNull(f, "managementFeePct"), contractStartOn: s(f, "contractStartOn") || null, contractEndOn: s(f, "contractEndOn") || null,
+      contractUrl: s(f, "contractUrl"), payoutDay: numOrNull(f, "payoutDay"), active: s(f, "active") !== "0", note: s(f, "note"),
+    }),
+  );
   revalidatePath("/dayladau");
   return r;
 }
 
-export async function testConnectionAction(investorId: string): Promise<ConnectionTest> {
+export async function saveAccountAction(_: State, f: FormData): Promise<State> {
+  const user = await requireUser();
+  const r = await action(() =>
+    saveDayladauAccount(getDb(), user, {
+      id: s(f, "id") || undefined, investorId: s(f, "investorId"), label: s(f, "label"), hostId: s(f, "hostId"), token: s(f, "token") || undefined,
+      active: f.get("active") === "1", propertyIds: f.getAll("propertyIds").map(String),
+    }),
+  );
+  revalidatePath("/dayladau");
+  revalidatePath("/properties");
+  return r;
+}
+
+export async function testConnectionAction(accountId: string): Promise<ConnectionTest> {
   const user = await requireUser();
   try {
-    return await testConnection(getDb(), user, investorId);
+    return await testConnection(getDb(), user, accountId);
   } catch (e) {
     return { ok: false, error: e instanceof HttpError ? e.message : "Lỗi máy chủ", ordersOnFirstPage: 0, listings: [], statuses: [], samples: [] };
   }
 }
 
-export async function mapListingAction(investorId: string, listingKey: string, roomId: string | null): Promise<State> {
+export async function mapListingAction(accountId: string, listingKey: string, roomId: string | null): Promise<State> {
   const user = await requireUser();
-  const r = await action(() => mapListingToRoom(getDb(), user, investorId, listingKey, roomId));
+  const r = await action(() => mapListingToRoom(getDb(), user, accountId, listingKey, roomId));
   revalidatePath("/dayladau");
   return r;
 }
@@ -47,7 +70,7 @@ export async function createPropertyAction(_: State, f: FormData): Promise<State
   const user = await requireUser();
   const r = await action(() =>
     createProperty(getDb(), user, {
-      investorId: s(f, "investorId"), name: s(f, "name"),
+      investorId: s(f, "investorId"), name: s(f, "name"), dayladauAccountId: s(f, "dayladauAccountId") || null,
       investmentAmount: Number(s(f, "investmentAmount").replace(/[^\d]/g, "")) || 0, investmentStartMonth: s(f, "investmentStartMonth"),
     }),
   );
@@ -55,12 +78,12 @@ export async function createPropertyAction(_: State, f: FormData): Promise<State
   return r;
 }
 
-export async function syncNowAction(investorId: string): Promise<{ ok: boolean; error?: string; summary?: SyncSummary }> {
+export async function syncNowAction(accountId: string): Promise<{ ok: boolean; error?: string; summary?: SyncSummary }> {
   const user = await requireUser();
   try {
     requirePermission(user, "admin");
     const db = getDb();
-    const summary = await syncBookings(db, { investorIds: [investorId] });
+    const summary = await syncBookings(db, { accountIds: [accountId] });
     await computeAlerts(db);
     revalidatePath("/dayladau");
     return { ok: summary.errors.length === 0, summary, error: summary.errors[0]?.message };

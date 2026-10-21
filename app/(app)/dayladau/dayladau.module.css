@@ -19,6 +19,13 @@
 .tChanged { border-left: 4px solid var(--gold); }
 .tSkipped { border-left: 4px solid var(--warn); }
 
+/* Một tài khoản Dayladau trong thẻ nhà đầu tư */
+.account { border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
+.account > * { margin-top: 0; margin-bottom: 0; }
+.accHead { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 8px 16px; }
+.accHead h3 { margin: 0; }
+.accHead p { margin: 2px 0 0; overflow-wrap: anywhere; }
+
 .alerts { display: grid; gap: 8px; }
 .alert { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--line); font-size: .9rem; }
 .alert:first-child { border-top: 0; padding-top: 0; }

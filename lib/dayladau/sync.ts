@@ -1,8 +1,8 @@
 // Job đồng bộ Dayladau (Đặc tả mục 6). Chạy 06:00 hằng ngày và khi Admin bấm "Đồng bộ ngay".
-import { and, eq, gte, inArray, isNotNull, notInArray } from "drizzle-orm";
+import { and, eq, gte, inArray, notInArray } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
-import { alerts, bookings, investors, properties, rooms, syncRuns } from "../db/schema";
+import { alerts, bookings, dayladauAccounts, investors, properties, rooms, syncRuns } from "../db/schema";
 import { decryptSecret, getAllSettings, notifyLark } from "../services/settings";
 import { upsertBooking } from "../services/bookings";
 import { httpDayladauClient, type DayladauClient } from "./client";
@@ -14,10 +14,10 @@ export interface SyncSummary {
   unchanged: number;
   skipped: number;
   adjustments: number;
-  errors: { investorId: string; message: string }[];
+  errors: { accountId: string; investorId: string; message: string }[];
 }
 
-/** Mỗi lần đồng bộ chỉ lấy chừng này đơn mới nhất của mỗi NĐT (API trả đơn mới tạo trước). */
+/** Mỗi lần đồng bộ chỉ lấy chừng này đơn mới nhất của mỗi tài khoản (API trả đơn mới tạo trước). */
 export const SYNC_MAX_ORDERS = 300;
 
 async function raiseAlert(db: DB, type: string, key: string, message: string, propertyId?: string) {
@@ -26,7 +26,7 @@ async function raiseAlert(db: DB, type: string, key: string, message: string, pr
 
 export async function syncBookings(
   db: DB,
-  opts: { client?: DayladauClient; today?: string; decrypt?: (s: string) => string; investorIds?: string[]; maxOrders?: number } = {},
+  opts: { client?: DayladauClient; today?: string; decrypt?: (s: string) => string; investorIds?: string[]; accountIds?: string[]; maxOrders?: number } = {},
 ): Promise<SyncSummary> {
   const client = opts.client ?? httpDayladauClient;
   const decrypt = opts.decrypt ?? decryptSecret;
@@ -36,18 +36,26 @@ export async function syncBookings(
   const [run] = await db.insert(syncRuns).values({}).returning();
   const sum: SyncSummary = { created: 0, updated: 0, unchanged: 0, skipped: 0, adjustments: 0, errors: [] };
 
-  const conds = [isNotNull(investors.dayladauHostId), isNotNull(investors.dayladauTokenEncrypted)];
-  if (opts.investorIds?.length) conds.push(inArray(investors.id, opts.investorIds));
-  const invs = await db.select().from(investors).where(and(...conds));
+  // Gọi riêng từng tài khoản Dayladau đang bật; tài khoản chỉ đổ đơn vào các cơ sở đang dùng nó
+  const conds = [eq(dayladauAccounts.active, true)];
+  if (opts.investorIds?.length) conds.push(inArray(dayladauAccounts.investorId, opts.investorIds));
+  if (opts.accountIds?.length) conds.push(inArray(dayladauAccounts.id, opts.accountIds));
+  const accs = await db
+    .select({ acc: dayladauAccounts, investorName: investors.name })
+    .from(dayladauAccounts)
+    .innerJoin(investors, eq(investors.id, dayladauAccounts.investorId))
+    .where(and(...conds));
   const allRooms = await db.select().from(rooms);
 
-  for (const inv of invs) {
+  for (const { acc, investorName } of accs) {
+    const who = `${investorName} · ${acc.label}`;
+    const errorsBefore = sum.errors.length;
     try {
-      const props = await db.select().from(properties).where(eq(properties.investorId, inv.id));
+      const props = await db.select().from(properties).where(eq(properties.dayladauAccountId, acc.id));
       const pids = props.map((p) => p.id);
-      // Phòng của NĐT này, tra theo mã listing Dayladau (id hoặc tên listing)
-      const roomByListing = new Map(allRooms.filter((r) => r.dayladauRoomId && pids.includes(r.propertyId)).map((r) => [r.dayladauRoomId!, r]));
-      const raws = await client.listBookings({ hostId: inv.dayladauHostId!, token: decrypt(inv.dayladauTokenEncrypted!), maxOrders });
+      // Phòng của tài khoản này, tra theo mã listing Dayladau (id hoặc tên listing)
+      const roomByListing = new Map(allRooms.filter((r) => r.dayladauAccountId === acc.id && r.dayladauRoomId && pids.includes(r.propertyId)).map((r) => [r.dayladauRoomId!, r]));
+      const raws = await client.listBookings({ hostId: acc.hostId, token: decrypt(acc.tokenEncrypted), maxOrders });
       const seen: string[] = [];
       const unmapped = new Map<string, { name: string; count: number }>();
 
@@ -57,7 +65,7 @@ export async function syncBookings(
           m = mapDayladauOrder(raw);
         } catch (e) {
           sum.skipped++;
-          sum.errors.push({ investorId: inv.id, message: (e as Error).message });
+          sum.errors.push({ accountId: acc.id, investorId: acc.investorId, message: (e as Error).message });
           continue;
         }
         const room = roomByListing.get(m.listingKey) ?? roomByListing.get(m.listingName);
@@ -84,10 +92,11 @@ export async function syncBookings(
       }
 
       for (const [key, u] of unmapped) {
-        await raiseAlert(db, "UNMAPPED_ROOM", `UNMAPPED_ROOM:${inv.id}:${key}`, `${inv.name}: listing "${u.name}" (${u.count} đơn) chưa gắn với phòng nào. Vào trang Kết nối Dayladau để gắn.`);
+        await raiseAlert(db, "UNMAPPED_ROOM", `UNMAPPED_ROOM:${acc.id}:${key}`, `${who}: listing "${u.name}" (${u.count} đơn) chưa gắn với phòng nào. Vào trang Kết nối Dayladau để gắn.`);
       }
 
       // Đơn đã có nhưng không còn trả về từ API: không xóa, chỉ cảnh báo (chỉ xét đơn còn ở tương lai gần).
+      // Chỉ xét cơ sở dùng tài khoản này: đơn của cơ sở dùng tài khoản khác không bao giờ có trong kết quả.
       // Chỉ kết luận được khi đã lấy hết đơn; chạm trần maxOrders thì đơn cũ vắng mặt là chuyện bình thường.
       if (pids.length && raws.length < maxOrders) {
         const missing = await db
@@ -98,12 +107,14 @@ export async function syncBookings(
           await raiseAlert(db, "BOOKING_MISSING", `BOOKING_MISSING:${b.id}`, `Đơn ${b.externalId} không còn trả về từ Dayladau. Kiểm tra lại trên Dayladau.`, b.propertyId);
         }
       }
+      await db.update(dayladauAccounts).set({ lastSyncedAt: new Date(), lastSyncStatus: "OK", lastSyncError: sum.errors[errorsBefore]?.message ?? null }).where(eq(dayladauAccounts.id, acc.id));
     } catch (e) {
       const message = (e as Error).message;
-      sum.errors.push({ investorId: inv.id, message });
-      await raiseAlert(db, "SYNC_FAILED", `SYNC_FAILED:${inv.id}:${today}`, `Đồng bộ Dayladau lỗi cho ${inv.name}: ${message}`);
-      await notifyLark(db, `Đồng bộ Dayladau lỗi cho ${inv.name}: ${message}`);
-      // Lỗi của một NĐT không dừng các NĐT khác
+      sum.errors.push({ accountId: acc.id, investorId: acc.investorId, message });
+      await db.update(dayladauAccounts).set({ lastSyncedAt: new Date(), lastSyncStatus: "FAILED", lastSyncError: message }).where(eq(dayladauAccounts.id, acc.id));
+      await raiseAlert(db, "SYNC_FAILED", `SYNC_FAILED:${acc.id}:${today}`, `Đồng bộ Dayladau lỗi cho ${who}: ${message}`);
+      await notifyLark(db, `Đồng bộ Dayladau lỗi cho ${who}: ${message}`);
+      // Lỗi của một tài khoản không dừng các tài khoản khác
     }
   }
 

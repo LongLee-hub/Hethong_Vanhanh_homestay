@@ -22,6 +22,13 @@
       "when": 1792040164035,
       "tag": "0002_revenue_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792556706328,
+      "tag": "0003_dayladau_accounts",
+      "breakpoints": true
     }
   ]
 }

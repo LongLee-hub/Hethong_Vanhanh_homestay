@@ -30,13 +30,50 @@ export const investors = pgTable("investors", {
   id: id(),
   name: text("name").notNull(),
   userId: text("user_id").unique().references(() => users.id),
+  // Liên hệ và pháp lý
+  phone: text("phone"),
+  email: text("email"),
+  taxCode: text("tax_code"), // MST hoặc CCCD
+  address: text("address"),
+  // Tài khoản nhận tiền quyết toán
+  bankName: text("bank_name"),
+  bankAccountNo: text("bank_account_no"),
+  bankAccountName: text("bank_account_name"),
+  // Hợp đồng
+  managementFeePct: numeric("management_fee_pct", { precision: 5, scale: 2, mode: "number" }), // null = dùng mức chung managementFeePct
+  contractStartOn: day("contract_start_on"),
+  contractEndOn: day("contract_end_on"),
+  contractUrl: text("contract_url"),
+  payoutDay: integer("payout_day"), // ngày chuyển tiền hằng tháng (1–28)
+  active: boolean("active").notNull().default(true),
+  note: text("note"),
+  createdAt: ts("created_at").notNull().defaultNow(),
+  /** @deprecated Đã chuyển sang dayladau_accounts (migration 0003). Không đọc/ghi; sẽ xóa ở migration sau. */
   dayladauHostId: text("dayladau_host_id"),
-  dayladauTokenEncrypted: text("dayladau_token_encrypted"), // AES-256-GCM, không bao giờ trả ra client
+  /** @deprecated Như trên. */
+  dayladauTokenEncrypted: text("dayladau_token_encrypted"),
+});
+
+/** Tài khoản Dayladau (host ID + access token) của NĐT. Mỗi cơ sở lấy đơn từ đúng 1 tài khoản; 1 tài khoản có thể dùng cho nhiều cơ sở. */
+export const dayladauAccounts = pgTable("dayladau_accounts", {
+  id: id(),
+  investorId: text("investor_id").notNull().references(() => investors.id),
+  label: text("label").notNull(), // vd "TK Hội An"
+  hostId: text("host_id").notNull().unique(),
+  tokenEncrypted: text("token_encrypted").notNull(), // AES-256-GCM, không bao giờ trả ra client
+  tokenLast4: text("token_last4"), // để hiện "…abcd" mà không cần giải mã
+  tokenUpdatedAt: ts("token_updated_at"),
+  active: boolean("active").notNull().default(true), // false = tạm dừng đồng bộ
+  lastSyncedAt: ts("last_synced_at"),
+  lastSyncStatus: text("last_sync_status"), // OK | FAILED
+  lastSyncError: text("last_sync_error"),
+  createdAt: ts("created_at").notNull().defaultNow(),
 });
 
 export const properties = pgTable("properties", {
   id: id(),
   investorId: text("investor_id").notNull().references(() => investors.id),
+  dayladauAccountId: text("dayladau_account_id").references(() => dayladauAccounts.id), // null = chỉ nhập đơn tay
   name: text("name").notNull(),
   address: text("address"),
   investmentAmount: money("investment_amount"),
@@ -47,15 +84,21 @@ export const properties = pgTable("properties", {
   active: boolean("active").notNull().default(true),
 });
 
-export const rooms = pgTable("rooms", {
-  id: id(),
-  propertyId: text("property_id").notNull().references(() => properties.id),
-  name: text("name").notNull(),
-  dayladauRoomId: text("dayladau_room_id").unique(),
-  openedOn: day("opened_on").notNull(),
-  closedOn: day("closed_on"),
-  revenueKpiMonthly: money("revenue_kpi_monthly"), // KPI doanh thu / tháng, 0 = chưa đặt
-});
+export const rooms = pgTable(
+  "rooms",
+  {
+    id: id(),
+    propertyId: text("property_id").notNull().references(() => properties.id),
+    name: text("name").notNull(),
+    // Listing Dayladau đang gắn: mã listing là duy nhất trong một tài khoản (tên listing có thể trùng giữa các tài khoản)
+    dayladauAccountId: text("dayladau_account_id").references(() => dayladauAccounts.id),
+    dayladauRoomId: text("dayladau_room_id"),
+    openedOn: day("opened_on").notNull(),
+    closedOn: day("closed_on"),
+    revenueKpiMonthly: money("revenue_kpi_monthly"), // KPI doanh thu / tháng, 0 = chưa đặt
+  },
+  (t) => [uniqueIndex("rooms_dayladau_listing").on(t.dayladauAccountId, t.dayladauRoomId)],
+);
 
 export const userPropertyAccess = pgTable(
   "user_property_access",
@@ -183,6 +226,7 @@ export const settlements = pgTable(
     totalCommonCost: money("total_common_cost"),
     totalProfit: money("total_profit"),
     managementFee: money("management_fee"),
+    feePct: numeric("fee_pct", { precision: 5, scale: 2, mode: "number" }), // mức phí lúc khóa sổ; null = khóa trước khi có cột này
     investorNet: money("investor_net"),
     lockedAt: ts("locked_at"),
     lockedById: text("locked_by_id"),

@@ -8,7 +8,7 @@ Phân trang: tăng offset 100 đến khi trang trả ít hơn 100 đơn. Bỏ tr
 | Trường Booking | Trường order | Ghi chú |
 | --- | --- | --- |
 | externalId | `id` | Khóa upsert |
-| phòng | `listing.id` (không có thì `listing.name`) → `rooms.dayladau_room_id` | Gắn ở màn hình Kết nối Dayladau; chưa gắn thì bỏ qua đơn và cảnh báo |
+| phòng | `listing.id` (không có thì `listing.name`) → `rooms.dayladau_room_id`, duy nhất trong một tài khoản (`rooms.dayladau_account_id`) | Gắn ở màn hình Kết nối Dayladau; chưa gắn thì bỏ qua đơn và cảnh báo |
 | guestName | `guest.fullname` | SĐT khách không lưu thành cột riêng |
 | checkIn / checkOut | `reservation.start_time` / `end_time` | Đổi về ngày giờ Việt Nam. Thuê theo giờ trong ngày → 1 đêm tại ngày nhận phòng (TODO(CONFIRM)) |
 | grossAmount | `total_billed` | Khách trả |

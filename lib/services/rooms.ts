@@ -6,6 +6,13 @@ import { assertPropertyAccess, badRequest, notFound, requirePermission, type Ses
 
 export type RoomRow = typeof rooms.$inferSelect;
 
+/** Mã listing luôn đi kèm tài khoản Dayladau của cơ sở (mã chỉ duy nhất trong một tài khoản). */
+function listingOf(prop: typeof properties.$inferSelect, listingKey: string | null) {
+  if (!listingKey) return { dayladauAccountId: null, dayladauRoomId: null };
+  if (!prop.dayladauAccountId) throw badRequest("Cơ sở chưa chọn tài khoản Dayladau, chưa gắn được listing");
+  return { dayladauAccountId: prop.dayladauAccountId, dayladauRoomId: listingKey };
+}
+
 // ---------- Tạo phòng ----------
 
 export interface CreateRoomInput {
@@ -30,7 +37,7 @@ export async function createRoom(db: DB, user: SessionUser, input: CreateRoomInp
     .values({
       propertyId: input.propertyId,
       name: input.name.trim(),
-      dayladauRoomId: input.dayladauRoomId ?? null,
+      ...listingOf(prop, input.dayladauRoomId ?? null),
       openedOn: input.openedOn,
     })
     .returning();
@@ -56,7 +63,10 @@ export async function updateRoom(db: DB, user: SessionUser, roomId: string, inpu
     if (!input.name.trim()) throw badRequest("Nhập tên phòng");
     updates.name = input.name.trim();
   }
-  if (input.dayladauRoomId !== undefined) updates.dayladauRoomId = input.dayladauRoomId;
+  if (input.dayladauRoomId !== undefined) {
+    const [prop] = await db.select().from(properties).where(eq(properties.id, room.propertyId)).limit(1);
+    Object.assign(updates, listingOf(prop!, input.dayladauRoomId));
+  }
   if (input.revenueKpiMonthly !== undefined) {
     if (!Number.isSafeInteger(input.revenueKpiMonthly) || input.revenueKpiMonthly < 0) throw badRequest("KPI doanh thu phải là số tiền không âm");
     updates.revenueKpiMonthly = input.revenueKpiMonthly;
@@ -111,7 +121,8 @@ export async function transferRoom(db: DB, user: SessionUser, input: TransferRoo
 
   const [updated] = await db
     .update(rooms)
-    .set({ propertyId: input.targetPropertyId })
+    // Cơ sở đích dùng tài khoản Dayladau khác: listing đang gắn không thuộc tài khoản đó nên bỏ gắn
+    .set(source!.dayladauAccountId === target.dayladauAccountId ? { propertyId: input.targetPropertyId } : { propertyId: input.targetPropertyId, dayladauAccountId: null, dayladauRoomId: null })
     .where(eq(rooms.id, input.roomId))
     .returning();
   return updated;

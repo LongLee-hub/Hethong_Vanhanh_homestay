@@ -3,6 +3,7 @@ import { asc } from "drizzle-orm";
 import * as D from "@/lib/domain";
 import { getDb } from "@/lib/db";
 import { investors } from "@/lib/db/schema";
+import { accountsByInvestor } from "@/lib/dayladau/admin";
 import { can } from "@/lib/auth/access";
 import { NoAccess } from "@/components/NoAccess";
 import { requireUser } from "@/lib/server";
@@ -11,7 +12,7 @@ import { vnd } from "@/components/MonthNav";
 import { ActionForm } from "@/components/ActionForm";
 import {
   closeRoomAction, createPropertyAction, renameRoomAction, reopenRoomAction, setRoomKpiAction,
-  setPropertyActiveAction, transferRoomAction, updatePropertyAction,
+  setPropertyAccountAction, setPropertyActiveAction, transferRoomAction, updatePropertyAction,
 } from "./actions";
 import { AddRoom } from "./add-room";
 
@@ -36,6 +37,9 @@ export default async function Properties({ searchParams }: { searchParams: Promi
   // Admin cần cả chủ đầu tư chưa có cơ sở nào để tạo cơ sở đầu tiên cho họ
   const invs = admin ? await db.select({ id: investors.id, name: investors.name }).from(investors).orderBy(asc(investors.name)) : await visibleInvestors(db, user);
   const invName = Object.fromEntries(invs.map((i) => [i.id, i.name]));
+  // Tài khoản Dayladau chỉ Admin quản lý
+  const accounts = admin ? await accountsByInvestor(db, invs.map((i) => i.id)) : [];
+  const accLabel = Object.fromEntries(accounts.map((a) => [a.id, a.label]));
   const invId = invs.some((i) => i.id === sp.inv) ? sp.inv : null;
   const props = invId ? all.filter((p) => p.investorId === invId) : all;
 
@@ -72,6 +76,14 @@ export default async function Properties({ searchParams }: { searchParams: Promi
             <label className="field"><span>Tên cơ sở</span><input type="text" name="name" id="new-name" required /></label>
             <label className="field"><span>Vốn đầu tư (VND)</span><input type="text" inputMode="numeric" name="investmentAmount" id="new-investmentAmount" placeholder="1.500.000.000" /></label>
             <label className="field"><span>Tháng bắt đầu đầu tư</span><input type="month" name="investmentStartMonth" id="new-investmentStartMonth" /></label>
+            <label className="field"><span>Tài khoản Dayladau</span>
+              <select name="dayladauAccountId" id="new-dayladauAccountId" defaultValue="">
+                <option value="">— Chưa chọn (chỉ nhập đơn tay) —</option>
+                {invs.map((i) => accounts.some((a) => a.investorId === i.id) && (
+                  <optgroup key={i.id} label={i.name}>{accounts.filter((a) => a.investorId === i.id).map((a) => <option key={a.id} value={a.id}>{a.label} ({a.hostId})</option>)}</optgroup>
+                ))}
+              </select>
+            </label>
           </ActionForm>
         </details>
       )}
@@ -97,6 +109,7 @@ export default async function Properties({ searchParams }: { searchParams: Promi
                 <div className="kv"><span>KPI kín phòng</span><b>{p.occupancyKpiPct}%</b></div>
                 <div className="kv"><span>Chi phí biến đổi / đêm</span><b>{vnd(p.variableCostPerNight)}</b></div>
                 <div className="kv"><span>Chi phí cố định / tháng</span><b>{vnd(p.fixedCostMonthly)}</b></div>
+                {admin && <div className="kv"><span>Tài khoản Dayladau</span><b>{p.dayladauAccountId ? accLabel[p.dayladauAccountId] ?? "—" : "Chưa chọn"}</b></div>}
               </div>
 
               <h3 className="sub-title">Phòng ({p.rooms.length})</h3>
@@ -142,7 +155,7 @@ export default async function Properties({ searchParams }: { searchParams: Promi
                                 <label className="field"><span>Ngày đóng</span><input type="date" name="closedOn" id={`close-${r.id}`} defaultValue={today} required /></label>
                               </ActionForm>
                             )}
-                            <p className="hint">Mở từ {D.formatDateVN(r.openedOn)}. Chỉ chuyển được phòng không còn đơn chưa trả phòng, sang cơ sở cùng chủ đầu tư.</p>
+                            <p className="hint">Mở từ {D.formatDateVN(r.openedOn)}. Chỉ chuyển được phòng không còn đơn chưa trả phòng, sang cơ sở cùng chủ đầu tư. Cơ sở đích dùng tài khoản Dayladau khác thì listing của phòng bị bỏ gắn.</p>
                           </div>
                         </details>
                       )}
@@ -158,9 +171,9 @@ export default async function Properties({ searchParams }: { searchParams: Promi
                     <details className="fold sub">
                       <summary><b>Thêm phòng</b></summary>
                       <AddRoom
-                        investorId={p.investorId}
                         propertyId={p.id}
-                        properties={all.filter((t) => t.investorId === p.investorId && t.active).map((t) => ({ id: t.id, name: t.name }))}
+                        hasAccount={!!p.dayladauAccountId}
+                        properties={all.filter((t) => t.investorId === p.investorId && t.active && t.dayladauAccountId === p.dayladauAccountId).map((t) => ({ id: t.id, name: t.name }))}
                         roomLabel={roomLabel}
                         today={today}
                       />
@@ -178,6 +191,14 @@ export default async function Properties({ searchParams }: { searchParams: Promi
                       <label className="field"><span>Chi phí biến đổi / đêm</span><input type="text" inputMode="numeric" name="variableCostPerNight" id={`p-var-${p.id}`} defaultValue={p.variableCostPerNight || ""} /></label>
                       <label className="field"><span>Chi phí cố định / tháng</span><input type="text" inputMode="numeric" name="fixedCostMonthly" id={`p-fix-${p.id}`} defaultValue={p.fixedCostMonthly || ""} /></label>
                     </ActionForm>
+                    <ActionForm action={setPropertyAccountAction} submit="Đổi tài khoản Dayladau" okText="Đã lưu" className="row">
+                      <input type="hidden" name="propertyId" value={p.id} />
+                      <select name="dayladauAccountId" id={`p-acc-${p.id}`} defaultValue={p.dayladauAccountId ?? ""} aria-label="Tài khoản Dayladau">
+                        <option value="">— Chưa chọn (chỉ nhập đơn tay) —</option>
+                        {accounts.filter((a) => a.investorId === p.investorId).map((a) => <option key={a.id} value={a.id}>{a.label} ({a.hostId})</option>)}
+                      </select>
+                    </ActionForm>
+                    <p className="hint">Đổi tài khoản Dayladau sẽ bỏ gắn listing ở mọi phòng của cơ sở này; gắn lại ở trang Kết nối Dayladau.</p>
                     <ActionForm action={setPropertyActiveAction} submit={p.active ? "Ngưng hoạt động cơ sở" : "Mở lại cơ sở"} okText="Đã cập nhật" className={`row danger-zone ${p.active ? "" : "safe"}`}>
                       <input type="hidden" name="propertyId" value={p.id} /><input type="hidden" name="active" value={p.active ? "0" : "1"} />
                     </ActionForm>

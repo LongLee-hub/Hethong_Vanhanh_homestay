@@ -1,15 +1,15 @@
 "use client";
-// Thêm phòng: lấy danh sách listing từ API Dayladau của chủ đầu tư, chọn một listing rồi đặt tên phòng và cơ sở.
+// Thêm phòng: lấy danh sách listing từ tài khoản Dayladau của cơ sở, chọn một listing rồi đặt tên phòng và cơ sở.
 import { useState, useTransition } from "react";
 import type { ListingSummary } from "@/lib/dayladau/admin";
 import { createRoomAction, listingsAction } from "./actions";
 
 type Opt = { id: string; name: string };
 
-export function AddRoom({ investorId, propertyId, properties, roomLabel, today }: {
-  investorId: string;
+export function AddRoom({ propertyId, hasAccount, properties, roomLabel, today }: {
   propertyId: string;
-  properties: Opt[]; // cơ sở đang hoạt động cùng chủ đầu tư
+  hasAccount: boolean; // cơ sở đã chọn tài khoản Dayladau
+  properties: Opt[]; // cơ sở đang hoạt động cùng chủ đầu tư và cùng tài khoản Dayladau
   roomLabel: Record<string, string>; // roomId -> "Cơ sở · Phòng", để báo listing đã gắn phòng nào
   today: string;
 }) {
@@ -26,7 +26,7 @@ export function AddRoom({ investorId, propertyId, properties, roomLabel, today }
   const load = () =>
     startLoad(async () => {
       setLoadErr("");
-      const r = await listingsAction(investorId);
+      const r = await listingsAction(propertyId);
       setListings(r.listings);
       if (!r.ok) setLoadErr(r.error ?? "Không lấy được danh sách phòng từ Dayladau");
     });
@@ -53,12 +53,13 @@ export function AddRoom({ investorId, propertyId, properties, roomLabel, today }
 
   return (
     <div className="stack" style={{ gap: 16 }}>
-      <div className="row">
+      {!hasAccount && <p className="hint">Cơ sở chưa chọn tài khoản Dayladau nên chỉ thêm được phòng không gắn listing. Chọn tài khoản ở mục Sửa thông tin cơ sở.</p>}
+      {hasAccount && <div className="row">
         <button type="button" className="btn sm" onClick={load} disabled={loading}>
           {loading ? "Đang tải…" : listings ? "Tải lại danh sách" : "Lấy danh sách phòng từ Dayladau"}
         </button>
         {listings && !loadErr && <span className="small muted">{free.length} phòng chưa gắn · {taken.length} đã gắn</span>}
-      </div>
+      </div>}
       {loadErr && <div className="banner bad">{loadErr}</div>}
 
       {listings && (
