@@ -4,9 +4,11 @@ import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
 import { gmailAccounts } from "@/lib/db/schema";
-import { badRequest, notFound } from "@/lib/auth/access";
+import { badRequest, can, notFound } from "@/lib/auth/access";
 import { action, requireUser } from "@/lib/server";
-import { canManageGmail, disconnectGmail, reparsePayout, syncPayouts } from "@/lib/airbnb/payouts";
+import { canManageGmail, deletePastedPayout, disconnectGmail, importPastedPayout, previewPastedPayout, reparsePayout, syncPayouts } from "@/lib/airbnb/payouts";
+import type { ParsedPayout } from "@/lib/airbnb/payout-parser";
+import { saveGoogleSetup } from "@/lib/gmail/config";
 
 type State = { ok: boolean; error?: string; message?: string } | null;
 
@@ -37,4 +39,36 @@ export async function reparsePayoutAction(payoutId: string): Promise<State> {
   const r = await action(() => reparsePayout(getDb(), user, payoutId));
   revalidatePath("/payouts");
   return r.ok ? { ok: true, message: "Đã tách lại" } : r;
+}
+
+export async function saveGoogleSetupAction(_: State, f: FormData): Promise<State> {
+  const user = await requireUser();
+  const r = await action(() =>
+    saveGoogleSetup(getDb(), user, { clientId: String(f.get("clientId") ?? ""), clientSecret: String(f.get("clientSecret") ?? ""), appUrl: String(f.get("appUrl") ?? "") }),
+  );
+  revalidatePath("/payouts");
+  return r;
+}
+
+export type PreviewResult = { ok: true; parsed: ParsedPayout } | { ok: false; error: string };
+
+export async function previewPasteAction(input: { subject: string; text: string }): Promise<PreviewResult> {
+  const user = await requireUser();
+  if (!can(user, "viewFee")) return { ok: false, error: "Bạn không có quyền thực hiện thao tác này" };
+  if (input.text.trim().length < 20) return { ok: false, error: "Dán toàn bộ nội dung email payout" };
+  return { ok: true, parsed: previewPastedPayout(input) };
+}
+
+export async function importPasteAction(input: { investorId: string; subject: string; text: string; receivedOn: string }): Promise<State> {
+  const user = await requireUser();
+  const r = await action(() => importPastedPayout(getDb(), user, input));
+  revalidatePath("/payouts");
+  return r.ok ? { ok: true, message: "Đã lưu payout" } : r;
+}
+
+export async function deletePastedAction(payoutId: string): Promise<State> {
+  const user = await requireUser();
+  const r = await action(() => deletePastedPayout(getDb(), user, payoutId));
+  revalidatePath("/payouts");
+  return r;
 }

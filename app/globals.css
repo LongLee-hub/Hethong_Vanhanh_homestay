@@ -348,3 +348,16 @@ tr.payout-head td:last-child { border-radius: 0 10px 10px 0; }
 .gmail-list > li + li { border-top: 1px solid var(--line); }
 .gmail-inv, .gmail-acc { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
 .gmail-acc { padding: 12px 16px; border-radius: 12px; background: var(--surface-2); overflow-wrap: anywhere; }
+.setup-summary { display: flex; align-items: center; gap: 12px; cursor: pointer; list-style: none; }
+.setup-summary::-webkit-details-marker { display: none; }
+.setup-summary::after { content: ""; margin-left: auto; width: 8px; height: 8px; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(45deg); transition: transform .15s; }
+details[open] > .setup-summary::after { transform: rotate(-135deg); }
+.setup-steps { margin: 16px 0 0; padding-left: 20px; display: grid; gap: 20px; }
+.setup-steps > li { padding-left: 4px; }
+.setup-steps > li::marker { font-weight: 600; }
+.setup-steps .form-grid { margin-top: 12px; }
+.copy-field { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
+.copy-field code, .setup-steps code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; font-size: .86rem; overflow-wrap: anywhere; }
+textarea.paste-body { min-height: 200px; }
+.paste-preview { display: grid; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
+@media (prefers-reduced-motion: reduce) { .setup-summary::after { transition: none; } }

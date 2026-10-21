@@ -387,9 +387,9 @@ export const airbnbPayouts = pgTable(
   "airbnb_payouts",
   {
     id: id(),
-    gmailAccountId: text("gmail_account_id").notNull().references(() => gmailAccounts.id),
+    gmailAccountId: text("gmail_account_id").references(() => gmailAccounts.id), // null = email dán tay trên web
     investorId: text("investor_id").notNull().references(() => investors.id),
-    gmailMessageId: text("gmail_message_id").notNull(),
+    gmailMessageId: text("gmail_message_id").notNull(), // email dán tay: "paste:" + mã băm nội dung
     receivedAt: ts("received_at").notNull(),
     payoutDate: day("payout_date").notNull(), // ngày gửi tiền (theo email), giờ VN
     amount: money("amount"), // tổng tiền chuyển, VND

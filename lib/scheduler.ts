@@ -6,7 +6,6 @@ import { syncBookings } from "./dayladau/sync";
 import { computeAlerts } from "./services/alerts";
 import { generateCleaningTasks } from "./services/tasks";
 import { syncPayouts } from "./airbnb/payouts";
-import { gmailConfigured } from "./gmail/oauth";
 
 const g = globalThis as unknown as { _autoSync?: { timer: NodeJS.Timeout; running: boolean } };
 
@@ -20,7 +19,7 @@ async function tick() {
     const alerts = await computeAlerts(db);
     const today = D.todayVN();
     const cleaning = await generateCleaningTasks(db, today, D.addDays(today, 1));
-    const payouts = gmailConfigured() ? await syncPayouts(db).catch((e) => ({ error: (e as Error).message })) : null;
+    const payouts = await syncPayouts(db).catch((e) => ({ error: (e as Error).message }));
     console.log(`[auto-sync] ${new Date().toISOString()}`, { sync, alerts, cleaning, payouts });
   } catch (e) {
     console.error("[auto-sync] lỗi:", (e as Error).message);

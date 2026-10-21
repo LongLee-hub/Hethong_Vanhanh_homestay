@@ -1,26 +1,21 @@
 // Đăng nhập Google (OAuth 2.0, luồng web) để đọc Gmail chỉ-đọc. Không dùng thư viện googleapis, gọi thẳng REST.
-// Cần GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET; địa chỉ quay về mặc định là <origin>/api/gmail/callback.
+// Client ID/Secret lấy từ GoogleConfig (lib/gmail/config.ts): biến môi trường hoặc trang Payout Airbnb → Cài đặt Google.
 import { SignJWT, jwtVerify } from "jose";
+import type { GoogleConfig } from "./config";
 
 export const GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const STATE_TTL = "15m";
 
-export function gmailConfigured(): boolean {
-  return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-}
-
-function creds() {
-  const id = process.env.GOOGLE_CLIENT_ID;
-  const secret = process.env.GOOGLE_CLIENT_SECRET;
-  if (!id || !secret) throw new Error("Chưa cấu hình GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET");
-  return { id, secret };
+function creds(cfg: GoogleConfig) {
+  if (!cfg.clientId || !cfg.clientSecret) throw new Error("Chưa nhập Client ID / Client Secret của Google");
+  return { id: cfg.clientId, secret: cfg.clientSecret };
 }
 
 /** Địa chỉ Google gọi lại sau khi người dùng đồng ý. Phải khai báo y hệt trong Google Cloud Console. */
-export function redirectUri(origin: string): string {
-  return process.env.GOOGLE_REDIRECT_URI || `${origin.replace(/\/$/, "")}/api/gmail/callback`;
+export function redirectUri(cfg: GoogleConfig, origin: string): string {
+  return cfg.redirectUri || `${(cfg.appUrl || origin).replace(/\/$/, "")}/api/gmail/callback`;
 }
 
 function stateKey() {
@@ -50,10 +45,10 @@ export async function verifyState(token: string | null): Promise<OAuthState | nu
   }
 }
 
-export function authUrl(origin: string, state: string): string {
+export function authUrl(cfg: GoogleConfig, origin: string, state: string): string {
   const p = new URLSearchParams({
-    client_id: creds().id,
-    redirect_uri: redirectUri(origin),
+    client_id: creds(cfg).id,
+    redirect_uri: redirectUri(cfg, origin),
     response_type: "code",
     scope: `openid email ${GMAIL_SCOPE}`,
     access_type: "offline", // để nhận refresh token, job tự đọc thư hằng ngày
@@ -76,9 +71,9 @@ async function tokenRequest(body: Record<string, string>) {
 }
 
 /** Đổi mã ủy quyền lấy refresh token + email của hộp thư. */
-export async function exchangeCode(origin: string, code: string): Promise<{ refreshToken: string; email: string; scope: string }> {
-  const { id, secret } = creds();
-  const t = await tokenRequest({ code, client_id: id, client_secret: secret, redirect_uri: redirectUri(origin), grant_type: "authorization_code" });
+export async function exchangeCode(cfg: GoogleConfig, origin: string, code: string): Promise<{ refreshToken: string; email: string; scope: string }> {
+  const { id, secret } = creds(cfg);
+  const t = await tokenRequest({ code, client_id: id, client_secret: secret, redirect_uri: redirectUri(cfg, origin), grant_type: "authorization_code" });
   const refreshToken = String(t.refresh_token ?? "");
   if (!refreshToken) throw new Error("Google không trả refresh token — vào myaccount.google.com/permissions gỡ quyền của app rồi kết nối lại");
   const email = emailFromIdToken(String(t.id_token ?? ""));
@@ -86,8 +81,8 @@ export async function exchangeCode(origin: string, code: string): Promise<{ refr
   return { refreshToken, email, scope: String(t.scope ?? "") };
 }
 
-export async function accessToken(refreshToken: string): Promise<string> {
-  const { id, secret } = creds();
+export async function accessToken(cfg: GoogleConfig, refreshToken: string): Promise<string> {
+  const { id, secret } = creds(cfg);
   const t = await tokenRequest({ refresh_token: refreshToken, client_id: id, client_secret: secret, grant_type: "refresh_token" });
   return String(t.access_token);
 }
@@ -104,9 +99,9 @@ function emailFromIdToken(idToken: string): string | null {
   }
 }
 
-/** Địa chỉ gốc của app. Chạy sau nginx trên VPS thì req.url có thể là localhost, nên ưu tiên APP_URL rồi tới header proxy. */
-export function appOrigin(req: Request): string {
-  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
+/** Địa chỉ gốc của app. Chạy sau nginx trên VPS thì req.url có thể là localhost, nên ưu tiên địa chỉ đã cài rồi tới header proxy. */
+export function appOrigin(req: Request, cfg?: Pick<GoogleConfig, "appUrl">): string {
+  if (cfg?.appUrl) return cfg.appUrl.replace(/\/$/, "");
   const url = new URL(req.url);
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? url.host;
   const proto = req.headers.get("x-forwarded-proto") ?? url.protocol.replace(":", "");

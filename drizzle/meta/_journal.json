@@ -43,6 +43,13 @@
       "when": 1792570256195,
       "tag": "0005_airbnb_payouts",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792576305257,
+      "tag": "0006_payout_paste",
+      "breakpoints": true
     }
   ]
 }

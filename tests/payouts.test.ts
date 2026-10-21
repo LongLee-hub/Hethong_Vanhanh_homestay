@@ -8,7 +8,9 @@ import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import type { SessionUser } from "../lib/auth/access";
 import type { GmailClient, GmailMessage } from "../lib/gmail/client";
-import { disconnectGmail, listGmailAccounts, payoutsForMonth, reparsePayout, saveGmailConnection, syncPayouts } from "../lib/airbnb/payouts";
+import { deletePastedPayout, disconnectGmail, importPastedPayout, listGmailAccounts, payoutsForMonth, reparsePayout, saveGmailConnection, syncPayouts } from "../lib/airbnb/payouts";
+import { googleReady, googleSetup, loadGoogleConfig, saveGoogleSetup } from "../lib/gmail/config";
+import { redirectUri } from "../lib/gmail/oauth";
 
 let db: DB;
 const admin: SessionUser = { id: "u-admin", name: "Admin", role: "ADMIN" };
@@ -157,5 +159,62 @@ describe("Đồng bộ và đối soát payout", () => {
     const [row] = await db.select().from(schema.gmailAccounts).where(eq(schema.gmailAccounts.id, a.id));
     expect(row).toMatchObject({ active: false, refreshTokenEncrypted: "" });
     expect((await payoutsForMonth(db, invA, "2026-10", "2026-10-21")).payouts).toHaveLength(1);
+  });
+});
+
+describe("Cài đặt Google trên web", () => {
+  const enc = (v: string) => `enc(${v})`;
+  const dec = (v: string) => v.replace(/^enc\((.*)\)$/, "$1");
+  const CID = "123-abc.apps.googleusercontent.com";
+
+  it("chỉ Admin lưu được; kiểm tra định dạng trước khi ghi", async () => {
+    await expect(saveGoogleSetup(db, invA, { clientId: CID, clientSecret: "GOCSPX-secret123", appUrl: "" }, enc)).rejects.toThrow(/quyền/);
+    await expect(saveGoogleSetup(db, admin, { clientId: "abc", clientSecret: "GOCSPX-secret123", appUrl: "" }, enc)).rejects.toThrow(/Client ID/);
+    await expect(saveGoogleSetup(db, admin, { clientId: CID, clientSecret: "", appUrl: "" }, enc)).rejects.toThrow(/Client Secret/);
+    await expect(saveGoogleSetup(db, admin, { clientId: CID, clientSecret: "GOCSPX-secret123", appUrl: "https://app.loci.vn/payouts" }, enc)).rejects.toThrow(/địa chỉ gốc/);
+    expect(googleReady(await loadGoogleConfig(db, dec))).toBe(false); // lỗi không lưu dở
+  });
+
+  it("lưu mã hóa secret, không trả secret ra ngoài; để trống secret thì giữ nguyên", async () => {
+    await saveGoogleSetup(db, admin, { clientId: CID, clientSecret: "GOCSPX-secret123", appUrl: "https://app.loci.vn/" }, enc);
+    const [row] = await db.select().from(schema.settings).where(eq(schema.settings.key, "google.clientSecret"));
+    expect(row.value).toBe("enc(GOCSPX-secret123)");
+    await saveGoogleSetup(db, admin, { clientId: CID, clientSecret: "", appUrl: "https://app.loci.vn" }, enc);
+    const cfg = await loadGoogleConfig(db, dec);
+    expect(cfg).toMatchObject({ clientId: CID, clientSecret: "GOCSPX-secret123", appUrl: "https://app.loci.vn" });
+    expect(redirectUri(cfg, "http://localhost:3000")).toBe("https://app.loci.vn/api/gmail/callback");
+    const setup = await googleSetup(db, admin, dec);
+    expect(setup).toMatchObject({ clientId: CID, hasSecret: true, secretHint: "…t123", secretBroken: false });
+    expect(JSON.stringify(setup)).not.toContain("GOCSPX-secret123");
+    await expect(googleSetup(db, acc, dec)).rejects.toThrow(/quyền/);
+  });
+});
+
+describe("Dán email payout trên web", () => {
+  const SUBJECT = "Chúng tôi đã gửi cho bạn khoản thanh toán 800.000 ₫";
+  const BODY = "Chúng tôi đã gửi khoản thanh toán 800.000 ₫ tới tài khoản ••••5678.\r\nKhách: Le Thi C\r\n10/10/2026 – 11/10/2026\r\nHMPASTE001\r\n800.000 ₫";
+
+  it("lưu payout dán tay, khớp đơn, không cho dán trùng", async () => {
+    await expect(importPastedPayout(db, invB, { investorId: "inv-a", subject: SUBJECT, text: BODY, receivedOn: "2026-10-12" })).rejects.toThrow(/Không tìm thấy/);
+    await expect(importPastedPayout(db, invA, { investorId: "inv-a", subject: "Reservation confirmed", text: BODY, receivedOn: "2026-10-12" })).rejects.toThrow(/tiêu đề/);
+    const row = await importPastedPayout(db, invA, { investorId: "inv-a", subject: SUBJECT, text: BODY, receivedOn: "2026-10-12" });
+    expect(row?.gmailAccountId).toBeNull();
+    await expect(importPastedPayout(db, invA, { investorId: "inv-a", subject: SUBJECT, text: BODY, receivedOn: "2026-10-12" })).rejects.toThrow(/đã được dán/);
+    const { payouts, missing } = await payoutsForMonth(db, invA, "2026-10", "2026-10-21");
+    const pasted = payouts.find((p) => p.email === null)!;
+    expect(pasted.payoutDate).toBe("2026-10-12");
+    expect(pasted.items[0]).toMatchObject({ confirmationCode: "HMPASTE001", matchStatus: "MATCHED", diffAmount: 0 });
+    expect(pasted.items[0].booking?.id).toBe("b3");
+    expect(missing.map((m) => m.bookingId)).not.toContain("b3");
+  });
+
+  it("chỉ xóa được payout dán tay", async () => {
+    const all = await db.select().from(schema.airbnbPayouts);
+    const fromGmail = all.find((p) => p.gmailAccountId)!;
+    const pasted = all.find((p) => !p.gmailAccountId)!;
+    await expect(deletePastedPayout(db, invA, fromGmail.id)).rejects.toThrow(/dán tay/);
+    await expect(deletePastedPayout(db, invB, pasted.id)).rejects.toThrow(/Không tìm thấy/);
+    await deletePastedPayout(db, invA, pasted.id);
+    expect((await db.select().from(schema.airbnbPayoutItems).where(eq(schema.airbnbPayoutItems.payoutId, pasted.id)))).toEqual([]);
   });
 });

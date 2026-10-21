@@ -1,0 +1,1 @@
+ALTER TABLE "airbnb_payouts" ALTER COLUMN "gmail_account_id" DROP NOT NULL;

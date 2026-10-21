@@ -75,14 +75,13 @@ Trang **Payout Airbnb** đọc email "đã gửi khoản thanh toán" của Airb
 
 Ai làm gì: Admin kết nối Gmail cho mọi NĐT; NĐT tự kết nối Gmail của mình; Kế toán chỉ xem. App chỉ xin quyền **đọc** Gmail (`gmail.readonly`), refresh token mã hóa AES-256-GCM như token Dayladau. Email được đọc mỗi lần đồng bộ (cùng lịch với Dayladau), hoặc bấm **Đọc thư ngay**.
 
-**Cài đặt Google (một lần):**
+**Cài đặt Google (một lần, ngay trên web):** chạy `npm run db:migrate` để tạo bảng mới, rồi Admin vào *Payout Airbnb* → *Cài đặt kết nối Google* ở cuối trang. Mục này hướng dẫn từng bước trên Google Cloud Console (bật Gmail API, chuyển app sang *In production*, tạo OAuth client), hiện sẵn redirect URI để copy, và có form dán Client ID / Client Secret. Secret được mã hóa khi lưu.
 
-1. Google Cloud Console → tạo project → bật **Gmail API**.
-2. *OAuth consent screen*: loại External, thêm scope `gmail.readonly`, thêm Gmail của các NĐT vào *Test users*.
-3. *Credentials* → *OAuth client ID* loại Web application, redirect URI `https://<địa chỉ app>/api/gmail/callback`. Điền `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL` vào `.env`.
-4. `npm run db:migrate` để tạo bảng mới.
+Nếu đặt `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL` trong `.env` thì các giá trị đó được ưu tiên và ô tương ứng trên web bị khóa.
 
-> Lưu ý: khi app Google còn ở trạng thái *Testing*, refresh token hết hạn sau 7 ngày và hộp thư sẽ báo lỗi `invalid_grant`. Chuyển sang *In production* (không cần xác minh nếu dưới 100 người dùng, người dùng sẽ thấy cảnh báo "app chưa xác minh" khi đồng ý) để token không tự hết hạn.
+> Lưu ý: khi app Google còn ở trạng thái *Testing*, refresh token hết hạn sau 7 ngày và hộp thư sẽ báo lỗi `invalid_grant`. Chuyển sang *In production* (dưới 100 người dùng thì không cần xác minh, người dùng sẽ thấy cảnh báo "app chưa xác minh" khi đồng ý).
+
+**Dán email payout:** chưa kết nối Gmail vẫn đối soát được: mở email payout, copy toàn bộ nội dung dán vào mục *Dán email payout*, bấm *Xem trước* để thấy app tách được gì rồi *Lưu*. Email dán nhầm thì xóa được; email đọc từ Gmail thì không.
 
 **TODO(CONFIRM):** bộ tách email (`lib/airbnb/payout-parser.ts`) viết theo cấu trúc email payout phổ biến của Airbnb, cần đối chiếu với email thật. Email nào tách thiếu hiện nhãn "Tách được một phần"; sau khi sửa bộ tách, bấm **Tách lại** để xử lý lại từ nội dung đã lưu, không cần đọc lại Gmail.
 

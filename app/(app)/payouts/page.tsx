@@ -6,10 +6,14 @@ import { allowedInvestorIds, can } from "@/lib/auth/access";
 import { requireUser } from "@/lib/server";
 import { monthParam, visibleProperties } from "@/lib/queries";
 import { canManageGmail, listGmailAccounts, MISSING_AFTER_DAYS, PAYOUT_TOLERANCE, payoutsForMonth, type PayoutView } from "@/lib/airbnb/payouts";
-import { gmailConfigured } from "@/lib/gmail/oauth";
+import { headers } from "next/headers";
+import { googleReady, googleSetup, loadGoogleConfig } from "@/lib/gmail/config";
+import { redirectUri } from "@/lib/gmail/oauth";
+import { ActionForm } from "@/components/ActionForm";
 import { NoAccess } from "@/components/NoAccess";
 import { MonthNav, vnd } from "@/components/MonthNav";
-import { disconnectGmailAction, reparsePayoutAction, syncGmailAction } from "./actions";
+import { deletePastedAction, disconnectGmailAction, reparsePayoutAction, saveGoogleSetupAction, syncGmailAction } from "./actions";
+import { CopyField, PastePayout } from "./setup";
 import { RunButton } from "./run-button";
 
 export const maxDuration = 300;
@@ -49,7 +53,8 @@ function PayoutRows({ p, roomName, multiInvestor }: { p: PayoutView; roomName: R
       <tr className="payout-head">
         <td colSpan={2}>
           <b>{D.formatDateVN(p.payoutDate)}</b>
-          <div className="small muted">{multiInvestor ? `${p.investorName} · ` : ""}{p.email}</div>
+          <div className="small muted">{multiInvestor ? `${p.investorName} · ` : ""}{p.email ?? "Dán tay"}</div>
+          {p.canManage && !p.email && <div style={{ marginTop: 8 }}><RunButton run={deletePastedAction.bind(null, p.id)} label="Xóa" pendingLabel="Đang xóa…" danger confirm="Xóa payout dán tay này?" /></div>}
         </td>
         <td colSpan={2}>
           <span className="row"><Recon p={p} />{parse && <span className={`pill ${parse[1]}`}>{parse[0]}</span>}</span>
@@ -94,7 +99,13 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
   const manageable = (await Promise.all(invs.map(async (i) => ((await canManageGmail(db, user, i.id)) ? i : null)))).filter((i) => i !== null);
   const roomName = Object.fromEntries(props.flatMap((p) => p.rooms.map((r) => [r.id, `${p.name} · ${r.name}`])));
   const multiInvestor = invs.length > 1;
-  const configured = gmailConfigured();
+  const cfg = await loadGoogleConfig(db);
+  const configured = googleReady(cfg);
+  const isAdmin = can(user, "admin");
+  const setup = isAdmin ? await googleSetup(db, user) : null;
+  const h = await headers();
+  const reqOrigin = `${(h.get("x-forwarded-proto") ?? "http").split(",")[0]}://${(h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000").split(",")[0]}`;
+  const callback = redirectUri(cfg, reqOrigin);
 
   const items = payouts.flatMap((p) => p.items);
   const matched = items.filter((i) => i.matchStatus === "MATCHED").length;
@@ -110,7 +121,8 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
       </div>
       {sp.connected && <div className="banner info" role="status">{sp.connected}</div>}
       {sp.gmail && <div className="banner bad" role="alert">{sp.gmail}</div>}
-      {!configured && <div className="banner">Máy chủ chưa cấu hình đăng nhập Google (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET), chưa kết nối được Gmail. Xem hướng dẫn trong README.</div>}
+      {!configured && !isAdmin && <div className="banner">Admin chưa cài đặt kết nối Google nên chưa kết nối được Gmail. Trong lúc chờ, có thể dán email payout ở cuối trang.</div>}
+      {!configured && isAdmin && <div className="banner">Chưa kết nối được Gmail: hoàn tất mục <a href="#google-setup">Cài đặt kết nối Google</a> ở cuối trang.</div>}
 
       <div className="cards">
         <div className="stat"><span className="lbl">Airbnb đã chuyển</span><span className="v">{vnd(total)}</span><span className="s">{payouts.length} lần chuyển trong {D.formatMonthVN(month).toLowerCase()}</span></div>
@@ -182,6 +194,59 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
           {!invs.length && <li className="small muted">Chưa có nhà đầu tư nào.</li>}
         </ul>
       </section>
+
+      {manageable.length > 0 && (
+        <section className="panel" style={{ marginTop: 24 }}>
+          <header><div><h2>Dán email payout</h2><p>Dùng khi chưa kết nối Gmail, hoặc để kiểm tra một email cụ thể. Bấm Xem trước để thấy app tách được gì, rồi Lưu để đối soát.</p></div></header>
+          <PastePayout investors={manageable} today={D.todayVN()} />
+        </section>
+      )}
+
+      {setup && (
+        <section className="panel" id="google-setup" style={{ marginTop: 24 }}>
+          <details open={!configured}>
+            <summary className="setup-summary">
+              <h2>Cài đặt kết nối Google</h2>
+              {configured ? <span className="pill ok">Đã cài đặt</span> : <span className="pill warn">Chưa xong</span>}
+            </summary>
+            <p className="muted small">Làm một lần, chỉ Admin thấy mục này. Các bước 1–3 làm trên Google Cloud Console bằng tài khoản Google của LOCI.</p>
+            <ol className="setup-steps">
+              <li>
+                <b>Bật Gmail API.</b> Tạo project mới (ví dụ "LOCI Homestay"), rồi bấm Enable ở trang{" "}
+                <a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noreferrer">Gmail API</a>.
+              </li>
+              <li>
+                <b>Màn hình đồng ý.</b> Ở{" "}
+                <a href="https://console.cloud.google.com/auth/overview" target="_blank" rel="noreferrer">Google Auth Platform</a>{" "}
+                chọn loại External, thêm quyền <code>gmail.readonly</code>. Ở mục Audience bấm Publish app để chuyển sang In production. Nếu để Testing, Google hủy quyền sau 7 ngày và nhà đầu tư phải kết nối lại.
+              </li>
+              <li>
+                <b>Tạo OAuth client.</b> Ở{" "}
+                <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">Credentials</a>{" "}
+                chọn Create credentials → OAuth client ID → Web application. Thêm Authorized redirect URI đúng như sau:
+                <div style={{ marginTop: 8 }}><CopyField value={callback} label="Redirect URI" /></div>
+                {!setup.appUrl && <div className="small muted" style={{ marginTop: 4 }}>Địa chỉ này lấy theo trang đang mở. Nếu app có tên miền chính thức khác, nhập ở ô Địa chỉ app bên dưới rồi copy lại.</div>}
+              </li>
+              <li>
+                <b>Dán Client ID và Client Secret</b> Google vừa cấp vào đây rồi bấm Lưu.
+                {setup.secretBroken && <div className="banner bad" style={{ marginTop: 8 }}>Không giải mã được Client Secret đã lưu (khóa mã hóa đã đổi). Nhập lại Client Secret.</div>}
+                <ActionForm action={saveGoogleSetupAction} submit="Lưu cài đặt" okText="Đã lưu. Giờ có thể bấm Kết nối Gmail cho từng nhà đầu tư">
+                  <label className="field full"><span>Client ID</span>
+                    <input type="text" name="clientId" defaultValue={setup.clientId ?? ""} disabled={setup.fromEnv.clientId} required={!setup.fromEnv.clientId} placeholder="1234567890-abc.apps.googleusercontent.com" autoComplete="off" spellCheck={false} />
+                  </label>
+                  <label className="field"><span>Client Secret{setup.hasSecret ? ` (đang lưu ${setup.secretHint}, để trống nếu giữ nguyên)` : ""}</span>
+                    <input type="password" name="clientSecret" disabled={setup.fromEnv.clientSecret} required={!setup.hasSecret && !setup.fromEnv.clientSecret} placeholder="GOCSPX-…" autoComplete="new-password" />
+                  </label>
+                  <label className="field"><span>Địa chỉ app (không bắt buộc)</span>
+                    <input type="text" inputMode="url" name="appUrl" defaultValue={setup.appUrl ?? ""} disabled={setup.fromEnv.appUrl} placeholder={reqOrigin} autoComplete="off" spellCheck={false} />
+                  </label>
+                  {(setup.fromEnv.clientId || setup.fromEnv.clientSecret || setup.fromEnv.appUrl) && <p className="full small muted" style={{ margin: 0 }}>Ô bị khóa đang lấy giá trị từ file .env trên máy chủ; sửa trong .env nếu cần đổi.</p>}
+                </ActionForm>
+              </li>
+            </ol>
+          </details>
+        </section>
+      )}
     </>
   );
 }

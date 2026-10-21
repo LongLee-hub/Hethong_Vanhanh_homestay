@@ -3,7 +3,6 @@ import { getDb } from "@/lib/db";
 import { syncBookings } from "@/lib/dayladau/sync";
 import { computeAlerts } from "@/lib/services/alerts";
 import { syncPayouts } from "@/lib/airbnb/payouts";
-import { gmailConfigured } from "@/lib/gmail/oauth";
 import { currentUser, cronAuthorized } from "@/lib/server";
 
 export const maxDuration = 300;
@@ -14,7 +13,7 @@ async function run() {
   const sync = await syncBookings(db);
   const alerts = await computeAlerts(db);
   // Payout Airbnb đọc sau đơn Dayladau để khớp được cả đơn vừa đồng bộ
-  const payouts = gmailConfigured() ? await syncPayouts(db).catch((e) => ({ error: (e as Error).message })) : null;
+  const payouts = await syncPayouts(db).catch((e) => ({ error: (e as Error).message }));
   return NextResponse.json({ sync, alerts, payouts });
 }
 

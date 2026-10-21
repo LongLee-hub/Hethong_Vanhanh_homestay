@@ -9,6 +9,8 @@ import { allowedInvestorIds, badRequest, notFound, type SessionUser } from "../a
 import { decryptSecret, encryptSecret } from "../services/settings";
 import { httpGmailClient, type GmailClient } from "../gmail/client";
 import { accessToken as googleAccessToken } from "../gmail/oauth";
+import { loadGoogleConfig } from "../gmail/config";
+import { createHash } from "node:crypto";
 import { parsePayoutEmail, type ParsedPayout } from "./payout-parser";
 
 /** Lệch dưới mức này (VND) coi là khớp: làm tròn tiền giữa Airbnb và Dayladau. */
@@ -122,7 +124,7 @@ export interface PayoutSyncDeps {
 
 const gmailDate = (d: string) => d.replace(/-/g, "/");
 
-async function insertParsed(db: DB, base: { gmailAccountId: string; investorId: string; gmailMessageId: string; receivedAt: Date; subject: string; bodyText: string }, p: ParsedPayout) {
+async function insertParsed(db: DB, base: { gmailAccountId: string | null; investorId: string; gmailMessageId: string; receivedAt: Date; subject: string | null; bodyText: string }, p: ParsedPayout) {
   const [payout] = await db
     .insert(airbnbPayouts)
     .values({
@@ -145,8 +147,12 @@ const MAX_BODY = 60_000;
 
 export async function syncPayouts(db: DB, opts: PayoutSyncDeps & { accountIds?: string[]; investorIds?: string[] } = {}): Promise<PayoutSyncSummary> {
   const client = opts.client ?? httpGmailClient;
-  const getToken = opts.accessToken ?? googleAccessToken;
   const decrypt = opts.decrypt ?? decryptSecret;
+  let getToken = opts.accessToken;
+  if (!getToken) {
+    const cfg = await loadGoogleConfig(db, decrypt);
+    getToken = (r) => googleAccessToken(cfg, r);
+  }
   const today = opts.today ?? D.todayVN();
   const sum: PayoutSyncSummary = { accounts: 0, messages: 0, created: 0, skipped: 0, matched: 0, errors: [] };
 
@@ -251,6 +257,46 @@ export async function matchPayouts(db: DB, opts: { investorIds?: string[]; payou
   return matched;
 }
 
+// ---------- Dán email payout trên web ----------
+// Dùng khi chưa kết nối Gmail, hoặc để thử bộ tách với một email thật: mở email payout, chọn toàn bộ nội dung, dán vào.
+
+/** Xem trước kết quả tách, chưa lưu. */
+export function previewPastedPayout(input: { subject: string; text: string }): ParsedPayout {
+  const subject = input.subject.trim();
+  const text = input.text.replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean).join("\n");
+  // Không nhập tiêu đề: lấy dòng đầu có chữ "payout"/"thanh toán" làm tiêu đề để nhận đúng loại thư
+  const subj = subject || text.split("\n").find((l) => /payout|thanh toán|chi trả/i.test(l)) || "";
+  return parsePayoutEmail({ subject: subj, text });
+}
+
+export async function importPastedPayout(db: DB, user: SessionUser, input: { investorId: string; subject: string; text: string; receivedOn: string }) {
+  await requireManage(db, user, input.investorId);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.receivedOn)) throw badRequest("Chọn ngày nhận email");
+  if (input.text.trim().length < 20) throw badRequest("Dán toàn bộ nội dung email payout");
+  const parsed = previewPastedPayout(input);
+  if (!parsed.isPayout) throw badRequest(`${parsed.skipReason}. Kiểm tra lại tiêu đề email`);
+  const text = input.text.replace(/\r/g, "").slice(0, MAX_BODY);
+  const messageId = "paste:" + createHash("sha256").update(`${input.subject}\n${text}`).digest("hex").slice(0, 24);
+  const [dup] = await db.select({ id: airbnbPayouts.id }).from(airbnbPayouts).where(and(eq(airbnbPayouts.investorId, input.investorId), eq(airbnbPayouts.gmailMessageId, messageId))).limit(1);
+  if (dup) throw badRequest("Email này đã được dán trước đó");
+  const row = await insertParsed(
+    db,
+    { gmailAccountId: null, investorId: input.investorId, gmailMessageId: messageId, receivedAt: new Date(`${input.receivedOn}T12:00:00+07:00`), subject: input.subject.trim() || null, bodyText: text },
+    parsed,
+  );
+  if (row) await matchPayouts(db, { payoutIds: [row.id] });
+  return row;
+}
+
+/** Xóa payout dán tay (dán nhầm). Payout đọc từ Gmail không xóa được, vì lần đồng bộ sau sẽ đọc lại. */
+export async function deletePastedPayout(db: DB, user: SessionUser, payoutId: string) {
+  const [p] = await db.select().from(airbnbPayouts).where(eq(airbnbPayouts.id, payoutId)).limit(1);
+  if (!p) throw notFound("Không tìm thấy payout");
+  await requireManage(db, user, p.investorId);
+  if (p.gmailAccountId) throw badRequest("Chỉ xóa được email dán tay");
+  await db.delete(airbnbPayouts).where(eq(airbnbPayouts.id, p.id));
+}
+
 /** Tách lại một email đã lưu (sau khi sửa bộ tách), rồi đối soát lại. */
 export async function reparsePayout(db: DB, user: SessionUser, payoutId: string) {
   const [p] = await db.select().from(airbnbPayouts).where(eq(airbnbPayouts.id, payoutId)).limit(1);
@@ -281,7 +327,8 @@ export interface PayoutView {
   id: string;
   investorId: string;
   investorName: string;
-  email: string;
+  /** null = email dán tay trên web */
+  email: string | null;
   payoutDate: string;
   amount: number;
   currency: string;
@@ -314,7 +361,7 @@ export async function payoutsForMonth(db: DB, user: SessionUser, month: string, 
     .select({ p: airbnbPayouts, investorName: investors.name, email: gmailAccounts.email })
     .from(airbnbPayouts)
     .innerJoin(investors, eq(investors.id, airbnbPayouts.investorId))
-    .innerJoin(gmailAccounts, eq(gmailAccounts.id, airbnbPayouts.gmailAccountId))
+    .leftJoin(gmailAccounts, eq(gmailAccounts.id, airbnbPayouts.gmailAccountId))
     .where(and(inArray(airbnbPayouts.investorId, inv), gte(airbnbPayouts.payoutDate, from), lte(airbnbPayouts.payoutDate, to)))
     .orderBy(desc(airbnbPayouts.payoutDate), desc(airbnbPayouts.receivedAt));
   const items = ps.length
