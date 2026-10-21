@@ -4,6 +4,7 @@ import * as D from "@/lib/domain";
 import { getDb } from "@/lib/db";
 import { investors } from "@/lib/db/schema";
 import { accountsByInvestor } from "@/lib/dayladau/admin";
+import { extraListingsOf } from "@/lib/dayladau/room-listings";
 import { can } from "@/lib/auth/access";
 import { NoAccess } from "@/components/NoAccess";
 import { requireUser } from "@/lib/server";
@@ -44,6 +45,7 @@ export default async function Properties({ searchParams }: { searchParams: Promi
   const props = invId ? all.filter((p) => p.investorId === invId) : all;
 
   const rooms = props.flatMap((p) => p.rooms);
+  const extra = await extraListingsOf(db, rooms.map((r) => r.id));
   const roomLabel = Object.fromEntries(all.flatMap((p) => p.rooms.map((r) => [r.id, `${p.name} · ${r.name}`])));
   const openRooms = rooms.filter((r) => !r.closedOn || r.closedOn > today).length;
 
@@ -119,7 +121,7 @@ export default async function Properties({ searchParams }: { searchParams: Promi
                   const head = (
                     <>
                       <b>{r.name}</b>
-                      <span className="small muted">{r.dayladauRoomId ? `Listing ${r.dayladauRoomId}` : "Chưa gắn listing"}</span>
+                      <span className="small muted">{r.dayladauRoomId ? `Listing ${r.dayladauRoomId}${extra.get(r.id)?.length ? ` + ${extra.get(r.id)!.length} listing cũ` : ""}` : "Chưa gắn listing"}</span>
                       {showMoney && <span className="small muted">KPI {r.revenueKpiMonthly ? `${vnd(r.revenueKpiMonthly)}/tháng` : "chưa đặt"}</span>}
                       <span className="spacer" />
                       {roomStatus(r, today)}

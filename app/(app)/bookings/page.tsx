@@ -11,6 +11,12 @@ import { PhotoInput } from "@/components/PhotoInput";
 import { manualBookingAction } from "../actions";
 import { canViewLiveOrders, liveOrdersForMonth, type LiveSyncState } from "@/lib/dayladau/live";
 import { BookingChanges } from "./changes";
+import { SyncMonth, type SyncAccount } from "./sync-month";
+import { eq } from "drizzle-orm";
+import { dayladauAccounts } from "@/lib/db/schema";
+
+// Nút "Lấy tất cả đơn tháng X" đọc toàn bộ lịch sử đơn của host (có host hơn 36.000 đơn), cần thời gian như job đồng bộ
+export const maxDuration = 300;
 
 const CHANNEL: Record<string, string> = { Direct: "Trực tiếp" };
 const SYNC: Record<LiveSyncState, [string, string]> = {
@@ -20,6 +26,11 @@ const SYNC: Record<LiveSyncState, [string, string]> = {
 };
 
 type Src = "db" | "changes" | "api";
+
+/** Tài khoản Dayladau đang bật, để chọn host ID khi lấy đơn theo tháng. */
+async function syncAccounts(): Promise<SyncAccount[]> {
+  return getDb().select({ id: dayladauAccounts.id, label: dayladauAccounts.label, hostId: dayladauAccounts.hostId }).from(dayladauAccounts).where(eq(dayladauAccounts.active, true)).orderBy(dayladauAccounts.label);
+}
 
 /** Các cách xem đơn: đơn đã lưu trong hệ thống, đơn vừa cập nhật, hoặc đọc trực tiếp từ API Dayladau. */
 function SourceTabs({ month, src, live }: { month: string; src: Src; live: boolean }) {
@@ -81,6 +92,7 @@ export default async function Bookings({ searchParams }: { searchParams: Promise
     return (
       <>
         <div className="topbar"><h1>Đặt phòng</h1><MonthNav month={month} path="/bookings" extra="&src=api" /><SourceTabs month={month} src="api" live /></div>
+        {can(user, "admin") && <SyncMonth month={month} label={D.formatMonthVN(month)} accounts={await syncAccounts()} />}
         <LiveBookings month={month} user={user} />
       </>
     );
@@ -103,6 +115,7 @@ export default async function Bookings({ searchParams }: { searchParams: Promise
   return (
     <>
       <div className="topbar"><h1>Đặt phòng</h1><MonthNav month={month} path="/bookings" /><SourceTabs month={month} src="db" live={live} /></div>
+      {can(user, "admin") && <SyncMonth month={month} label={D.formatMonthVN(month)} accounts={await syncAccounts()} />}
       <div className="cards">
         <div className="stat"><span className="lbl">Đơn đã xác nhận</span><span className="v">{confirmed.length}</span><span className="s">Có đêm ở trong tháng</span></div>
         <div className="stat"><span className="lbl">Đơn đã hủy</span><span className="v">{rows.length - confirmed.length}</span></div>

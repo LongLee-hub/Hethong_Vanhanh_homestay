@@ -311,7 +311,7 @@ function ListingRow({ accountId, listing, props }: { accountId: string; listing:
         <div className="row">
           <select value={roomId} onChange={(e) => setRoomId(e.target.value)} aria-label={`Phòng cho ${listing.name}`} style={{ maxWidth: 260 }}>
             <option value="">— Chưa gắn —</option>
-            {props.map((p) => <optgroup key={p.id} label={p.name}>{p.rooms.map((r) => <option key={r.id} value={r.id}>{r.name}{r.listingKey && r.listingKey !== listing.key ? " (đang gắn listing khác)" : ""}</option>)}</optgroup>)}
+            {props.map((p) => <optgroup key={p.id} label={p.name}>{p.rooms.map((r) => <option key={r.id} value={r.id}>{r.name}{r.listingKey && r.listingKey !== listing.key ? " (đã có listing, gắn thêm)" : ""}</option>)}</optgroup>)}
             {props.length > 0 && <option value="__new">+ Tạo phòng mới…</option>}
           </select>
           {roomId !== "__new" && (

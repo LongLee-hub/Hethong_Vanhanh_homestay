@@ -3,6 +3,7 @@ import { and, eq, gt, isNull, lt, or } from "drizzle-orm";
 import type { DB } from "../db";
 import { bookings, properties, rooms } from "../db/schema";
 import { assertPropertyAccess, badRequest, notFound, requirePermission, type SessionUser } from "../auth/access";
+import { clearRoomListings, detachListing } from "../dayladau/room-listings";
 
 export type RoomRow = typeof rooms.$inferSelect;
 
@@ -32,12 +33,15 @@ export async function createRoom(db: DB, user: SessionUser, input: CreateRoomInp
   if (!prop) throw notFound("Không tìm thấy cơ sở");
   if (!prop.active) throw badRequest("Cơ sở đã ngưng hoạt động");
 
+  const listing = listingOf(prop, input.dayladauRoomId ?? null);
+  // Listing đang thuộc phòng khác (chính hoặc phụ) chuyển sang phòng mới
+  if (listing.dayladauRoomId) await detachListing(db, listing.dayladauAccountId!, listing.dayladauRoomId);
   const [room] = await db
     .insert(rooms)
     .values({
       propertyId: input.propertyId,
       name: input.name.trim(),
-      ...listingOf(prop, input.dayladauRoomId ?? null),
+      ...listing,
       openedOn: input.openedOn,
     })
     .returning();
@@ -48,6 +52,7 @@ export async function createRoom(db: DB, user: SessionUser, input: CreateRoomInp
 
 export interface UpdateRoomInput {
   name?: string;
+  /** Listing chính của phòng; listing phụ giữ nguyên. null = bỏ mọi listing của phòng. */
   dayladauRoomId?: string | null;
   revenueKpiMonthly?: number; // VND / tháng
 }
@@ -65,7 +70,12 @@ export async function updateRoom(db: DB, user: SessionUser, roomId: string, inpu
   }
   if (input.dayladauRoomId !== undefined) {
     const [prop] = await db.select().from(properties).where(eq(properties.id, room.propertyId)).limit(1);
-    Object.assign(updates, listingOf(prop!, input.dayladauRoomId));
+    const listing = listingOf(prop!, input.dayladauRoomId);
+    if (!listing.dayladauRoomId) await clearRoomListings(db, { roomIds: [roomId] });
+    else if (listing.dayladauRoomId !== room.dayladauRoomId) {
+      await detachListing(db, listing.dayladauAccountId!, listing.dayladauRoomId);
+      Object.assign(updates, listing);
+    }
   }
   if (input.revenueKpiMonthly !== undefined) {
     if (!Number.isSafeInteger(input.revenueKpiMonthly) || input.revenueKpiMonthly < 0) throw badRequest("KPI doanh thu phải là số tiền không âm");
@@ -119,12 +129,9 @@ export async function transferRoom(db: DB, user: SessionUser, input: TransferRoo
     .limit(1);
   if (activeBookings.length) throw badRequest("Phòng đang có đơn đặt chưa hoàn thành, không thể chuyển cơ sở");
 
-  const [updated] = await db
-    .update(rooms)
-    // Cơ sở đích dùng tài khoản Dayladau khác: listing đang gắn không thuộc tài khoản đó nên bỏ gắn
-    .set(source!.dayladauAccountId === target.dayladauAccountId ? { propertyId: input.targetPropertyId } : { propertyId: input.targetPropertyId, dayladauAccountId: null, dayladauRoomId: null })
-    .where(eq(rooms.id, input.roomId))
-    .returning();
+  // Cơ sở đích dùng tài khoản Dayladau khác: listing đang gắn (chính và phụ) không thuộc tài khoản đó nên bỏ gắn
+  if (source!.dayladauAccountId !== target.dayladauAccountId) await clearRoomListings(db, { roomIds: [input.roomId] });
+  const [updated] = await db.update(rooms).set({ propertyId: input.targetPropertyId }).where(eq(rooms.id, input.roomId)).returning();
   return updated;
 }
 

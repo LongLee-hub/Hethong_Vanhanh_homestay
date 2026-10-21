@@ -2,12 +2,13 @@
 // Admin xem mọi tài khoản Dayladau đang bật; nhà đầu tư chỉ xem các tài khoản Dayladau của mình.
 import { and, eq, inArray } from "drizzle-orm";
 import type { DB } from "../db";
-import { bookings, dayladauAccounts, investors, properties, rooms } from "../db/schema";
+import { bookings, dayladauAccounts, investors, properties } from "../db/schema";
 import type { SessionUser } from "../auth/access";
 import * as D from "../domain";
 import { decryptSecret } from "../services/settings";
 import { httpDayladauClient, type DayladauClient } from "./client";
 import { mapDayladauOrder, type MappedBooking } from "./mapping";
+import { listingRef, roomsByListing } from "./room-listings";
 
 export type LiveSyncState = "SYNCED" | "UNMAPPED" | "NOT_SYNCED";
 
@@ -42,7 +43,7 @@ export async function liveOrdersForMonth(db: DB, user: SessionUser, month: strin
   if (!accs.length) return res;
 
   const props = await db.select().from(properties).where(inArray(properties.dayladauAccountId, accs.map((a) => a.acc.id)));
-  const rs = props.length ? await db.select().from(rooms).where(inArray(rooms.propertyId, props.map((p) => p.id))) : [];
+  const byListing = await roomsByListing(db, accs.map((a) => a.acc.id));
   const propName = Object.fromEntries(props.map((p) => [p.id, p.name]));
   const from = D.firstDay(month);
   const to = D.lastDay(month);
@@ -73,7 +74,7 @@ export async function liveOrdersForMonth(db: DB, user: SessionUser, month: strin
   );
   res.orders = all
     .map(({ a, m }) => {
-      const room = rs.find((r) => r.dayladauAccountId === a.acc.id && (r.dayladauRoomId === m.listingKey || r.dayladauRoomId === m.listingName));
+      const room = byListing.get(listingRef(a.acc.id, m.listingKey)) ?? byListing.get(listingRef(a.acc.id, m.listingName));
       return {
         ...m,
         investorName: a.investorName,

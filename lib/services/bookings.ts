@@ -14,6 +14,11 @@ function snapshot(b: Pick<BookingRow, (typeof TRACKED)[number]>) {
   return Object.fromEntries(TRACKED.map((k) => [k, b[k] ?? null]));
 }
 
+/** Đơn mới không đổi gì ở các trường làm thay đổi doanh thu so với đơn cũ (cùng tiêu chí "unchanged" của upsertBooking). */
+export function sameTracked(prev: Pick<BookingRow, (typeof TRACKED)[number]>, next: Pick<BookingRow, (typeof TRACKED)[number]>) {
+  return JSON.stringify(snapshot(prev)) === JSON.stringify(snapshot(next));
+}
+
 function toLite(b: Pick<BookingRow, "id" | "propertyId" | "roomId" | "checkIn" | "checkOut" | "netAmount" | "status" | "rentalType">): D.BookingLite {
   return { id: b.id, propertyId: b.propertyId, roomId: b.roomId, checkIn: b.checkIn, checkOut: b.checkOut, netAmount: b.netAmount, status: b.status, rentalType: b.rentalType };
 }
@@ -61,7 +66,7 @@ export async function upsertBooking(db: DB, input: BookingInput, changedBy: stri
     const id = prev?.id ?? input.id ?? crypto.randomUUID();
     const next = { ...(prev ?? {}), ...input, id } as BookingRow;
 
-    if (prev && JSON.stringify(snapshot(prev)) === JSON.stringify(snapshot(next))) {
+    if (prev && sameTracked(prev, next)) {
       if (input.source === "DAYLADAU") {
         await t.update(bookings).set({ lastSyncedAt: new Date(), rawPayload: input.rawPayload ?? prev.rawPayload, guestName: next.guestName }).where(eq(bookings.id, id));
       }

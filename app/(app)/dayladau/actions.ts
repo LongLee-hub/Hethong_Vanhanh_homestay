@@ -93,6 +93,23 @@ export async function syncNowAction(accountId: string, full = false): Promise<{ 
   }
 }
 
+/** Lấy tất cả đơn Dayladau có đêm trong tháng `month` (YYYY-MM), của một tài khoản (host ID) hoặc mọi tài khoản đang bật. */
+export async function syncMonthAction(month: string, accountId?: string): Promise<{ ok: boolean; error?: string; summary?: SyncSummary }> {
+  const user = await requireUser();
+  try {
+    requirePermission(user, "admin");
+    if (!/^\d{4}-\d{2}$/.test(month)) return { ok: false, error: "Tháng không hợp lệ" };
+    const db = getDb();
+    const summary = await syncBookings(db, { month, accountIds: accountId ? [accountId] : undefined });
+    await computeAlerts(db);
+    revalidatePath("/bookings");
+    revalidatePath("/dayladau");
+    return { ok: summary.errors.length === 0, summary, error: summary.errors[0]?.message };
+  } catch (e) {
+    return { ok: false, error: e instanceof HttpError ? e.message : "Lỗi máy chủ" };
+  }
+}
+
 export async function dismissAlertAction(alertId: string): Promise<State> {
   const user = await requireUser();
   const r = await action(() => dismissSyncAlert(getDb(), user, alertId));

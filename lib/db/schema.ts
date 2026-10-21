@@ -100,6 +100,18 @@ export const rooms = pgTable(
   (t) => [uniqueIndex("rooms_dayladau_listing").on(t.dayladauAccountId, t.dayladauRoomId)],
 );
 
+// Listing phụ của phòng: listing cũ hoặc listing thứ hai của cùng một phòng trên Dayladau.
+// Listing chính vẫn nằm ở rooms.dayladau_room_id. Một listing chỉ thuộc một phòng (chính hoặc phụ), kiểm tra ở lib/dayladau/room-listings.ts.
+export const roomListings = pgTable(
+  "room_listings",
+  {
+    roomId: text("room_id").notNull().references(() => rooms.id, { onDelete: "cascade" }),
+    dayladauAccountId: text("dayladau_account_id").notNull().references(() => dayladauAccounts.id),
+    listingKey: text("listing_key").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.dayladauAccountId, t.listingKey] }), index("room_listings_room").on(t.roomId)],
+);
+
 export const userPropertyAccess = pgTable(
   "user_property_access",
   {

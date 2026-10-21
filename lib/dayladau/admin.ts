@@ -9,6 +9,7 @@ import { decryptSecret, encryptSecret } from "../services/settings";
 import { fetchOrdersPage, PAGE_SIZE } from "./client";
 import { mapDayladauOrder } from "./mapping";
 import { DISMISSIBLE_ALERTS } from "./alert-types";
+import { attachListing, clearRoomListings, detachListing, listingRef, roomsByListing } from "./room-listings";
 
 const HOST_ID_RE = /^[A-Za-z0-9_-]{3,64}$/;
 const TOKEN_RE = /^[A-Za-z0-9._~-]{16,512}$/;
@@ -140,7 +141,7 @@ export async function saveDayladauAccount(
       const [prev] = await tx.select().from(dayladauAccounts).where(eq(dayladauAccounts.id, input.id)).limit(1);
       if (!prev) throw notFound("Không tìm thấy tài khoản Dayladau");
       // Đổi host ID là sang tài khoản khác: mã listing cũ không còn đúng
-      if (prev.hostId !== hostId) await tx.update(rooms).set({ dayladauAccountId: null, dayladauRoomId: null }).where(eq(rooms.dayladauAccountId, prev.id));
+      if (prev.hostId !== hostId) await clearRoomListings(tx as unknown as DB, { accountId: prev.id });
       [row] = await tx
         .update(dayladauAccounts)
         .set({ label, hostId, active: input.active ?? prev.active, ...tokenPatch })
@@ -170,7 +171,8 @@ export async function saveDayladauAccount(
 /** Đổi tài khoản Dayladau của cơ sở; listing đã gắn ở các phòng thuộc tài khoản cũ nên được bỏ gắn. */
 async function assignAccount(db: DB, propertyId: string, accountId: string | null) {
   await db.update(properties).set({ dayladauAccountId: accountId }).where(eq(properties.id, propertyId));
-  await db.update(rooms).set({ dayladauAccountId: null, dayladauRoomId: null }).where(eq(rooms.propertyId, propertyId));
+  const rs = await db.select({ id: rooms.id }).from(rooms).where(eq(rooms.propertyId, propertyId));
+  await clearRoomListings(db, { roomIds: rs.map((r) => r.id) });
 }
 
 /** Chọn tài khoản Dayladau cho một cơ sở (null = chỉ nhập đơn tay). Tài khoản phải cùng NĐT với cơ sở. */
@@ -222,7 +224,7 @@ export async function testConnection(
   } catch (e) {
     return { ok: false, error: (e as Error).message, ordersOnFirstPage: 0, listings: [], statuses: [], samples: [] };
   }
-  const accRooms = await db.select().from(rooms).where(eq(rooms.dayladauAccountId, accountId));
+  const byListing = await roomsByListing(db, [accountId]);
   const listings = new Map<string, ListingSummary>();
   const statuses = new Map<string, { orders: number; treatedAs: "CONFIRMED" | "CANCELLED" }>();
   const samples: ConnectionTest["samples"] = [];
@@ -233,7 +235,7 @@ export async function testConnection(
     } catch {
       continue;
     }
-    const l = listings.get(m.listingKey) ?? { key: m.listingKey, name: m.listingName, orders: 0, roomId: accRooms.find((r) => r.dayladauRoomId === m.listingKey || r.dayladauRoomId === m.listingName)?.id ?? null };
+    const l = listings.get(m.listingKey) ?? { key: m.listingKey, name: m.listingName, orders: 0, roomId: (byListing.get(listingRef(accountId, m.listingKey)) ?? byListing.get(listingRef(accountId, m.listingName)))?.id ?? null };
     l.orders++;
     listings.set(m.listingKey, l);
     const s = statuses.get(m.rawStatus) ?? { orders: 0, treatedAs: m.status };
@@ -252,13 +254,14 @@ export async function testConnection(
   };
 }
 
-/** Gắn một listing của tài khoản với phòng (hoặc bỏ gắn khi roomId rỗng). Phòng phải thuộc cơ sở dùng tài khoản này. */
+/**
+ * Gắn một listing của tài khoản với phòng (hoặc bỏ gắn khi roomId rỗng). Phòng phải thuộc cơ sở dùng tài khoản này.
+ * Phòng đã có listing thì listing mới được gắn thêm (listing phụ), không thay listing cũ.
+ */
 export async function mapListingToRoom(db: DB, user: SessionUser, accountId: string, listingKey: string, roomId: string | null) {
   requirePermission(user, "admin");
   if (!listingKey) throw badRequest("Thiếu mã listing");
-  // Bỏ gắn listing này khỏi phòng cũ (nếu có)
-  await db.update(rooms).set({ dayladauAccountId: null, dayladauRoomId: null }).where(and(eq(rooms.dayladauAccountId, accountId), eq(rooms.dayladauRoomId, listingKey)));
-  if (!roomId) return;
+  if (!roomId) return detachListing(db, accountId, listingKey);
   const [row] = await db
     .select({ accountId: properties.dayladauAccountId })
     .from(rooms)
@@ -266,7 +269,7 @@ export async function mapListingToRoom(db: DB, user: SessionUser, accountId: str
     .where(eq(rooms.id, roomId))
     .limit(1);
   if (!row || row.accountId !== accountId) throw badRequest("Phòng không thuộc cơ sở dùng tài khoản Dayladau này");
-  await db.update(rooms).set({ dayladauAccountId: accountId, dayladauRoomId: listingKey }).where(eq(rooms.id, roomId));
+  await attachListing(db, accountId, listingKey, roomId);
   // Cảnh báo "listing chưa gắn phòng" của listing này hết hiệu lực
   await db.update(alerts).set({ resolvedAt: new Date() }).where(and(eq(alerts.key, `UNMAPPED_ROOM:${accountId}:${listingKey}`), isNull(alerts.resolvedAt)));
 }

@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import { allowedPropertyIds, assertPropertyAccess, type SessionUser } from "../lib/auth/access";
@@ -180,6 +180,35 @@ describe("Đồng bộ Dayladau (giả lập API)", () => {
     const r = await syncBookings(db, { client, today: "2026-09-30", decrypt: (s) => s });
     expect(r.unchanged).toBe(1);
     expect(r.created + r.updated).toBe(0);
+  });
+
+  it("đơn không đổi chỉ cập nhật giờ đồng bộ; đổi tên khách vẫn được ghi", async () => {
+    const ext = eq(schema.bookings.externalId, "DLD-1");
+    await db.update(schema.bookings).set({ lastSyncedAt: new Date("2026-01-01") }).where(ext);
+    const logsBefore = (await db.select().from(schema.bookingChangeLogs)).length;
+    expect(await syncBookings(db, { client, today: "2026-09-30", decrypt: (s) => s })).toMatchObject({ unchanged: 1, created: 0, updated: 0 });
+    const [b] = await db.select().from(schema.bookings).where(ext);
+    expect(b.lastSyncedAt!.getTime()).toBeGreaterThan(new Date("2026-09-01").getTime());
+    const before = apiData;
+    apiData = [{ ...apiData[0], guest: { fullname: "Emma Watson", phone: "0900000000" } }, apiData[1]];
+    expect(await syncBookings(db, { client, today: "2026-09-30", decrypt: (s) => s })).toMatchObject({ unchanged: 1, updated: 0 });
+    expect((await db.select().from(schema.bookings).where(ext))[0].guestName).toBe("Emma Watson");
+    expect((await db.select().from(schema.bookingChangeLogs)).length).toBe(logsBefore);
+    apiData = before;
+    await syncBookings(db, { client, today: "2026-09-30", decrypt: (s) => s });
+  });
+
+  it("đồng bộ theo tháng: đọc toàn bộ lịch sử, chỉ ghi đơn có đêm trong tháng", async () => {
+    const asked: (number | undefined)[] = [];
+    const byMonth = { listBookings: async ({ maxOrders }: { maxOrders?: number }) => { asked.push(maxOrders); return apiData; } };
+    // DLD-1 đổi ngày nhưng vẫn nằm ngoài tháng 10 → không ghi; listing chưa gắn ngoài tháng cũng không tính bỏ qua
+    apiData = [raw({ checkin: "2026-09-11", checkout: "2026-09-13" }), raw({ id: "DLD-2", listing: "DR-UNKNOWN" })];
+    const oct = await syncBookings(db, { client: byMonth, today: "2026-09-30", decrypt: (s) => s, month: "2026-10" });
+    expect(oct).toMatchObject({ created: 0, updated: 0, unchanged: 0, skipped: 0 });
+    expect(asked).toEqual([SYNC_FULL_MAX_ORDERS]);
+    apiData = [raw({ checkin: "2026-09-10", checkout: "2026-09-12" }), raw({ id: "DLD-2", listing: "DR-UNKNOWN" })];
+    const sep = await syncBookings(db, { client: byMonth, today: "2026-09-30", decrypt: (s) => s, month: "2026-09" });
+    expect(sep).toMatchObject({ created: 0, unchanged: 1 });
   });
 
   it("đơn đổi ngày lùi vào tháng 8 đã khóa → điều chỉnh ghi vào tháng 9", async () => {
@@ -565,5 +594,59 @@ describe("Một NĐT nhiều cơ sở, mỗi cơ sở một tài khoản Daylada
     const list = await listConnections(db, admin, plain);
     const accs = list.find((i) => i.id === "inv-m")!.accounts;
     expect(Object.fromEntries(accs.map((a) => [a.label, a.propertyIds.sort()]))).toEqual({ "TK Hội An": ["M1", "M2"], "TK Đà Lạt": [] });
+  });
+});
+
+describe("Một phòng gắn nhiều listing Dayladau", () => {
+  const plain = (s: string) => s;
+  const order = (id: string, listing: string, checkin: string, checkout: string) => ({
+    id, total_billed: 1_000_000, status: "confirmed", listing: { id: listing, name: `Listing ${listing}` }, guest: { fullname: "Khách" }, created_at: "2026-09-01T10:00:00+07:00",
+    reservation: { start_time: `${checkin}T14:00:00+07:00`, end_time: `${checkout}T12:00:00+07:00`, subtotal_detail_v2: { type_rental: "night" } },
+    items: [{ amount: 1_000_000, commission_rates: [{ type: "host", rate: 0.8 }] }],
+  });
+  const listingsOf = async (roomId: string) => {
+    const [r] = await db.select().from(schema.rooms).where(eq(schema.rooms.id, roomId));
+    const extra = (await db.select().from(schema.roomListings).where(eq(schema.roomListings.roomId, roomId))).map((x) => x.listingKey).sort();
+    return { main: r.dayladauRoomId, extra };
+  };
+
+  beforeAll(async () => {
+    await db.insert(schema.investors).values({ id: "inv-ml", name: "NĐT nhiều listing" });
+    await db.insert(schema.dayladauAccounts).values({ id: "acc-ml", investorId: "inv-ml", label: "TK ML", hostId: "HOST-ML", tokenEncrypted: "tok-ml" });
+    await db.insert(schema.properties).values({ id: "ML1", investorId: "inv-ml", name: "Cơ sở ML", dayladauAccountId: "acc-ml" });
+    await db.insert(schema.rooms).values([
+      { id: "ML1a", propertyId: "ML1", name: "101", openedOn: "2026-01-01", dayladauAccountId: "acc-ml", dayladauRoomId: "L-NEW" },
+      { id: "ML1b", propertyId: "ML1", name: "102", openedOn: "2026-01-01" },
+    ]);
+  });
+
+  it("gắn thêm listing cũ vào phòng đã có listing: giữ listing chính, đơn của cả hai listing về cùng phòng", async () => {
+    await mapListingToRoom(db, admin, "acc-ml", "L-OLD", "ML1a");
+    expect(await listingsOf("ML1a")).toEqual({ main: "L-NEW", extra: ["L-OLD"] });
+    const data = [order("ML-1", "L-NEW", "2026-10-02", "2026-10-04"), order("ML-2", "L-OLD", "2026-08-10", "2026-08-12")];
+    const r = await syncBookings(db, { client: { listBookings: async () => data }, today: "2026-10-05", decrypt: plain, investorIds: ["inv-ml"] });
+    expect(r).toMatchObject({ created: 2, skipped: 0, unmapped: [] });
+    const bs = await db.select({ room: schema.bookings.roomId }).from(schema.bookings).where(inArray(schema.bookings.externalId, ["ML-1", "ML-2"]));
+    expect(bs.map((b) => b.room)).toEqual(["ML1a", "ML1a"]);
+    const conn = await testConnection(db, admin, "acc-ml", { fetchPage: async () => data, decrypt: plain });
+    expect(conn.listings.map((l) => [l.key, l.roomId])).toEqual([["L-NEW", "ML1a"], ["L-OLD", "ML1a"]]);
+  });
+
+  it("chuyển listing phụ sang phòng khác; bỏ gắn listing chính thì listing phụ lên làm chính", async () => {
+    await mapListingToRoom(db, admin, "acc-ml", "L-OLD", "ML1b");
+    expect(await listingsOf("ML1a")).toEqual({ main: "L-NEW", extra: [] });
+    expect(await listingsOf("ML1b")).toEqual({ main: "L-OLD", extra: [] });
+    await mapListingToRoom(db, admin, "acc-ml", "L-OLD", "ML1a");
+    await mapListingToRoom(db, admin, "acc-ml", "L-NEW", null);
+    expect(await listingsOf("ML1a")).toEqual({ main: "L-OLD", extra: [] });
+    expect(await listingsOf("ML1b")).toEqual({ main: null, extra: [] });
+  });
+
+  it("đổi listing chính giữ listing phụ; bỏ tài khoản của cơ sở thì bỏ mọi listing", async () => {
+    await mapListingToRoom(db, admin, "acc-ml", "L-NEW", "ML1a");
+    await updateRoom(db, admin, "ML1a", { dayladauRoomId: "L-NEWER" });
+    expect(await listingsOf("ML1a")).toEqual({ main: "L-NEWER", extra: ["L-NEW"] });
+    await setPropertyAccount(db, admin, "ML1", null);
+    expect(await listingsOf("ML1a")).toEqual({ main: null, extra: [] });
   });
 });
