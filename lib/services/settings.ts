@@ -1,4 +1,5 @@
 // Cài đặt hệ thống, mã hóa token, gửi Lark.
+import { cache } from "react";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { DB } from "../db";
@@ -30,10 +31,11 @@ export async function setSetting(db: DB, key: string, value: string) {
   await db.insert(settings).values({ key, value }).onConflictDoUpdate({ target: settings.key, set: { value } });
 }
 
-export async function feePct(db: DB): Promise<number> {
+// cache: trang Tổng quan tính cho từng NĐT, mỗi NĐT đều cần tỷ lệ phí; chỉ đọc một lần mỗi lượt dựng trang
+export const feePct = cache(async (db: DB): Promise<number> => {
   const n = Number(await getSetting(db, "managementFeePct"));
   return Number.isFinite(n) ? n : 20;
-}
+});
 
 // ---- Mã hóa token Dayladau (AES-256-GCM) ----
 function key(): Buffer {

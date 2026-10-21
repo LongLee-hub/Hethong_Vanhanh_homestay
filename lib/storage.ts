@@ -18,3 +18,14 @@ export async function uploadPhoto(file: File, folder: string): Promise<string> {
   // Bucket để private; trang hiển thị ảnh qua /api/photo?path=… có kiểm tra quyền (giai đoạn 5)
   return `${BUCKET}/${path}`;
 }
+
+/** Đọc ảnh đã lưu (dạng "bucket/đường-dẫn") từ bucket private bằng khóa máy chủ. Quyền xem kiểm tra ở lib/services/photos.ts. */
+export async function fetchPhoto(stored: string): Promise<Response> {
+  const base = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!base || !key) throw new Error("Chưa cấu hình SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY để đọc ảnh");
+  return fetch(`${base}/storage/v1/object/authenticated/${stored}`, { headers: { Authorization: `Bearer ${key}` } });
+}
+
+/** Đường dẫn hiển thị ảnh trong app, đi qua route có kiểm tra quyền. */
+export const photoHref = (stored: string) => `/api/photo?path=${encodeURIComponent(stored)}`;

@@ -41,8 +41,10 @@ export default async function Dashboard() {
   const cost = showFee ? forecasts.reduce((s, x) => s + x.f.costForecast, 0) : sum("costForecast");
   const fee = forecasts.reduce((s, x) => s + x.f.managementFee, 0);
   const headline = showFee ? forecasts.reduce((s, x) => s + x.f.investorNet, 0) : revenue - cost;
-  const headlineLabel = !showFee ? "Lợi nhuận dự kiến tháng này" : user.role === "INVESTOR" ? "Tháng này bạn dự kiến nhận" : "Nhà đầu tư dự kiến nhận tháng này";
-  const resultLabel = !showFee ? "Lợi nhuận" : user.role === "INVESTOR" ? "Bạn nhận" : "Nhà đầu tư nhận";
+  // Tiền phòng về thẳng tài khoản NĐT; NĐT chuyển phí quản lý cho LOCI, nên con số chính là lợi nhuận sau phí chứ không phải "tiền nhận từ LOCI".
+  const mine = user.role === "INVESTOR";
+  const headlineLabel = !showFee ? "Lợi nhuận dự kiến tháng này" : mine ? "Lợi nhuận dự kiến của bạn tháng này" : "Lợi nhuận dự kiến của nhà đầu tư tháng này";
+  const resultLabel = !showFee ? "Lợi nhuận" : mine ? "Lợi nhuận của bạn" : "Lợi nhuận của nhà đầu tư";
 
   return (
     <>
@@ -59,12 +61,12 @@ export default async function Dashboard() {
             <div>
               <span className="cap">{headlineLabel}</span>
               <div className={`big ${sign(headline) === "neg" ? "neg" : ""}`}>{vnd(headline)}</div>
-              <p className="note">Đây là số ước tính đến cuối tháng, gồm các đêm đã có khách và các đêm còn trống ước theo tháng trước. Số chính thức có ở mục Quyết toán sau khi khóa sổ.</p>
+              <p className="note">Đây là số ước tính đến cuối tháng, gồm các đêm đã có khách và các đêm còn trống ước theo tháng trước. Số chính thức có ở mục Quyết toán sau khi khóa sổ.{showFee ? ` Tiền phòng về thẳng tài khoản ${mine ? "của bạn" : "của nhà đầu tư"}, LOCI chỉ thu phí quản lý.` : ""}</p>
             </div>
             <dl className="calc">
               <div><dt>Doanh thu dự kiến</dt><dd>{vnd(revenue)}</dd></div>
               <div><dt>Chi phí dự kiến</dt><dd>− {vnd(cost)}</dd></div>
-              {showFee && <div><dt>Phí quản lý LOCI</dt><dd>− {vnd(fee)}</dd></div>}
+              {showFee && <div><dt>Phí quản lý {mine ? "bạn chuyển" : "chuyển"} cho LOCI</dt><dd>− {vnd(fee)}</dd></div>}
               <div className="sum"><dt>{resultLabel}</dt><dd className={sign(headline)}>{vnd(headline)}</dd></div>
             </dl>
           </section>
@@ -112,7 +114,7 @@ export default async function Dashboard() {
                 <div key={inv.id} className="stack" style={{ gap: 8 }}>
                   <div className="row"><b>{inv.name}</b><span className="spacer" /><span className="pill ok">{pctOf(pb.received, pb.investmentTotal)}%</span></div>
                   <div className="progress"><i style={{ width: `${pb.investmentTotal ? Math.min(100, Math.max(0, (pb.received / pb.investmentTotal) * 100)) : 0}%` }} /></div>
-                  <div className="kv"><span>Đã nhận về</span><b>{vnd(pb.received)}</b></div>
+                  <div className="kv"><span>Lợi nhuận đã thu về</span><b>{vnd(pb.received)}</b></div>
                   <div className="kv"><span>Vốn đầu tư</span><b>{vnd(pb.investmentTotal)}</b></div>
                   <div className="small muted">{pb.monthsLeft === null ? "Chưa đủ dữ liệu để ước tính thời gian hoàn vốn" : pb.monthsLeft === 0 ? "Đã hoàn vốn" : `Dự kiến còn khoảng ${pb.monthsLeft} tháng nữa`}</div>
                 </div>
