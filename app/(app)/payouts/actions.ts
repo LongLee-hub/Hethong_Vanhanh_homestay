@@ -52,14 +52,14 @@ export async function saveGoogleSetupAction(_: State, f: FormData): Promise<Stat
 
 export type PreviewResult = { ok: true; parsed: ParsedPayout } | { ok: false; error: string };
 
-export async function previewPasteAction(input: { subject: string; text: string }): Promise<PreviewResult> {
+export async function previewPasteAction(input: { text: string; receivedOn: string }): Promise<PreviewResult> {
   const user = await requireUser();
   if (!can(user, "viewFee")) return { ok: false, error: "Bạn không có quyền thực hiện thao tác này" };
   if (input.text.trim().length < 20) return { ok: false, error: "Dán toàn bộ nội dung email payout" };
   return { ok: true, parsed: previewPastedPayout(input) };
 }
 
-export async function importPasteAction(input: { investorId: string; subject: string; text: string; receivedOn: string }): Promise<State> {
+export async function importPasteAction(input: { investorId: string; text: string; receivedOn: string }): Promise<State> {
   const user = await requireUser();
   const r = await action(() => importPastedPayout(getDb(), user, input));
   revalidatePath("/payouts");

@@ -8,7 +8,8 @@ import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import type { SessionUser } from "../lib/auth/access";
 import type { GmailClient, GmailMessage } from "../lib/gmail/client";
-import { deletePastedPayout, disconnectGmail, importPastedPayout, listGmailAccounts, payoutsForMonth, reparsePayout, saveGmailConnection, syncPayouts } from "../lib/airbnb/payouts";
+import { deletePastedPayout, disconnectGmail, importPastedPayout, listGmailAccounts, payoutRevenueByMonth, payoutsForMonth, reparsePayout, saveGmailConnection, syncPayouts } from "../lib/airbnb/payouts";
+import { SAMPLE_PASTE, SAMPLE_VI } from "./fixtures/payout-emails";
 import { googleReady, googleSetup, loadGoogleConfig, saveGoogleSetup } from "../lib/gmail/config";
 import { redirectUri } from "../lib/gmail/oauth";
 
@@ -19,7 +20,7 @@ const invB: SessionUser = { id: "u-inv-b", name: "NĐT B", role: "INVESTOR" };
 const acc: SessionUser = { id: "u-acc", name: "Kế toán", role: "ACCOUNTANT" };
 const plain = (s: string) => s; // test không mã hóa token
 
-const mail = (id: string, subject: string, lines: string[], at = "2026-10-06T03:00:00Z"): GmailMessage => ({ id, receivedAt: new Date(at), from: "Airbnb <express@airbnb.com>", subject, text: lines.join("\n") });
+const mail = (id: string, subject: string, lines: string[], at = "2026-10-06T03:00:00Z"): GmailMessage => ({ id, receivedAt: new Date(at), from: "Airbnb <automated@airbnb.com>", subject, text: lines.join("\n") });
 
 function fakeGmail(messages: GmailMessage[]) {
   const calls: { query: string }[] = [];
@@ -59,22 +60,18 @@ beforeAll(async () => {
     id, source: "DAYLADAU" as const, externalId: `DL-${id}`, propertyId, roomId, channel: "Airbnb", guestName, checkIn, checkOut, netAmount, grossAmount: netAmount, status: "CONFIRMED" as const, rawPayload: raw,
   });
   await db.insert(s.bookings).values([
-    // Mã HM nằm trong dữ liệu gốc Dayladau
-    bk("b1", "X", "X1", "Nguyen Van An", "2026-10-03", "2026-10-05", 1_950_000, { ota_reservation_code: "HMABCD1234" }),
-    // Không có mã HM: khớp dự phòng bằng tên khách + ngày nhận phòng; hệ thống ghi thiếu 100.000
-    bk("b2", "X", "X1", "John Smith", "2026-10-05", "2026-10-07", 1_400_000, null),
+    // Mã đặt phòng Airbnb nằm trong dữ liệu gốc Dayladau; tiền phòng trong email ≈ 1.980.948 ₫
+    bk("b1", "X", "X1", "Nguyen Van An", "2026-10-03", "2026-10-05", 1_980_000, { ota_reservation_code: "HMABCD1234" }),
+    // Không có mã: khớp dự phòng bằng tên khách + ngày nhận phòng; hệ thống ghi thiếu (email 502.665 ₫)
+    bk("b2", "X", "X1", "John Smith", "2026-10-30", "2026-11-02", 400_000, null),
     // Đơn Airbnb đã nhận phòng mà chưa có payout
     bk("b3", "X", "X1", "Le Thi C", "2026-10-10", "2026-10-11", 800_000, null),
-    // Cùng mã HM nhưng thuộc NĐT B: không được khớp vào payout của NĐT A
-    bk("b4", "Z", "Z1", "Nguyen Van An", "2026-10-03", "2026-10-05", 1_950_000, { ota_reservation_code: "HMABCD1234" }),
+    // Cùng mã nhưng thuộc NĐT B: không được khớp vào payout của NĐT A
+    bk("b4", "Z", "Z1", "Nguyen Van An", "2026-10-03", "2026-10-05", 1_980_000, { ota_reservation_code: "HMABCD1234" }),
   ]);
 });
 
-const PAYOUT = mail("m1", "We sent you a payout of ₫3,450,000 VND", [
-  "We sent a payout of ₫3,450,000 VND to your account ••••1234.",
-  "Nguyen Van An", "Oct 3 – 5, 2026", "HMABCD1234", "₫1,950,000 VND",
-  "John Smith", "Oct 5 – 7, 2026", "HMNOCODE01", "₫1,500,000 VND",
-]);
+const PAYOUT = mail("m1", "Chúng tôi đã gửi cho bạn một khoản chi trả", SAMPLE_VI.split("\n"));
 
 describe("Kết nối Gmail", () => {
   it("NĐT chỉ kết nối Gmail cho chính mình; kế toán không kết nối được", async () => {
@@ -98,27 +95,29 @@ describe("Kết nối Gmail", () => {
 });
 
 describe("Đồng bộ và đối soát payout", () => {
-  it("đọc email payout, bỏ qua thư khác, khớp đơn theo mã HM và theo tên khách + ngày", async () => {
-    const other = mail("m2", "Reservation confirmed - An arrives Oct 3", ["HMABCD1234"]);
+  it("đọc email payout, bỏ qua thư khác, gộp dòng theo đơn, so tiền trước thuế với thực nhận", async () => {
+    const other = mail("m2", "Đặt phòng đã được xác nhận", ["HMABCD1234  $80,00 USD"]);
     const { client, calls } = fakeGmail([PAYOUT, other]);
     const sum = await syncPayouts(db, { client, accessToken: token, decrypt: plain, today: "2026-10-21" });
-    expect(sum).toMatchObject({ accounts: 1, messages: 2, created: 1, skipped: 1, matched: 2, errors: [] });
+    expect(sum).toMatchObject({ accounts: 1, messages: 2, created: 1, skipped: 1, duplicates: 0, matched: 2, errors: [] });
+    expect(calls[0].query).toContain("from:automated@airbnb.com");
     expect(calls[0].query).toContain("after:2026/04/24"); // lần đầu đọc lùi 180 ngày
 
     const { payouts } = await payoutsForMonth(db, invA, "2026-10", "2026-10-21");
     expect(payouts).toHaveLength(1);
     const [p] = payouts;
-    expect(p.amount).toBe(3_450_000);
-    expect(p.items.map((i) => [i.confirmationCode, i.booking?.id, i.matchStatus, i.diffAmount])).toEqual([
-      ["HMABCD1234", "b1", "MATCHED", 0],
-      ["HMNOCODE01", "b2", "AMOUNT_DIFF", 100_000],
+    expect(p).toMatchObject({ amount: 2_335_042, payoutCode: "ABCDEF123456", totalUsd: 94.3 });
+    expect(p.groups.map((g) => [g.confirmationCode, g.booking?.id, g.lines.map((l) => l.lineType), g.preTaxVnd, g.taxVnd, g.matchStatus, g.diffAmount])).toEqual([
+      ["HMABCD1234", "b1", ["Tiền phòng", "Thuế TNCN", "Thuế VAT"], 1_980_948, -148_571, "MATCHED", 948],
+      ["HMXYZ98765", "b2", ["Tiền phòng"], 502_665, 0, "AMOUNT_DIFF", 102_665],
     ]);
   });
 
-  it("đồng bộ lại không tạo trùng; lần sau chỉ đọc lùi 7 ngày", async () => {
-    const { client, calls } = fakeGmail([PAYOUT]);
+  it("đồng bộ lại không tạo trùng; email gửi lặp cùng mã khoản chi trả bị bỏ qua; lần sau chỉ đọc lùi 7 ngày", async () => {
+    const resent = mail("m3", "Chúng tôi đã gửi cho bạn một khoản chi trả", SAMPLE_VI.split("\n"), "2026-10-07T03:00:00Z");
+    const { client, calls } = fakeGmail([PAYOUT, resent]);
     const sum = await syncPayouts(db, { client, accessToken: token, decrypt: plain, today: "2026-10-22" });
-    expect(sum.created).toBe(0);
+    expect(sum).toMatchObject({ created: 0, duplicates: 1 });
     expect(calls[0].query).toMatch(/after:2026\/10\/1[45]/);
   });
 
@@ -129,6 +128,18 @@ describe("Đồng bộ và đối soát payout", () => {
     expect((await payoutsForMonth(db, invA, "2026-10", "2026-10-12")).missing).toEqual([]);
   });
 
+  it("doanh thu theo tháng ở: đơn trải tháng chia theo đêm, phần cuối nhận phần dư", async () => {
+    const oct = await payoutRevenueByMonth(db, invA, "2026-10");
+    expect(oct.map((r) => [r.confirmationCode, r.nights, r.totalNights, r.preTaxVnd, r.taxVnd, r.vnd])).toEqual([
+      ["HMABCD1234", 2, 2, 1_980_948, -148_571, 1_832_377],
+      ["HMXYZ98765", 2, 3, 335_110, 0, 335_110],
+    ]);
+    const nov = await payoutRevenueByMonth(db, invA, "2026-11");
+    expect(nov.map((r) => [r.confirmationCode, r.partCheckIn, r.partCheckOut, r.vnd])).toEqual([["HMXYZ98765", "2026-11-01", "2026-11-02", 167_555]]);
+    expect(oct[0].nickname).toBe("NTG402");
+    expect(await payoutRevenueByMonth(db, invB, "2026-10")).toEqual([]);
+  });
+
   it("NĐT B không thấy payout của NĐT A; kế toán thấy theo cơ sở được giao", async () => {
     expect((await payoutsForMonth(db, invB, "2026-10", "2026-10-21")).payouts).toEqual([]);
     const forAcc = await payoutsForMonth(db, acc, "2026-10", "2026-10-21");
@@ -136,13 +147,13 @@ describe("Đồng bộ và đối soát payout", () => {
     expect(forAcc.payouts[0].canManage).toBe(false);
   });
 
-  it("đơn đồng bộ sau email payout được khớp ở lần đối soát kế tiếp; tách lại giữ đúng kết quả", async () => {
-    await db.update(schema.bookings).set({ netAmount: 1_500_000 }).where(eq(schema.bookings.id, "b2"));
+  it("sửa thực nhận rồi tách lại: đơn chuyển sang khớp", async () => {
+    await db.update(schema.bookings).set({ netAmount: 502_000 }).where(eq(schema.bookings.id, "b2"));
     const [p] = await db.select().from(schema.airbnbPayouts);
     await expect(reparsePayout(db, invB, p.id)).rejects.toThrow(/Không tìm thấy/);
     await reparsePayout(db, invA, p.id);
     const { payouts } = await payoutsForMonth(db, invA, "2026-10", "2026-10-21");
-    expect(payouts[0].items.every((i) => i.matchStatus === "MATCHED")).toBe(true);
+    expect(payouts[0].groups.map((g) => g.matchStatus)).toEqual(["MATCHED", "MATCHED"]);
   });
 
   it("Gmail lỗi (thu hồi quyền) ghi trạng thái lỗi, không làm hỏng lượt đồng bộ", async () => {
@@ -191,24 +202,21 @@ describe("Cài đặt Google trên web", () => {
 });
 
 describe("Dán email payout trên web", () => {
-  const SUBJECT = "Chúng tôi đã gửi cho bạn khoản thanh toán 800.000 ₫";
-  const BODY = "Chúng tôi đã gửi khoản thanh toán 800.000 ₫ tới tài khoản ••••5678.\r\nKhách: Le Thi C\r\n10/10/2026 – 11/10/2026\r\nHMPASTE001\r\n800.000 ₫";
-
-  it("lưu payout dán tay, khớp đơn, không cho dán trùng", async () => {
-    await expect(importPastedPayout(db, invB, { investorId: "inv-a", subject: SUBJECT, text: BODY, receivedOn: "2026-10-12" })).rejects.toThrow(/Không tìm thấy/);
-    await expect(importPastedPayout(db, invA, { investorId: "inv-a", subject: "Reservation confirmed", text: BODY, receivedOn: "2026-10-12" })).rejects.toThrow(/tiêu đề/);
-    const row = await importPastedPayout(db, invA, { investorId: "inv-a", subject: SUBJECT, text: BODY, receivedOn: "2026-10-12" });
+  it("lưu payout dán tay, khớp đơn, không cho dán trùng (cùng nội dung hoặc cùng mã khoản chi trả)", async () => {
+    await expect(importPastedPayout(db, invB, { investorId: "inv-a", text: SAMPLE_PASTE, receivedOn: "2026-10-12" })).rejects.toThrow(/Không tìm thấy/);
+    await expect(importPastedPayout(db, invA, { investorId: "inv-a", text: "Đặt phòng đã được xác nhận HMPASTE001", receivedOn: "2026-10-12" })).rejects.toThrow(/dòng tổng tiền/);
+    const row = await importPastedPayout(db, invA, { investorId: "inv-a", text: SAMPLE_PASTE, receivedOn: "2026-10-12" });
     expect(row?.gmailAccountId).toBeNull();
-    await expect(importPastedPayout(db, invA, { investorId: "inv-a", subject: SUBJECT, text: BODY, receivedOn: "2026-10-12" })).rejects.toThrow(/đã được dán/);
+    await expect(importPastedPayout(db, invA, { investorId: "inv-a", text: SAMPLE_PASTE, receivedOn: "2026-10-12" })).rejects.toThrow(/PASTECODE0001 đã có/);
     const { payouts, missing } = await payoutsForMonth(db, invA, "2026-10", "2026-10-21");
     const pasted = payouts.find((p) => p.email === null)!;
     expect(pasted.payoutDate).toBe("2026-10-12");
-    expect(pasted.items[0]).toMatchObject({ confirmationCode: "HMPASTE001", matchStatus: "MATCHED", diffAmount: 0 });
-    expect(pasted.items[0].booking?.id).toBe("b3");
+    expect(pasted.groups[0]).toMatchObject({ confirmationCode: "HMPASTE001", guestName: "Le Thi C", checkIn: "2026-10-10", vnd: 800_000, matchStatus: "MATCHED", diffAmount: 0 });
+    expect(pasted.groups[0].booking?.id).toBe("b3");
     expect(missing.map((m) => m.bookingId)).not.toContain("b3");
   });
 
-  it("chỉ xóa được payout dán tay", async () => {
+  it("chỉ xóa được payout dán tay; xóa xong đơn lại hiện là chưa thấy payout", async () => {
     const all = await db.select().from(schema.airbnbPayouts);
     const fromGmail = all.find((p) => p.gmailAccountId)!;
     const pasted = all.find((p) => !p.gmailAccountId)!;
@@ -216,5 +224,6 @@ describe("Dán email payout trên web", () => {
     await expect(deletePastedPayout(db, invB, pasted.id)).rejects.toThrow(/Không tìm thấy/);
     await deletePastedPayout(db, invA, pasted.id);
     expect((await db.select().from(schema.airbnbPayoutItems).where(eq(schema.airbnbPayoutItems.payoutId, pasted.id)))).toEqual([]);
+    expect((await payoutsForMonth(db, invA, "2026-10", "2026-10-21")).missing.map((m) => m.bookingId)).toEqual(["b3"]);
   });
 });

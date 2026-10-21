@@ -1,97 +1,88 @@
-// Bộ tách email payout Airbnb. Email mẫu dựng theo cấu trúc email payout của Airbnb (TODO(CONFIRM) với email thật).
+// Bộ tách email payout Airbnb, theo Apps Script "AIRBNB PAYOUT EMAIL IMPORTER v2" của LOCI.
 import { describe, expect, it } from "vitest";
-import { findMoney, parseDateRange, parsePayoutEmail } from "../lib/airbnb/payout-parser";
+import { allocateVnd, extractNickname, parseDateRangeStr, parseMoney, parsePayoutEmail, prorate, splitStay } from "../lib/airbnb/payout-parser";
 import { htmlToText, messageText } from "../lib/gmail/client";
-
-const EN = {
-  subject: "We sent you a payout of ₫3,450,000 VND",
-  text: [
-    "Airbnb",
-    "We sent a payout of ₫3,450,000 VND to your account ••••1234.",
-    "It should arrive by Oct 23, 2026.",
-    "Details",
-    "Nguyen Van An",
-    "Oct 3 – 5, 2026",
-    "Vạn Phúc P101 · Cozy studio",
-    "HMABCD1234",
-    "₫1,950,000 VND",
-    "John Smith",
-    "Oct 30 – Nov 2, 2026",
-    "Phan Kế Bính P202",
-    "HMXYZ98765",
-    "₫1,500,000 VND",
-  ].join("\n"),
-};
-
-const VI = {
-  subject: "Chúng tôi đã gửi cho bạn khoản thanh toán 2.100.000 ₫",
-  text: [
-    "Chúng tôi đã gửi khoản thanh toán 2.100.000 ₫ tới tài khoản ••••5678.",
-    "Khách: Trần Thị Bình",
-    "30 thg 12, 2026 – 2 thg 1, 2027",
-    "Mã xác nhận HMQWERTY12",
-    "2.100.000 ₫",
-  ].join("\n"),
-};
+import { SAMPLE_VI } from "./fixtures/payout-emails";
 
 describe("Tách email payout Airbnb", () => {
-  it("email tiếng Anh nhiều đơn: tổng tiền, mã, ngày, tiền từng đơn", () => {
-    const p = parsePayoutEmail(EN);
-    expect(p.isPayout).toBe(true);
-    expect(p.status).toBe("OK");
-    expect(p.amount).toBe(3_450_000);
-    expect(p.currency).toBe("VND");
-    expect(p.items).toEqual([
-      { confirmationCode: "HMABCD1234", guestName: "Nguyen Van An", checkIn: "2026-10-03", checkOut: "2026-10-05", amount: 1_950_000 },
-      { confirmationCode: "HMXYZ98765", guestName: "John Smith", checkIn: "2026-10-30", checkOut: "2026-11-02", amount: 1_500_000 },
+  it("đọc đủ dòng giao dịch, loại dòng, listing, mã đặt phòng, mã khoản chi trả", () => {
+    const p = parsePayoutEmail({ subject: "", text: SAMPLE_VI, payDate: "2026-10-06" });
+    expect(p).toMatchObject({ isPayout: true, status: "OK", payoutCode: "ABCDEF123456", amount: 2_335_042, totalUsd: 94.3 });
+    expect(p.items.map((i) => [i.confirmationCode, i.guestName, i.lineType, i.checkIn, i.checkOut, i.usdAmount])).toEqual([
+      ["HMABCD1234", "Nguyen Van An", "Tiền phòng", "2026-10-03", "2026-10-05", 80],
+      ["HMABCD1234", "Nguyen Van An", "Thuế TNCN", "2026-10-03", "2026-10-05", -4],
+      ["HMABCD1234", "Nguyen Van An", "Thuế VAT", "2026-10-03", "2026-10-05", -2],
+      ["HMXYZ98765", "John Smith", "Tiền phòng", "2026-10-30", "2026-11-02", 20.3],
     ]);
+    expect(p.items[0]).toMatchObject({ listingName: "NTG402@Oldquarter/Studio/Balcony", listingId: "1234567890123456" });
   });
 
-  it("email tiếng Việt: dấu chấm phân cách nghìn, ngày qua năm mới, nhãn Khách", () => {
-    const p = parsePayoutEmail(VI);
-    expect(p.status).toBe("OK");
-    expect(p.amount).toBe(2_100_000);
-    expect(p.items).toEqual([{ confirmationCode: "HMQWERTY12", guestName: "Trần Thị Bình", checkIn: "2026-12-30", checkOut: "2027-01-02", amount: 2_100_000 }]);
+  it("VNĐ từng dòng theo tỷ giá của chính email, tổng khớp đúng số tiền email", () => {
+    const p = parsePayoutEmail({ subject: "", text: SAMPLE_VI, payDate: "2026-10-06" });
+    expect(p.items.map((i) => i.amount)).toEqual([1_980_948, -99_047, -49_524, 502_665]);
+    expect(p.items.reduce((s, i) => s + (i.amount ?? 0), 0)).toBe(2_335_042);
+    expect(Math.round(p.exchangeRate!)).toBe(24_762);
   });
 
-  it("tổng các đơn khác tổng payout → tách được một phần", () => {
-    const p = parsePayoutEmail({ ...EN, subject: "We sent you a payout of ₫3,500,000 VND" });
-    expect(p.status).toBe("PARTIAL");
-    expect(p.note).toMatch(/khác tổng payout/);
+  it("phần dư làm tròn dồn vào dòng có |USD| lớn nhất", () => {
+    const { vnd } = allocateVnd([1, 1, 1], 100);
+    expect(vnd).toEqual([34, 33, 33]);
+    expect(allocateVnd([10], null).vnd).toEqual([null]);
   });
 
-  it("email không có mã HM vẫn giữ tổng tiền, đánh dấu một phần", () => {
-    const p = parsePayoutEmail({ subject: "Your payout of $120.50 USD was sent", text: "We sent a payout of $120.50 USD." });
-    expect(p.amount).toBe(120.5);
-    expect(p.currency).toBe("USD");
-    expect(p.items).toHaveLength(0);
-    expect(p.status).toBe("PARTIAL");
+  it("email tiếng Anh: Details / Total paid out / Payout ID", () => {
+    const text = ["Details", "Jane Doe  $50.00 USD", "Accommodation • 12/20/2026 - 12/23/2026", "Lac Trung 2 (1111111111)", "HMEN000001", "Total paid out: ₫1.250.000 VND", "Payout ID: G1234567890XYZ"].join("\n");
+    const p = parsePayoutEmail({ subject: "", text, payDate: "2026-12-21" });
+    expect(p).toMatchObject({ status: "OK", payoutCode: "G1234567890XYZ", amount: 1_250_000 });
+    expect(p.items[0]).toMatchObject({ lineType: "Tiền phòng", checkIn: "2026-12-20", checkOut: "2026-12-23", amount: 1_250_000 });
   });
 
-  it("bỏ qua thư không phải tiền đã chuyển", () => {
-    expect(parsePayoutEmail({ subject: "Reservation confirmed - An arrives Oct 3", text: "HMABCD1234 ₫1,950,000" }).isPayout).toBe(false);
-    expect(parsePayoutEmail({ subject: "Your payout failed", text: "" }).isPayout).toBe(false);
-    expect(parsePayoutEmail({ subject: "Cập nhật phương thức nhận khoản thanh toán", text: "" }).isPayout).toBe(false);
+  it("bỏ qua email không có dòng tổng chi trả (xác nhận đặt phòng, nhắc cập nhật…)", () => {
+    const p = parsePayoutEmail({ subject: "Payout update", text: "Reservation confirmed HMABCD1234 $80,00 USD" });
+    expect(p.isPayout).toBe(false);
   });
 
-  it("đọc số tiền nhiều kiểu viết", () => {
-    expect(findMoney("₫1,234,567").map((m) => m.amount)).toEqual([1_234_567]);
-    expect(findMoney("1.234.567 ₫").map((m) => m.amount)).toEqual([1_234_567]);
-    expect(findMoney("1.234.567đ và 500.000 VND").map((m) => m.amount)).toEqual([1_234_567, 500_000]);
-    expect(findMoney("Đức Anh").length).toBe(0);
+  it("email có tổng nhưng không đọc được phần Chi tiết → một phần", () => {
+    const p = parsePayoutEmail({ subject: "", text: "Tổng số tiền đã chi trả: ₫500.000 VND" });
+    expect(p).toMatchObject({ isPayout: true, status: "PARTIAL", amount: 500_000, items: [] });
   });
 
-  it("đọc khoảng ngày nhiều kiểu viết", () => {
-    expect(parseDateRange("03/10/2026 – 05/10/2026")).toEqual({ checkIn: "2026-10-03", checkOut: "2026-10-05" });
-    expect(parseDateRange("Dec 30, 2026 – Jan 2, 2027")).toEqual({ checkIn: "2026-12-30", checkOut: "2027-01-02" });
-    expect(parseDateRange("3 – 5 thg 10, 2026")).toEqual({ checkIn: "2026-10-03", checkOut: "2026-10-05" });
-    expect(parseDateRange("Phòng 101")).toBeNull();
+  it("đọc số tiền nhiều kiểu viết như parseMoney của script", () => {
+    expect(parseMoney("$16,30 USD")).toBe(16.3);
+    expect(parseMoney("-$1.234,56 USD")).toBe(-1234.56);
+    expect(parseMoney("2.335.042")).toBe(2_335_042);
+    expect(parseMoney("1,234.56")).toBe(1234.56);
   });
 
-  it("thân thư HTML thành từng dòng, ưu tiên phần HTML", () => {
-    expect(htmlToText("<table><tr><td>HMABCD1234</td></tr><tr><td>&#8363;1,950,000&nbsp;VND</td></tr></table>")).toBe("HMABCD1234\n₫1,950,000 VND");
+  it("ngày d/M hay M/d: theo phần > 12, số 0 đứng đầu, rồi so với ngày gửi tiền", () => {
+    expect(parseDateRangeStr("13/10/2026", "15/10/2026", null)).toEqual({ checkIn: "2026-10-13", checkOut: "2026-10-15" });
+    expect(parseDateRangeStr("10/13/2026", "10/15/2026", null)).toEqual({ checkIn: "2026-10-13", checkOut: "2026-10-15" });
+    expect(parseDateRangeStr("3/10/2026", "5/10/2026", "2026-10-06")).toEqual({ checkIn: "2026-10-03", checkOut: "2026-10-05" });
+    // Đọc kiểu Việt Nam (3/10 → 4/10) thì check-in sau ngày gửi tiền quá 45 ngày → đọc kiểu Mỹ (10/3 → 10/4)
+    expect(parseDateRangeStr("3/10/2026", "4/10/2026", "2026-03-12")).toEqual({ checkIn: "2026-03-10", checkOut: "2026-04-10" });
+    // Cả hai cách đều hợp lệ → mặc định kiểu Việt Nam
+    expect(parseDateRangeStr("10/3/2026", "10/5/2026", "2026-10-04")).toEqual({ checkIn: "2026-03-10", checkOut: "2026-05-10" });
+  });
+
+  it("tách kỳ ở theo tháng, chia tiền theo đêm, phần cuối nhận phần dư", () => {
+    const parts = splitStay("2026-10-30", "2026-11-02")!;
+    expect(parts).toEqual([
+      { month: "2026-10", nights: 2, totalNights: 3, checkIn: "2026-10-30", checkOut: "2026-10-31" },
+      { month: "2026-11", nights: 1, totalNights: 3, checkIn: "2026-11-01", checkOut: "2026-11-02" },
+    ]);
+    expect(prorate(100_000, parts)).toEqual([66_667, 33_333]);
+    expect(splitStay(null, "2026-11-02")).toBeNull();
+  });
+
+  it("lấy nickname phòng từ tên listing", () => {
+    expect(extractNickname("NTG402@Oldquarter/Studio")).toBe("NTG402");
+    expect(extractNickname("Unix76NTG401. Máy chiếu")).toBe("NTG401");
+  });
+
+  it("thân thư: lấy phần text/plain giống getPlainBody(), không có thì đổi HTML ra chữ", () => {
     const b64 = (s: string) => Buffer.from(s).toString("base64url");
-    const text = messageText({ mimeType: "multipart/alternative", parts: [{ mimeType: "text/plain", body: { data: b64("plain") } }, { mimeType: "text/html", body: { data: b64("<p>html</p>") } }] });
-    expect(text).toBe("html");
+    expect(messageText({ mimeType: "multipart/alternative", parts: [{ mimeType: "text/plain", body: { data: b64("plain") } }, { mimeType: "text/html", body: { data: b64("<p>html</p>") } }] })).toBe("plain");
+    expect(messageText({ mimeType: "text/html", body: { data: b64("<p>a</p><p>&#8363;1&nbsp;VND</p>") } })).toBe("a\n₫1 VND");
+    expect(htmlToText("<style>x</style><div>HMABCD1234</div>")).toBe("HMABCD1234");
   });
 });

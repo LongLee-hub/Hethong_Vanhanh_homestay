@@ -394,17 +394,23 @@ export const airbnbPayouts = pgTable(
     payoutDate: day("payout_date").notNull(), // ngày gửi tiền (theo email), giờ VN
     amount: money("amount"), // tổng tiền chuyển, VND
     currency: text("currency").notNull().default("VND"),
+    payoutCode: text("payout_code"), // "Mã khoản chi trả" / Payout ID: Airbnb có khi gửi lặp cùng một khoản
+    totalUsd: numeric("total_usd", { precision: 14, scale: 2, mode: "number" }), // tổng USD các dòng
+    exchangeRate: numeric("exchange_rate", { precision: 14, scale: 4, mode: "number" }), // VNĐ/USD của email
     subject: text("subject"),
     bodyText: text("body_text"), // nội dung đã bỏ HTML, giữ lại để tách lại khi đổi bộ tách
     parseStatus: payoutParseEnum("parse_status").notNull(),
     parseNote: text("parse_note"),
   },
-  (t) => [uniqueIndex("payouts_account_msg").on(t.gmailAccountId, t.gmailMessageId), index("payouts_inv_date").on(t.investorId, t.payoutDate)],
+  (t) => [uniqueIndex("payouts_account_msg").on(t.gmailAccountId, t.gmailMessageId), index("payouts_inv_date").on(t.investorId, t.payoutDate), index("payouts_inv_code").on(t.investorId, t.payoutCode)],
 );
 
 export const payoutMatchEnum = pgEnum("payout_match_status", ["MATCHED", "AMOUNT_DIFF", "NOT_FOUND"]);
 
-/** Từng đơn trong một email payout, khớp với bookings theo mã xác nhận Airbnb (HM…). */
+/**
+ * Từng dòng giao dịch trong một email payout (một đơn thường có dòng tiền phòng + các dòng thuế khấu trừ âm),
+ * khớp với bookings theo mã đặt phòng. Trạng thái khớp và số lệch tính cho cả đơn, ghi giống nhau trên mọi dòng của đơn.
+ */
 export const airbnbPayoutItems = pgTable(
   "airbnb_payout_items",
   {
@@ -412,13 +418,16 @@ export const airbnbPayoutItems = pgTable(
     payoutId: text("payout_id").notNull().references(() => airbnbPayouts.id, { onDelete: "cascade" }),
     confirmationCode: text("confirmation_code"),
     guestName: text("guest_name"),
+    lineType: text("line_type"), // Tiền phòng, Thuế TNCN, Thuế VAT, Phí dọn dẹp…
     listingName: text("listing_name"),
+    listingId: text("listing_id"), // ID listing Airbnb
+    usdAmount: numeric("usd_amount", { precision: 14, scale: 2, mode: "number" }),
     checkIn: day("check_in"),
     checkOut: day("check_out"),
-    amount: bigint("amount", { mode: "number" }), // null = email không ghi tiền riêng từng đơn
+    amount: bigint("amount", { mode: "number" }), // VNĐ phân bổ theo tỷ giá của email; null = email không có tổng VNĐ
     bookingId: text("booking_id").references(() => bookings.id, { onDelete: "set null" }),
     matchStatus: payoutMatchEnum("match_status").notNull().default("NOT_FOUND"),
-    diffAmount: bigint("diff_amount", { mode: "number" }), // tiền payout − thực nhận ghi trong hệ thống
+    diffAmount: bigint("diff_amount", { mode: "number" }), // cả đơn: VNĐ trước thuế Airbnb đã chuyển (mọi email) − thực nhận trong hệ thống
   },
   (t) => [index("payout_items_payout").on(t.payoutId), index("payout_items_code").on(t.confirmationCode), index("payout_items_booking").on(t.bookingId)],
 );

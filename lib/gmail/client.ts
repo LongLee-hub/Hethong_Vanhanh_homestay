@@ -7,7 +7,7 @@ export interface GmailMessage {
   receivedAt: Date;
   from: string;
   subject: string;
-  /** Thân thư dạng văn bản thuần: ưu tiên phần text/plain, không có thì bỏ thẻ phần text/html. */
+  /** Thân thư dạng văn bản thuần: phần text/plain, không có thì bỏ thẻ phần text/html. */
   text: string;
 }
 
@@ -59,9 +59,10 @@ export function htmlToText(html: string): string {
 export function messageText(payload: Part): string {
   const out = { plain: [] as string[], html: [] as string[] };
   collect(payload, out);
-  // Email Airbnb có cả hai phần; bản HTML giữ cấu trúc bảng tốt hơn bản text (bản text hay dồn nhiều cột vào một dòng)
-  if (out.html.length) return htmlToText(out.html.join("\n"));
-  return out.plain.join("\n").replace(/\r/g, "");
+  // Bộ tách đọc bản text/plain giống msg.getPlainBody() của Apps Script (tên khách và số tiền cách nhau ≥ 2 dấu cách);
+  // chỉ khi email không có phần text mới đổi HTML ra chữ
+  if (out.plain.length) return out.plain.join("\n").replace(/\r/g, "");
+  return htmlToText(out.html.join("\n"));
 }
 
 export const httpGmailClient: GmailClient = {

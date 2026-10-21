@@ -1,7 +1,7 @@
 // Payout Airbnb đọc từ Gmail của từng NĐT: kết nối hộp thư, đồng bộ email, đối soát với đơn trong hệ thống.
 // Đối soát: mỗi đơn trong email payout khớp với booking theo mã xác nhận Airbnb (HM…), so tiền Airbnb chuyển
 // với "thực nhận" đang ghi. Đơn Airbnb đã check-in mà chưa thấy payout cũng được liệt kê.
-import { and, desc, eq, gte, ilike, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, ilike, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
 import { airbnbPayoutItems, airbnbPayouts, bookings, gmailAccounts, investors, properties } from "../db/schema";
@@ -11,9 +11,9 @@ import { httpGmailClient, type GmailClient } from "../gmail/client";
 import { accessToken as googleAccessToken } from "../gmail/oauth";
 import { loadGoogleConfig } from "../gmail/config";
 import { createHash } from "node:crypto";
-import { parsePayoutEmail, type ParsedPayout } from "./payout-parser";
+import { extractNickname, parsePayoutEmail, prorate, splitStay, TAX_TYPES, type ParsedPayout } from "./payout-parser";
 
-/** Lệch dưới mức này (VND) coi là khớp: làm tròn tiền giữa Airbnb và Dayladau. */
+/** Lệch tối thiểu (VND) coi là khớp, xem thêm PAYOUT_TOLERANCE_PCT. */
 export const PAYOUT_TOLERANCE = 2_000;
 /** Lần đồng bộ đầu đọc lại email của chừng này ngày. */
 export const FIRST_SYNC_DAYS = 180;
@@ -25,7 +25,8 @@ export const MISSING_AFTER_DAYS = 3;
 /** Đối soát lại các payout trong khoảng này (đơn có thể đồng bộ về sau email payout). */
 const REMATCH_DAYS = 180;
 
-export const GMAIL_QUERY = 'from:airbnb.com {payout "khoản thanh toán" "khoản chi trả"}';
+// Giống searchPayoutThreads của Apps Script: email từ automated@airbnb.com có dòng tổng chi trả hoặc tiêu đề payout
+export const GMAIL_QUERY = 'from:automated@airbnb.com {"Tổng số tiền đã chi trả" "Total paid out" subject:"chi trả" subject:payout}';
 
 // ---------- Quyền ----------
 
@@ -110,6 +111,8 @@ export interface PayoutSyncSummary {
   messages: number;
   created: number;
   skipped: number;
+  /** Email Airbnb gửi lặp cùng một "Mã khoản chi trả" — bỏ qua. */
+  duplicates: number;
   matched: number;
   errors: { accountId: string; email: string; message: string }[];
 }
@@ -132,6 +135,9 @@ async function insertParsed(db: DB, base: { gmailAccountId: string | null; inves
       payoutDate: D.todayVN(base.receivedAt),
       amount: p.amount ?? 0,
       currency: p.currency,
+      payoutCode: p.payoutCode,
+      totalUsd: p.totalUsd,
+      exchangeRate: p.exchangeRate,
       parseStatus: p.status,
       parseNote: p.note,
     })
@@ -142,24 +148,32 @@ async function insertParsed(db: DB, base: { gmailAccountId: string | null; inves
   return payout;
 }
 
+async function payoutCodeExists(db: DB, investorId: string, code: string | null): Promise<boolean> {
+  if (!code) return false;
+  const [r] = await db.select({ id: airbnbPayouts.id }).from(airbnbPayouts).where(and(eq(airbnbPayouts.investorId, investorId), eq(airbnbPayouts.payoutCode, code))).limit(1);
+  return !!r;
+}
+
 /** Các email đã lưu giữ tối đa chừng này ký tự thân thư (đủ cho email payout nhiều đơn). */
 const MAX_BODY = 60_000;
 
 export async function syncPayouts(db: DB, opts: PayoutSyncDeps & { accountIds?: string[]; investorIds?: string[] } = {}): Promise<PayoutSyncSummary> {
   const client = opts.client ?? httpGmailClient;
   const decrypt = opts.decrypt ?? decryptSecret;
-  let getToken = opts.accessToken;
-  if (!getToken) {
-    const cfg = await loadGoogleConfig(db, decrypt);
-    getToken = (r) => googleAccessToken(cfg, r);
-  }
   const today = opts.today ?? D.todayVN();
-  const sum: PayoutSyncSummary = { accounts: 0, messages: 0, created: 0, skipped: 0, matched: 0, errors: [] };
+  const sum: PayoutSyncSummary = { accounts: 0, messages: 0, created: 0, skipped: 0, duplicates: 0, matched: 0, errors: [] };
 
   const conds = [eq(gmailAccounts.active, true)];
   if (opts.accountIds?.length) conds.push(inArray(gmailAccounts.id, opts.accountIds));
   if (opts.investorIds?.length) conds.push(inArray(gmailAccounts.investorId, opts.investorIds));
   const accounts = await db.select().from(gmailAccounts).where(and(...conds));
+  if (!accounts.length) return sum;
+
+  let getToken = opts.accessToken;
+  if (!getToken) {
+    const cfg = await loadGoogleConfig(db, decrypt);
+    getToken = (r) => googleAccessToken(cfg, r);
+  }
 
   for (const a of accounts) {
     if (!a.refreshTokenEncrypted) continue;
@@ -177,8 +191,9 @@ export async function syncPayouts(db: DB, opts: PayoutSyncDeps & { accountIds?: 
       for (const id of ids) {
         if (stored.has(id)) continue;
         const msg = await client.getMessage(at, id);
-        const parsed = parsePayoutEmail({ subject: msg.subject, text: msg.text });
+        const parsed = parsePayoutEmail({ subject: msg.subject, text: msg.text, payDate: D.todayVN(msg.receivedAt) });
         if (!parsed.isPayout) { sum.skipped++; continue; }
+        if (await payoutCodeExists(db, a.investorId, parsed.payoutCode)) { sum.duplicates++; continue; }
         const row = await insertParsed(db, { gmailAccountId: a.id, investorId: a.investorId, gmailMessageId: msg.id, receivedAt: msg.receivedAt, subject: msg.subject, bodyText: msg.text.slice(0, MAX_BODY) }, parsed);
         if (row) sum.created++;
       }
@@ -191,15 +206,24 @@ export async function syncPayouts(db: DB, opts: PayoutSyncDeps & { accountIds?: 
   }
 
   const investorIds = [...new Set(accounts.map((a) => a.investorId))];
-  if (investorIds.length) sum.matched = await matchPayouts(db, { investorIds, today });
+  sum.matched = await matchPayouts(db, { investorIds, today });
   return sum;
 }
 
 // ---------- Đối soát ----------
+// Một đơn có nhiều dòng (tiền phòng, phí dọn, thuế TNCN/VAT âm) và có thể nằm ở nhiều email payout.
+// So "trước thuế" = tổng VNĐ các dòng không phải thuế của đơn, cộng dồn mọi email, với "thực nhận" đang ghi
+// (Dayladau "Amount host" là tiền host nhận trước khi Airbnb khấu trừ thuế). TODO(CONFIRM)
+// Dòng USD được quy ra VNĐ theo tỷ giá ngày chuyển tiền, còn Dayladau quy đổi lúc đặt phòng, nên cho lệch trong
+// khoảng PAYOUT_TOLERANCE_PCT. TODO(CONFIRM) mức chênh tỷ giá chấp nhận được.
+
+/** Lệch trong khoảng max(PAYOUT_TOLERANCE ₫, PAYOUT_TOLERANCE_PCT % thực nhận) coi là khớp. */
+export const PAYOUT_TOLERANCE_PCT = 3;
+export const toleranceFor = (net: number) => Math.max(PAYOUT_TOLERANCE, Math.round((Math.abs(net) * PAYOUT_TOLERANCE_PCT) / 100));
 
 type BookingRow = { id: string; netAmount: number };
 
-/** Tìm đơn của NĐT theo mã HM: mã có thể là external_id hoặc nằm đâu đó trong dữ liệu gốc Dayladau. */
+/** Tìm đơn của NĐT theo mã đặt phòng: mã có thể là external_id hoặc nằm đâu đó trong dữ liệu gốc Dayladau. */
 async function findByCode(db: DB, propIds: string[], code: string): Promise<BookingRow | null> {
   const rows = await db
     .select({ id: bookings.id, netAmount: bookings.netAmount })
@@ -209,7 +233,7 @@ async function findByCode(db: DB, propIds: string[], code: string): Promise<Book
   return rows.length === 1 ? rows[0] : null; // hai đơn cùng mã: không đoán, để người dùng xem
 }
 
-/** Dự phòng khi dữ liệu Dayladau không chứa mã HM: cùng tên khách và ngày nhận phòng, kênh Airbnb. */
+/** Dự phòng khi dữ liệu Dayladau không chứa mã đặt phòng Airbnb: cùng tên khách và ngày nhận phòng, kênh Airbnb. */
 async function findByGuest(db: DB, propIds: string[], guest: string, checkIn: string): Promise<BookingRow | null> {
   const rows = await db
     .select({ id: bookings.id, netAmount: bookings.netAmount })
@@ -219,14 +243,15 @@ async function findByGuest(db: DB, propIds: string[], guest: string, checkIn: st
   return rows.length === 1 ? rows[0] : null;
 }
 
-export function matchStatus(itemAmount: number | null, booking: BookingRow | null): { matchStatus: "MATCHED" | "AMOUNT_DIFF" | "NOT_FOUND"; diffAmount: number | null } {
+/** Trạng thái của cả đơn: preTaxVnd = VNĐ trước thuế Airbnb đã chuyển cho đơn (mọi email), null khi chưa quy được ra VNĐ. */
+export function matchStatus(preTaxVnd: number | null, booking: BookingRow | null): { matchStatus: "MATCHED" | "AMOUNT_DIFF" | "NOT_FOUND"; diffAmount: number | null } {
   if (!booking) return { matchStatus: "NOT_FOUND", diffAmount: null };
-  if (itemAmount === null) return { matchStatus: "MATCHED", diffAmount: null };
-  const diff = itemAmount - booking.netAmount;
-  return { matchStatus: Math.abs(diff) <= PAYOUT_TOLERANCE ? "MATCHED" : "AMOUNT_DIFF", diffAmount: diff };
+  if (preTaxVnd === null) return { matchStatus: "MATCHED", diffAmount: null };
+  const diff = preTaxVnd - booking.netAmount;
+  return { matchStatus: Math.abs(diff) <= toleranceFor(booking.netAmount) ? "MATCHED" : "AMOUNT_DIFF", diffAmount: diff };
 }
 
-/** Đối soát lại các dòng payout gần đây. Trả số dòng khớp được đơn. */
+/** Đối soát lại các dòng payout gần đây. Trả số đơn khớp được. */
 export async function matchPayouts(db: DB, opts: { investorIds?: string[]; payoutIds?: string[]; today?: string } = {}): Promise<number> {
   const today = opts.today ?? D.todayVN();
   const conds = [eq(airbnbPayouts.currency, "VND")];
@@ -238,20 +263,55 @@ export async function matchPayouts(db: DB, opts: { investorIds?: string[]; payou
     .from(airbnbPayoutItems)
     .innerJoin(airbnbPayouts, eq(airbnbPayouts.id, airbnbPayoutItems.payoutId))
     .where(and(...conds));
+
+  // 1. Gắn đơn: theo mã (mỗi mã tìm một lần), dòng không có mã thì theo tên khách + ngày nhận phòng
   const propsOf = new Map<string, string[]>();
-  let matched = 0;
+  const byCode = new Map<string, BookingRow | null>();
+  const touched = new Set<string>(); // đơn cần tính lại số lệch (cả đơn cũ của dòng vừa đổi gắn)
   for (const { item, investorId } of rows) {
     if (!propsOf.has(investorId)) propsOf.set(investorId, (await db.select({ id: properties.id }).from(properties).where(eq(properties.investorId, investorId))).map((p) => p.id));
     const propIds = propsOf.get(investorId)!;
     let b: BookingRow | null = null;
-    if (propIds.length) {
-      if (item.confirmationCode) b = await findByCode(db, propIds, item.confirmationCode);
-      if (!b && item.guestName && item.checkIn) b = await findByGuest(db, propIds, item.guestName, item.checkIn);
+    if (propIds.length && item.confirmationCode) {
+      const k = `${investorId}|${item.confirmationCode}`;
+      if (!byCode.has(k)) byCode.set(k, await findByCode(db, propIds, item.confirmationCode));
+      b = byCode.get(k)!;
     }
-    const st = matchStatus(item.amount, b);
-    if (b) matched++;
-    if (item.bookingId !== (b?.id ?? null) || item.matchStatus !== st.matchStatus || item.diffAmount !== st.diffAmount) {
-      await db.update(airbnbPayoutItems).set({ bookingId: b?.id ?? null, ...st }).where(eq(airbnbPayoutItems.id, item.id));
+    // Mã không có trong dữ liệu Dayladau (hoặc dòng không có mã): thử tên khách + ngày nhận phòng
+    if (!b && propIds.length && item.guestName && item.checkIn) b = await findByGuest(db, propIds, item.guestName, item.checkIn);
+    if (item.bookingId) touched.add(item.bookingId);
+    if (b) {
+      touched.add(b.id);
+      if (item.bookingId !== b.id) await db.update(airbnbPayoutItems).set({ bookingId: b.id }).where(eq(airbnbPayoutItems.id, item.id));
+    } else if (item.bookingId !== null || item.matchStatus !== "NOT_FOUND" || item.diffAmount !== null) {
+      await db.update(airbnbPayoutItems).set({ bookingId: null, ...matchStatus(null, null) }).where(eq(airbnbPayoutItems.id, item.id));
+    }
+  }
+  if (!touched.size) return 0;
+
+  // 2. Mỗi đơn: cộng VNĐ trước thuế của mọi dòng đã gắn (mọi email), so với thực nhận, ghi cho mọi dòng của đơn
+  const ids = [...touched];
+  const [lines, nets] = await Promise.all([
+    db.select({ id: airbnbPayoutItems.id, bookingId: airbnbPayoutItems.bookingId, lineType: airbnbPayoutItems.lineType, amount: airbnbPayoutItems.amount, matchStatus: airbnbPayoutItems.matchStatus, diffAmount: airbnbPayoutItems.diffAmount })
+      .from(airbnbPayoutItems).where(inArray(airbnbPayoutItems.bookingId, ids)),
+    db.select({ id: bookings.id, netAmount: bookings.netAmount }).from(bookings).where(inArray(bookings.id, ids)),
+  ]);
+  const preTax = new Map<string, number | null>();
+  for (const l of lines) {
+    if (!l.bookingId || (l.lineType && TAX_TYPES.has(l.lineType))) continue;
+    const cur = preTax.has(l.bookingId) ? preTax.get(l.bookingId)! : 0;
+    preTax.set(l.bookingId, cur === null || l.amount === null ? null : cur + l.amount);
+  }
+  const netOf = new Map(nets.map((n) => [n.id, n]));
+  let matched = 0;
+  for (const id of ids) {
+    if (!lines.some((l) => l.bookingId === id)) continue;
+    matched++;
+    const st = matchStatus(preTax.has(id) ? preTax.get(id)! : 0, netOf.get(id) ?? null);
+    for (const l of lines) {
+      if (l.bookingId === id && (l.matchStatus !== st.matchStatus || l.diffAmount !== st.diffAmount)) {
+        await db.update(airbnbPayoutItems).set(st).where(eq(airbnbPayoutItems.id, l.id));
+      }
     }
   }
   return matched;
@@ -260,28 +320,25 @@ export async function matchPayouts(db: DB, opts: { investorIds?: string[]; payou
 // ---------- Dán email payout trên web ----------
 // Dùng khi chưa kết nối Gmail, hoặc để thử bộ tách với một email thật: mở email payout, chọn toàn bộ nội dung, dán vào.
 
-/** Xem trước kết quả tách, chưa lưu. */
-export function previewPastedPayout(input: { subject: string; text: string }): ParsedPayout {
-  const subject = input.subject.trim();
-  const text = input.text.replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean).join("\n");
-  // Không nhập tiêu đề: lấy dòng đầu có chữ "payout"/"thanh toán" làm tiêu đề để nhận đúng loại thư
-  const subj = subject || text.split("\n").find((l) => /payout|thanh toán|chi trả/i.test(l)) || "";
-  return parsePayoutEmail({ subject: subj, text });
+/** Xem trước kết quả tách, chưa lưu. Giữ nguyên khoảng trắng trong dòng (tên khách và số tiền cách nhau ≥ 2 dấu cách). */
+export function previewPastedPayout(input: { text: string; receivedOn?: string | null }): ParsedPayout {
+  return parsePayoutEmail({ subject: "", text: input.text.replace(/\r/g, ""), payDate: input.receivedOn ?? null });
 }
 
-export async function importPastedPayout(db: DB, user: SessionUser, input: { investorId: string; subject: string; text: string; receivedOn: string }) {
+export async function importPastedPayout(db: DB, user: SessionUser, input: { investorId: string; subject?: string; text: string; receivedOn: string }) {
   await requireManage(db, user, input.investorId);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.receivedOn)) throw badRequest("Chọn ngày nhận email");
   if (input.text.trim().length < 20) throw badRequest("Dán toàn bộ nội dung email payout");
   const parsed = previewPastedPayout(input);
-  if (!parsed.isPayout) throw badRequest(`${parsed.skipReason}. Kiểm tra lại tiêu đề email`);
+  if (!parsed.isPayout) throw badRequest(`${parsed.skipReason}. Dán cả phần cuối email, có dòng tổng tiền`);
+  if (await payoutCodeExists(db, input.investorId, parsed.payoutCode)) throw badRequest(`Khoản chi trả ${parsed.payoutCode} đã có trong hệ thống`);
   const text = input.text.replace(/\r/g, "").slice(0, MAX_BODY);
-  const messageId = "paste:" + createHash("sha256").update(`${input.subject}\n${text}`).digest("hex").slice(0, 24);
+  const messageId = "paste:" + createHash("sha256").update(text).digest("hex").slice(0, 24);
   const [dup] = await db.select({ id: airbnbPayouts.id }).from(airbnbPayouts).where(and(eq(airbnbPayouts.investorId, input.investorId), eq(airbnbPayouts.gmailMessageId, messageId))).limit(1);
   if (dup) throw badRequest("Email này đã được dán trước đó");
   const row = await insertParsed(
     db,
-    { gmailAccountId: null, investorId: input.investorId, gmailMessageId: messageId, receivedAt: new Date(`${input.receivedOn}T12:00:00+07:00`), subject: input.subject.trim() || null, bodyText: text },
+    { gmailAccountId: null, investorId: input.investorId, gmailMessageId: messageId, receivedAt: new Date(`${input.receivedOn}T12:00:00+07:00`), subject: input.subject?.trim() || null, bodyText: text },
     parsed,
   );
   if (row) await matchPayouts(db, { payoutIds: [row.id] });
@@ -294,7 +351,16 @@ export async function deletePastedPayout(db: DB, user: SessionUser, payoutId: st
   if (!p) throw notFound("Không tìm thấy payout");
   await requireManage(db, user, p.investorId);
   if (p.gmailAccountId) throw badRequest("Chỉ xóa được email dán tay");
+  const affected = (await db.selectDistinct({ id: airbnbPayoutItems.bookingId }).from(airbnbPayoutItems).where(eq(airbnbPayoutItems.payoutId, p.id))).map((r) => r.id).filter((x): x is string => !!x);
   await db.delete(airbnbPayouts).where(eq(airbnbPayouts.id, p.id));
+  await rematchBookings(db, affected);
+}
+
+/** Tính lại số lệch của các đơn khi một email bị xóa hoặc tách lại. */
+async function rematchBookings(db: DB, bookingIds: string[]) {
+  if (!bookingIds.length) return;
+  const ps = await db.selectDistinct({ id: airbnbPayoutItems.payoutId }).from(airbnbPayoutItems).where(inArray(airbnbPayoutItems.bookingId, bookingIds));
+  if (ps.length) await matchPayouts(db, { payoutIds: ps.map((p) => p.id) });
 }
 
 /** Tách lại một email đã lưu (sau khi sửa bộ tách), rồi đối soát lại. */
@@ -302,24 +368,46 @@ export async function reparsePayout(db: DB, user: SessionUser, payoutId: string)
   const [p] = await db.select().from(airbnbPayouts).where(eq(airbnbPayouts.id, payoutId)).limit(1);
   if (!p) throw notFound("Không tìm thấy payout");
   await requireManage(db, user, p.investorId);
-  const parsed = parsePayoutEmail({ subject: p.subject ?? "", text: p.bodyText ?? "" });
+  const parsed = parsePayoutEmail({ subject: p.subject ?? "", text: p.bodyText ?? "", payDate: p.payoutDate });
+  const affected = (await db.selectDistinct({ id: airbnbPayoutItems.bookingId }).from(airbnbPayoutItems).where(eq(airbnbPayoutItems.payoutId, p.id))).map((r) => r.id).filter((x): x is string => !!x);
   await db.delete(airbnbPayoutItems).where(eq(airbnbPayoutItems.payoutId, p.id));
-  await db.update(airbnbPayouts).set({ amount: parsed.amount ?? 0, currency: parsed.currency, parseStatus: parsed.isPayout ? parsed.status : "FAILED", parseNote: parsed.isPayout ? parsed.note : parsed.skipReason ?? null }).where(eq(airbnbPayouts.id, p.id));
+  await db
+    .update(airbnbPayouts)
+    .set({
+      amount: parsed.amount ?? 0, currency: parsed.currency, payoutCode: parsed.payoutCode, totalUsd: parsed.totalUsd, exchangeRate: parsed.exchangeRate,
+      parseStatus: parsed.isPayout ? parsed.status : "FAILED", parseNote: parsed.isPayout ? parsed.note : parsed.skipReason ?? null,
+    })
+    .where(eq(airbnbPayouts.id, p.id));
   if (parsed.items.length) await db.insert(airbnbPayoutItems).values(parsed.items.map((i) => ({ payoutId: p.id, ...i })));
   await matchPayouts(db, { payoutIds: [p.id] });
+  await rematchBookings(db, affected);
 }
 
-// ---------- Xem theo tháng ----------
+// ---------- Xem theo lần chuyển tiền ----------
 
-export interface PayoutItemView {
+export interface PayoutLine {
   id: string;
+  lineType: string | null;
+  usdAmount: number | null;
+  amount: number | null;
+}
+
+/** Các dòng cùng mã đặt phòng (và cùng ngày ở) trong một email, gộp lại như sheet "Booking Summary". */
+export interface PayoutBookingGroup {
+  key: string;
   confirmationCode: string | null;
   guestName: string | null;
+  listingName: string | null;
+  listingId: string | null;
   checkIn: string | null;
   checkOut: string | null;
-  amount: number | null;
+  lines: PayoutLine[];
+  usd: number;
+  vnd: number | null; // thực nhận sau thuế trong email này
+  preTaxVnd: number | null;
+  taxVnd: number | null;
   matchStatus: "MATCHED" | "AMOUNT_DIFF" | "NOT_FOUND";
-  diffAmount: number | null;
+  diffAmount: number | null; // cả đơn, cộng dồn mọi email
   booking: { id: string; roomId: string; guestName: string | null; checkIn: string; checkOut: string; netAmount: number; status: string } | null;
 }
 
@@ -332,12 +420,13 @@ export interface PayoutView {
   payoutDate: string;
   amount: number;
   currency: string;
+  payoutCode: string | null;
+  totalUsd: number | null;
+  exchangeRate: number | null;
   subject: string | null;
   parseStatus: "OK" | "PARTIAL" | "FAILED";
   parseNote: string | null;
-  items: PayoutItemView[];
-  /** Tổng thực nhận của các đơn đã khớp, để so với tổng payout khi email không ghi tiền từng đơn. */
-  matchedNet: number;
+  groups: PayoutBookingGroup[];
   canManage: boolean;
 }
 
@@ -351,6 +440,35 @@ export interface MissingPayout {
   checkOut: string;
   netAmount: number;
 }
+
+const sumOrNull = (xs: (number | null)[]) => (xs.some((x) => x === null) ? null : xs.reduce<number>((s, x) => s + (x ?? 0), 0));
+
+function groupLines<T extends { item: typeof airbnbPayoutItems.$inferSelect; b: PayoutBookingGroup["booking"] | { id: null } }>(rows: T[]): PayoutBookingGroup[] {
+  const map = new Map<string, PayoutBookingGroup>();
+  for (const { item: i, b } of rows) {
+    const key = i.confirmationCode ? `${i.confirmationCode}|${i.checkIn ?? ""}|${i.checkOut ?? ""}` : `line|${i.id}`;
+    let g = map.get(key);
+    if (!g) {
+      g = {
+        key, confirmationCode: i.confirmationCode, guestName: i.guestName, listingName: i.listingName, listingId: i.listingId,
+        checkIn: i.checkIn, checkOut: i.checkOut, lines: [], usd: 0, vnd: 0, preTaxVnd: 0, taxVnd: 0,
+        matchStatus: i.matchStatus, diffAmount: i.diffAmount, booking: b && b.id ? (b as PayoutBookingGroup["booking"]) : null,
+      };
+      map.set(key, g);
+    }
+    g.lines.push({ id: i.id, lineType: i.lineType, usdAmount: i.usdAmount, amount: i.amount });
+  }
+  for (const g of map.values()) {
+    g.usd = Math.round(g.lines.reduce((s, l) => s + (l.usdAmount ?? 0), 0) * 100) / 100;
+    g.vnd = sumOrNull(g.lines.map((l) => l.amount));
+    const isTax = (l: PayoutLine) => !!l.lineType && TAX_TYPES.has(l.lineType);
+    g.preTaxVnd = sumOrNull(g.lines.filter((l) => !isTax(l)).map((l) => l.amount));
+    g.taxVnd = sumOrNull(g.lines.filter(isTax).map((l) => l.amount));
+  }
+  return [...map.values()];
+}
+
+const bookingCols = { id: bookings.id, roomId: bookings.roomId, guestName: bookings.guestName, checkIn: bookings.checkIn, checkOut: bookings.checkOut, netAmount: bookings.netAmount, status: bookings.status };
 
 export async function payoutsForMonth(db: DB, user: SessionUser, month: string, today = D.todayVN()): Promise<{ payouts: PayoutView[]; missing: MissingPayout[] }> {
   const inv = await allowedInvestorIds(db, user);
@@ -366,25 +484,21 @@ export async function payoutsForMonth(db: DB, user: SessionUser, month: string, 
     .orderBy(desc(airbnbPayouts.payoutDate), desc(airbnbPayouts.receivedAt));
   const items = ps.length
     ? await db
-        .select({ i: airbnbPayoutItems, b: { id: bookings.id, roomId: bookings.roomId, guestName: bookings.guestName, checkIn: bookings.checkIn, checkOut: bookings.checkOut, netAmount: bookings.netAmount, status: bookings.status } })
+        .select({ item: airbnbPayoutItems, b: bookingCols })
         .from(airbnbPayoutItems)
         .leftJoin(bookings, eq(bookings.id, airbnbPayoutItems.bookingId))
         .where(inArray(airbnbPayoutItems.payoutId, ps.map((x) => x.p.id)))
+        .orderBy(airbnbPayoutItems.payoutId)
     : [];
   const manage = new Map<string, boolean>();
   for (const id of new Set(ps.map((x) => x.p.investorId))) manage.set(id, await canManageGmail(db, user, id));
 
-  const payouts: PayoutView[] = ps.map(({ p, investorName, email }) => {
-    const its = items.filter((x) => x.i.payoutId === p.id).map(({ i, b }) => ({
-      id: i.id, confirmationCode: i.confirmationCode, guestName: i.guestName, checkIn: i.checkIn, checkOut: i.checkOut, amount: i.amount,
-      matchStatus: i.matchStatus, diffAmount: i.diffAmount, booking: b?.id ? b : null,
-    }));
-    return {
-      id: p.id, investorId: p.investorId, investorName, email, payoutDate: p.payoutDate, amount: p.amount, currency: p.currency, subject: p.subject,
-      parseStatus: p.parseStatus, parseNote: p.parseNote, items: its, matchedNet: its.reduce((s, i) => s + (i.booking?.netAmount ?? 0), 0),
-      canManage: manage.get(p.investorId) ?? false,
-    };
-  });
+  const payouts: PayoutView[] = ps.map(({ p, investorName, email }) => ({
+    id: p.id, investorId: p.investorId, investorName, email, payoutDate: p.payoutDate, amount: p.amount, currency: p.currency,
+    payoutCode: p.payoutCode, totalUsd: p.totalUsd, exchangeRate: p.exchangeRate, subject: p.subject, parseStatus: p.parseStatus, parseNote: p.parseNote,
+    groups: groupLines(items.filter((x) => x.item.payoutId === p.id) as { item: typeof airbnbPayoutItems.$inferSelect; b: PayoutBookingGroup["booking"] }[]),
+    canManage: manage.get(p.investorId) ?? false,
+  }));
 
   // Đơn Airbnb đã nhận phòng trong tháng mà chưa thấy payout. Chỉ xét NĐT đã kết nối Gmail và các đơn
   // nhận phòng từ ngày kết nối trở đi trừ đi số ngày đọc lại lần đầu (trước đó email chưa được đọc).
@@ -418,4 +532,92 @@ export async function payoutsForMonth(db: DB, user: SessionUser, month: string, 
     }
   }
   return { payouts, missing };
+}
+
+// ---------- Doanh thu theo tháng từ payout (sheet "Báo cáo tháng" của script) ----------
+
+export interface MonthlyPayoutRow {
+  key: string;
+  investorName: string;
+  confirmationCode: string | null;
+  guestName: string | null;
+  listingName: string | null;
+  nickname: string;
+  roomId: string | null; // phòng trong hệ thống nếu đã khớp đơn
+  checkIn: string | null; // kỳ ở đầy đủ
+  checkOut: string | null;
+  partCheckIn: string | null; // phần nằm trong tháng
+  partCheckOut: string | null;
+  nights: number | null;
+  totalNights: number | null;
+  vnd: number; // thực nhận sau thuế, phần của tháng
+  preTaxVnd: number;
+  taxVnd: number;
+  usd: number;
+  lastPayoutDate: string;
+  /** Dòng không có ngày ở: tính vào tháng chuyển tiền. */
+  noDates: boolean;
+}
+
+/**
+ * Doanh thu Airbnb đã chuyển, phân bổ theo tháng ở: gộp dòng theo mã đặt phòng + ngày ở (mọi email),
+ * đơn trải nhiều tháng chia theo số đêm, phần cuối nhận phần dư. Dòng không có ngày ở tính vào tháng chuyển tiền.
+ */
+export async function payoutRevenueByMonth(db: DB, user: SessionUser, month: string): Promise<MonthlyPayoutRow[]> {
+  const inv = await allowedInvestorIds(db, user);
+  if (!inv.length) return [];
+  const from = D.firstDay(month), to = D.lastDay(month);
+  const rows = await db
+    .select({ i: airbnbPayoutItems, p: { investorId: airbnbPayouts.investorId, payoutDate: airbnbPayouts.payoutDate }, investorName: investors.name, roomId: bookings.roomId })
+    .from(airbnbPayoutItems)
+    .innerJoin(airbnbPayouts, eq(airbnbPayouts.id, airbnbPayoutItems.payoutId))
+    .innerJoin(investors, eq(investors.id, airbnbPayouts.investorId))
+    .leftJoin(bookings, eq(bookings.id, airbnbPayoutItems.bookingId))
+    .where(and(
+      inArray(airbnbPayouts.investorId, inv),
+      eq(airbnbPayouts.currency, "VND"),
+      or(
+        and(lte(airbnbPayoutItems.checkIn, to), gt(airbnbPayoutItems.checkOut, from)),
+        and(isNull(airbnbPayoutItems.checkIn), gte(airbnbPayouts.payoutDate, from), lte(airbnbPayouts.payoutDate, to)),
+      ),
+    ));
+
+  type Acc = Omit<MonthlyPayoutRow, "partCheckIn" | "partCheckOut" | "nights" | "totalNights">;
+  const map = new Map<string, Acc>();
+  for (const { i, p, investorName, roomId } of rows) {
+    const noDates = !i.checkIn || !i.checkOut;
+    const key = noDates ? `line|${i.id}` : `${p.investorId}|${i.confirmationCode ?? i.guestName}|${i.checkIn}|${i.checkOut}`;
+    let a = map.get(key);
+    if (!a) {
+      a = {
+        key, investorName, confirmationCode: i.confirmationCode, guestName: i.guestName, listingName: i.listingName, nickname: extractNickname(i.listingName),
+        roomId: roomId ?? null, checkIn: i.checkIn, checkOut: i.checkOut, vnd: 0, preTaxVnd: 0, taxVnd: 0, usd: 0, lastPayoutDate: p.payoutDate, noDates,
+      };
+      map.set(key, a);
+    }
+    const v = i.amount ?? 0;
+    a.vnd += v;
+    if (i.lineType && TAX_TYPES.has(i.lineType)) a.taxVnd += v; else a.preTaxVnd += v;
+    a.usd += i.usdAmount ?? 0;
+    if (p.payoutDate > a.lastPayoutDate) a.lastPayoutDate = p.payoutDate;
+    a.roomId ??= roomId ?? null;
+  }
+
+  const out: MonthlyPayoutRow[] = [];
+  for (const a of map.values()) {
+    const parts = splitStay(a.checkIn, a.checkOut);
+    if (!parts) {
+      out.push({ ...a, usd: Math.round(a.usd * 100) / 100, partCheckIn: a.checkIn, partCheckOut: a.checkOut, nights: null, totalNights: null });
+      continue;
+    }
+    const idx = parts.findIndex((x) => x.month === month);
+    if (idx < 0) continue;
+    const share = (n: number) => prorate(n, parts)[idx];
+    const part = parts[idx];
+    out.push({
+      ...a, vnd: share(a.vnd), preTaxVnd: share(a.preTaxVnd), taxVnd: share(a.taxVnd), usd: prorate(a.usd, parts, 2)[idx],
+      partCheckIn: part.checkIn, partCheckOut: part.checkOut, nights: part.nights, totalNights: part.totalNights,
+    });
+  }
+  return out.sort((x, y) => (x.partCheckIn ?? x.lastPayoutDate).localeCompare(y.partCheckIn ?? y.lastPayoutDate) || (x.confirmationCode ?? "").localeCompare(y.confirmationCode ?? ""));
 }

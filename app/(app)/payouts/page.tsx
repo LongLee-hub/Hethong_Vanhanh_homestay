@@ -5,7 +5,9 @@ import { investors } from "@/lib/db/schema";
 import { allowedInvestorIds, can } from "@/lib/auth/access";
 import { requireUser } from "@/lib/server";
 import { monthParam, visibleProperties } from "@/lib/queries";
-import { canManageGmail, listGmailAccounts, MISSING_AFTER_DAYS, PAYOUT_TOLERANCE, payoutsForMonth, type PayoutView } from "@/lib/airbnb/payouts";
+import Link from "next/link";
+import { canManageGmail, listGmailAccounts, MISSING_AFTER_DAYS, PAYOUT_TOLERANCE_PCT, payoutRevenueByMonth, payoutsForMonth, type MonthlyPayoutRow, type PayoutBookingGroup, type PayoutView } from "@/lib/airbnb/payouts";
+import { extractNickname, TAX_TYPES } from "@/lib/airbnb/payout-parser";
 import { headers } from "next/headers";
 import { googleReady, googleSetup, loadGoogleConfig } from "@/lib/gmail/config";
 import { redirectUri } from "@/lib/gmail/oauth";
@@ -13,7 +15,7 @@ import { ActionForm } from "@/components/ActionForm";
 import { NoAccess } from "@/components/NoAccess";
 import { MonthNav, vnd } from "@/components/MonthNav";
 import { deletePastedAction, disconnectGmailAction, reparsePayoutAction, saveGoogleSetupAction, syncGmailAction } from "./actions";
-import { CopyField, PastePayout } from "./setup";
+import { CopyField, PastePayout, usd } from "./setup";
 import { RunButton } from "./run-button";
 
 export const maxDuration = 300;
@@ -34,52 +36,118 @@ const dates = (a: string | null, b: string | null) => (a && b ? `${D.formatDateV
 
 /** Thanh đối soát của một payout: mỗi đoạn là một đơn, tô theo trạng thái khớp. */
 function Recon({ p }: { p: PayoutView }) {
-  if (!p.items.length) return null;
+  const gs = p.groups.filter((g) => g.confirmationCode);
+  if (!gs.length) return null;
   return (
-    <span className="recon" role="img" aria-label={`${p.items.filter((i) => i.matchStatus === "MATCHED").length}/${p.items.length} đơn khớp`}>
-      {p.items.map((i) => <i key={i.id} className={MATCH[i.matchStatus][1]} />)}
+    <span className="recon" role="img" aria-label={`${gs.filter((g) => g.matchStatus === "MATCHED").length}/${gs.length} đơn khớp`}>
+      {gs.map((g) => <i key={g.key} className={MATCH[g.matchStatus][1]} />)}
     </span>
+  );
+}
+
+function Diff({ g }: { g: PayoutBookingGroup }) {
+  if (!g.booking) return <span className={`pill ${MATCH.NOT_FOUND[1]}`}>{MATCH.NOT_FOUND[0]}</span>;
+  return (
+    <>
+      <span className={`pill ${MATCH[g.matchStatus][1]}`}>{MATCH[g.matchStatus][0]}</span>
+      <div className="small muted">Hệ thống {vnd(g.booking.netAmount)}</div>
+      {g.diffAmount ? <div className={`small ${g.matchStatus === "AMOUNT_DIFF" ? "neg" : "muted"}`}>Lệch {g.diffAmount > 0 ? "+" : ""}{vnd(g.diffAmount)}</div> : null}
+      {g.booking.status === "CANCELLED" && <div className="small muted">Đơn đã hủy, có phí hủy</div>}
+    </>
   );
 }
 
 function PayoutRows({ p, roomName, multiInvestor }: { p: PayoutView; roomName: Record<string, string>; multiInvestor: boolean }) {
   const parse = PARSE[p.parseStatus];
-  const vndPayout = p.currency === "VND";
-  // Email không ghi tiền từng đơn: so tổng payout với tổng thực nhận của các đơn đã khớp
-  const noItemAmounts = p.items.length > 0 && p.items.every((i) => i.amount === null);
-  const totalDiff = vndPayout && p.items.length && p.items.every((i) => i.booking) ? p.amount - p.matchedNet : null;
   return (
     <tbody>
       <tr className="payout-head">
-        <td colSpan={2}>
+        <td colSpan={3}>
           <b>{D.formatDateVN(p.payoutDate)}</b>
-          <div className="small muted">{multiInvestor ? `${p.investorName} · ` : ""}{p.email ?? "Dán tay"}</div>
-          {p.canManage && !p.email && <div style={{ marginTop: 8 }}><RunButton run={deletePastedAction.bind(null, p.id)} label="Xóa" pendingLabel="Đang xóa…" danger confirm="Xóa payout dán tay này?" /></div>}
+          <div className="small muted">
+            {multiInvestor ? `${p.investorName} · ` : ""}{p.email ?? "Dán tay"}
+            {p.payoutCode ? ` · mã chi trả ${p.payoutCode}` : ""}
+            {p.exchangeRate ? ` · tỷ giá ${Math.round(p.exchangeRate).toLocaleString("vi-VN")}` : ""}
+          </div>
+          {p.canManage && (p.parseStatus !== "OK" || !p.email) && (
+            <div className="row" style={{ marginTop: 8 }}>
+              {p.parseStatus !== "OK" && <RunButton run={reparsePayoutAction.bind(null, p.id)} label="Tách lại" pendingLabel="Đang tách…" />}
+              {!p.email && <RunButton run={deletePastedAction.bind(null, p.id)} label="Xóa" pendingLabel="Đang xóa…" danger confirm="Xóa payout dán tay này?" />}
+            </div>
+          )}
         </td>
-        <td colSpan={2}>
+        <td>
           <span className="row"><Recon p={p} />{parse && <span className={`pill ${parse[1]}`}>{parse[0]}</span>}</span>
           {p.parseNote && <div className="small muted">{p.parseNote}</div>}
-          {p.canManage && p.parseStatus !== "OK" && <div style={{ marginTop: 8 }}><RunButton run={reparsePayoutAction.bind(null, p.id)} label="Tách lại" pendingLabel="Đang tách…" /></div>}
         </td>
-        <td className="n"><b>{vndPayout ? vnd(p.amount) : `${p.amount.toLocaleString("vi-VN")} ${p.currency}`}</b></td>
-        <td className="n">
-          {totalDiff !== null && (noItemAmounts || Math.abs(totalDiff) > PAYOUT_TOLERANCE)
-            ? <span className={Math.abs(totalDiff) > PAYOUT_TOLERANCE ? "neg" : "pos"}>{totalDiff > 0 ? "+" : ""}{vnd(totalDiff)}</span>
-            : null}
-        </td>
+        <td className="n">{p.totalUsd !== null ? usd(p.totalUsd) : ""}</td>
+        <td className="n"><b>{vnd(p.amount)}</b></td>
+        <td />
       </tr>
-      {p.items.map((i) => (
-        <tr key={i.id}>
-          <td><b>{i.booking?.guestName ?? i.guestName ?? "Khách"}</b><div className="small muted">{i.confirmationCode ?? "Không có mã"}</div></td>
-          <td>{i.booking ? roomName[i.booking.roomId] ?? "—" : <span className="muted">—</span>}</td>
-          <td className="num">{i.booking ? dates(i.booking.checkIn, i.booking.checkOut) : dates(i.checkIn, i.checkOut)}</td>
-          <td><span className={`pill ${MATCH[i.matchStatus][1]}`}>{MATCH[i.matchStatus][0]}</span>{i.booking?.status === "CANCELLED" && <div className="small muted">Đơn đã hủy, có phí hủy</div>}</td>
-          <td className="n">{i.amount !== null ? vnd(i.amount) : <span className="muted">—</span>}<div className="small muted">{i.booking ? `Hệ thống: ${vnd(i.booking.netAmount)}` : ""}</div></td>
-          <td className="n">{i.diffAmount ? <span className={Math.abs(i.diffAmount) > PAYOUT_TOLERANCE ? "neg" : "muted"}>{i.diffAmount > 0 ? "+" : ""}{vnd(i.diffAmount)}</span> : ""}</td>
+      {p.groups.map((g) => (
+        <tr key={g.key}>
+          <td><b>{g.booking?.guestName ?? g.guestName ?? "Khách"}</b><div className="small muted">{g.confirmationCode ?? "Không có mã"}</div></td>
+          <td>{g.booking ? roomName[g.booking.roomId] ?? "—" : <span className="muted">{extractNickname(g.listingName) || "—"}</span>}</td>
+          <td className="num">{dates(g.checkIn, g.checkOut)}</td>
+          <td>
+            <ul className="pay-lines">
+              {g.lines.map((l) => <li key={l.id} className={l.lineType && TAX_TYPES.has(l.lineType) ? "tax" : undefined}><span>{l.lineType ?? "Khác"}</span><span className="num">{l.amount !== null ? vnd(l.amount) : usd(l.usdAmount)}</span></li>)}
+            </ul>
+          </td>
+          <td className="n">{usd(g.usd)}</td>
+          <td className="n"><b>{g.vnd !== null ? vnd(g.vnd) : "—"}</b>{g.taxVnd ? <div className="small muted">Trước thuế {vnd(g.preTaxVnd ?? 0)}</div> : null}</td>
+          <td><Diff g={g} /></td>
         </tr>
       ))}
-      {!p.items.length && <tr><td colSpan={6} className="small muted">Email không có mã đặt phòng nào. {p.subject}</td></tr>}
+      {!p.groups.length && <tr><td colSpan={7} className="small muted">Không đọc được dòng giao dịch nào. {p.subject}</td></tr>}
     </tbody>
+  );
+}
+
+function MonthlyRevenue({ rows, roomName, multiInvestor, month }: { rows: MonthlyPayoutRow[]; roomName: Record<string, string>; multiInvestor: boolean; month: string }) {
+  const total = (k: "vnd" | "preTaxVnd" | "taxVnd") => rows.reduce((s, r) => s + r[k], 0);
+  return (
+    <>
+      <div className="cards">
+        <div className="stat"><span className="lbl">Thực nhận từ Airbnb</span><span className="v">{vnd(total("vnd"))}</span><span className="s">Phần đêm ở trong {D.formatMonthVN(month).toLowerCase()}, sau thuế</span></div>
+        <div className="stat"><span className="lbl">Trước thuế</span><span className="v">{vnd(total("preTaxVnd"))}</span><span className="s">Tiền phòng và phí dọn</span></div>
+        <div className="stat"><span className="lbl">Thuế Airbnb khấu trừ</span><span className="v">{vnd(-total("taxVnd"))}</span><span className="s">Thuế TNCN và VAT</span></div>
+        <div className="stat"><span className="lbl">Đơn</span><span className="v">{rows.filter((r) => !r.noDates).length}</span><span className="s">{rows.filter((r) => r.nights !== null && r.nights !== r.totalNights).length} đơn trải sang tháng khác</span></div>
+      </div>
+      <section className="panel">
+        <header><div><h2>Doanh thu theo tháng ở</h2><p>Gộp mọi email payout theo mã đặt phòng. Đơn trải nhiều tháng chia theo số đêm, phần cuối nhận phần dư. Dòng không có ngày ở tính vào tháng chuyển tiền.</p></div></header>
+        <div className="tbl-wrap"><table>
+          <thead><tr><th>Khách</th><th>Phòng</th><th>Đêm trong tháng</th><th>Ngày gửi tiền</th><th className="n">Trước thuế</th><th className="n">Thuế</th><th className="n">Thực nhận</th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key} className={r.nights !== null && r.nights !== r.totalNights ? "split" : undefined}>
+                <td><b>{r.guestName ?? "Khách"}</b><div className="small muted">{r.confirmationCode ?? "Không có mã"}{multiInvestor ? ` · ${r.investorName}` : ""}</div></td>
+                <td>{r.roomId ? roomName[r.roomId] ?? r.nickname : r.nickname || "—"}</td>
+                <td className="num">
+                  {r.noDates ? <span className="muted">Không có ngày ở</span> : dates(r.partCheckIn, r.partCheckOut)}
+                  {r.nights !== null && r.nights !== r.totalNights && <div className="small muted">{r.nights}/{r.totalNights} đêm · cả kỳ {dates(r.checkIn, r.checkOut)}</div>}
+                </td>
+                <td className="num">{D.formatDateVN(r.lastPayoutDate)}</td>
+                <td className="n">{vnd(r.preTaxVnd)}</td>
+                <td className="n muted">{r.taxVnd ? vnd(r.taxVnd) : ""}</td>
+                <td className="n"><b>{vnd(r.vnd)}</b></td>
+              </tr>
+            ))}
+            {rows.length > 0 && <tr className="total"><td colSpan={4}>Tổng</td><td className="n">{vnd(total("preTaxVnd"))}</td><td className="n">{vnd(total("taxVnd"))}</td><td className="n">{vnd(total("vnd"))}</td></tr>}
+            {!rows.length && <tr><td colSpan={7} className="muted small">Chưa có payout nào có đêm ở trong tháng.</td></tr>}
+          </tbody>
+        </table></div>
+      </section>
+    </>
+  );
+}
+
+function ViewTabs({ month, view }: { month: string; view: "payout" | "month" }) {
+  return (
+    <div className="chips" style={{ width: "100%" }}>
+      <Link className="chip" aria-pressed={view === "payout"} href={`/payouts?month=${month}`}>Theo lần chuyển tiền</Link>
+      <Link className="chip" aria-pressed={view === "month"} href={`/payouts?month=${month}&view=month`}>Theo tháng ở</Link>
+    </div>
   );
 }
 
@@ -88,10 +156,12 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
   if (!can(user, "viewFee")) return <NoAccess />;
   const sp = await searchParams;
   const month = monthParam(sp.month);
+  const view = sp.view === "month" ? "month" : "payout";
   const db = getDb();
-  const [accounts, { payouts, missing }, props, invIds] = await Promise.all([
+  const [accounts, { payouts, missing }, monthly, props, invIds] = await Promise.all([
     listGmailAccounts(db, user),
     payoutsForMonth(db, user, month),
+    view === "month" ? payoutRevenueByMonth(db, user, month) : Promise.resolve([]),
     visibleProperties(db, user),
     allowedInvestorIds(db, user),
   ]);
@@ -107,36 +177,39 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
   const reqOrigin = `${(h.get("x-forwarded-proto") ?? "http").split(",")[0]}://${(h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000").split(",")[0]}`;
   const callback = redirectUri(cfg, reqOrigin);
 
-  const items = payouts.flatMap((p) => p.items);
-  const matched = items.filter((i) => i.matchStatus === "MATCHED").length;
-  const diffs = items.filter((i) => i.matchStatus === "AMOUNT_DIFF");
+  const groups = payouts.flatMap((p) => p.groups).filter((g) => g.confirmationCode);
+  const matched = groups.filter((g) => g.matchStatus === "MATCHED").length;
+  const diffs = [...new Map(groups.filter((g) => g.matchStatus === "AMOUNT_DIFF" && g.booking).map((g) => [g.booking!.id, g])).values()];
   const total = payouts.filter((p) => p.currency === "VND").reduce((s, p) => s + p.amount, 0);
 
   return (
     <>
       <div className="topbar">
         <h1>Payout Airbnb</h1>
-        <MonthNav month={month} path="/payouts" />
+        <MonthNav month={month} path="/payouts" extra={view === "month" ? "&view=month" : ""} />
         <p className="sub">Tiền Airbnb đã chuyển, đọc từ email payout trong Gmail của nhà đầu tư, đối chiếu với từng đơn trong hệ thống.</p>
+        <ViewTabs month={month} view={view} />
       </div>
       {sp.connected && <div className="banner info" role="status">{sp.connected}</div>}
       {sp.gmail && <div className="banner bad" role="alert">{sp.gmail}</div>}
       {!configured && !isAdmin && <div className="banner">Admin chưa cài đặt kết nối Google nên chưa kết nối được Gmail. Trong lúc chờ, có thể dán email payout ở cuối trang.</div>}
       {!configured && isAdmin && <div className="banner">Chưa kết nối được Gmail: hoàn tất mục <a href="#google-setup">Cài đặt kết nối Google</a> ở cuối trang.</div>}
 
+      {view === "month" ? <MonthlyRevenue rows={monthly} roomName={roomName} multiInvestor={multiInvestor} month={month} /> : (
+      <>
       <div className="cards">
         <div className="stat"><span className="lbl">Airbnb đã chuyển</span><span className="v">{vnd(total)}</span><span className="s">{payouts.length} lần chuyển trong {D.formatMonthVN(month).toLowerCase()}</span></div>
-        <div className="stat"><span className="lbl">Đơn khớp</span><span className="v">{matched}/{items.length}</span><span className="s">Đúng đơn và đúng số tiền</span></div>
-        <div className="stat"><span className="lbl">Lệch tiền</span><span className="v">{diffs.length}</span><span className="s">{diffs.length ? `Tổng lệch ${vnd(diffs.reduce((s, i) => s + (i.diffAmount ?? 0), 0))}` : `Chênh dưới ${vnd(PAYOUT_TOLERANCE)} coi là khớp`}</span></div>
+        <div className="stat"><span className="lbl">Đơn khớp</span><span className="v">{matched}/{groups.length}</span><span className="s">Đúng đơn và đúng số tiền</span></div>
+        <div className="stat"><span className="lbl">Lệch tiền</span><span className="v">{diffs.length}</span><span className="s">{diffs.length ? `Tổng lệch ${vnd(diffs.reduce((s, g) => s + (g.diffAmount ?? 0), 0))}` : `Chênh tỷ giá dưới ${PAYOUT_TOLERANCE_PCT}% coi là khớp`}</span></div>
         <div className="stat"><span className="lbl">Chưa thấy payout</span><span className="v">{missing.length}</span><span className="s">Đơn Airbnb nhận phòng quá {MISSING_AFTER_DAYS} ngày</span></div>
       </div>
 
       <section className="panel">
-        <header><div><h2>Đối soát theo lần chuyển tiền</h2><p>Mỗi email payout có thể gộp nhiều đơn. Số lệch = Airbnb chuyển − thực nhận đang ghi trong hệ thống.</p></div></header>
+        <header><div><h2>Đối soát theo lần chuyển tiền</h2><p>Mỗi email payout gộp nhiều đơn; mỗi đơn có dòng tiền phòng và các dòng thuế Airbnb khấu trừ. VNĐ từng dòng quy theo tỷ giá của chính email. Số lệch = tiền trước thuế Airbnb đã chuyển cho đơn (mọi email) − thực nhận đang ghi trong hệ thống.</p></div></header>
         <div className="tbl-wrap"><table className="payouts">
-          <thead><tr><th>Khách</th><th>Phòng</th><th>Nhận – trả phòng</th><th>Đối soát</th><th className="n">Airbnb chuyển</th><th className="n">Lệch</th></tr></thead>
+          <thead><tr><th>Khách</th><th>Phòng</th><th>Ngày ở</th><th>Chi tiết</th><th className="n">USD</th><th className="n">VNĐ chuyển</th><th>Đối soát</th></tr></thead>
           {payouts.map((p) => <PayoutRows key={p.id} p={p} roomName={roomName} multiInvestor={multiInvestor} />)}
-          {!payouts.length && <tbody><tr><td colSpan={6} className="muted small">{accounts.some((a) => a.active) ? "Chưa có email payout nào trong tháng." : "Kết nối Gmail ở bên dưới để đọc email payout."}</td></tr></tbody>}
+          {!payouts.length && <tbody><tr><td colSpan={7} className="muted small">{accounts.some((a) => a.active) ? "Chưa có email payout nào trong tháng." : "Kết nối Gmail ở bên dưới để đọc email payout."}</td></tr></tbody>}
         </table></div>
       </section>
 
@@ -157,6 +230,9 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
             </tbody>
           </table></div>
         </section>
+      )}
+
+      </>
       )}
 
       <section className="panel" style={{ marginTop: 24 }}>

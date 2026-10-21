@@ -1,215 +1,300 @@
-// Tách email payout của Airbnb (tiếng Anh và tiếng Việt) thành tổng tiền + từng đơn.
-// Thuần TypeScript, không gọi mạng; dùng cho job đồng bộ, nút "Tách lại" và test.
+// Tách email payout của Airbnb, viết theo Apps Script "AIRBNB PAYOUT EMAIL IMPORTER v2" LOCI đang chạy.
+// Thuần TypeScript, không gọi mạng; dùng cho job đồng bộ, nút "Tách lại", dán email trên web và test.
 //
-// TODO(CONFIRM): bộ tách viết theo mẫu email payout phổ biến của Airbnb (dòng tổng "We sent a payout of …" /
-// "Chúng tôi đã gửi … khoản thanh toán …", sau đó mỗi đơn có tên khách, ngày ở, listing, mã HM… và số tiền).
-// Cần đối chiếu với vài email thật của LOCI; email nào tách thiếu sẽ hiện "Tách được một phần" để sửa bộ tách.
+// Cấu trúc email (bản text/plain, gửi từ automated@airbnb.com):
+//   Chi tiết | Details
+//   <Tên khách>  <$16,30 USD>            ← cùng dòng (cách ≥ 2 dấu cách) hoặc số tiền ở dòng sau
+//   <Loại> • <d/M/yyyy> - <d/M/yyyy>     ← Nơi lưu trú / vn_income_tax_withholding / vn_vat_withholding…
+//   <Tên listing> (<Listing ID>)
+//   <Mã đặt phòng>
+//   … (lặp lại cho từng dòng giao dịch; một đơn thường có dòng tiền phòng và các dòng thuế âm)
+//   Tổng số tiền đã chi trả: ₫2.335.042 VND | Total paid out: …
+//   Mã khoản chi trả | Payout ID  <mã>
+//
+// Tiền từng dòng là USD; VNĐ từng dòng = USD × (tổng VNĐ email ÷ tổng USD của chính email đó),
+// phần dư làm tròn dồn vào dòng có |USD| lớn nhất để tổng VNĐ khớp đúng số tiền email.
+
+export type LineType = string;
 
 export interface ParsedPayoutItem {
-  confirmationCode: string;
+  confirmationCode: string | null;
   guestName: string | null;
+  lineType: LineType | null; // "Tiền phòng", "Thuế TNCN", "Thuế VAT", "Phí dọn dẹp" hoặc nguyên văn
   checkIn: string | null; // YYYY-MM-DD
   checkOut: string | null;
-  amount: number | null; // null = email không ghi tiền riêng cho đơn này
+  listingName: string | null;
+  listingId: string | null;
+  usdAmount: number; // USD của dòng, có thể âm (thuế khấu trừ)
+  amount: number | null; // VNĐ phân bổ; null khi email không có tổng VNĐ
 }
 
 export interface ParsedPayout {
   isPayout: boolean;
-  /** Lý do bỏ qua khi isPayout = false (thư báo payout lỗi, thư đặt phòng…). */
+  /** Lý do bỏ qua khi isPayout = false. */
   skipReason?: string;
-  amount: number | null;
+  payoutCode: string | null; // "Mã khoản chi trả" — chống trùng khi Airbnb gửi lặp email
+  amount: number | null; // tổng VNĐ email
   currency: string;
+  totalUsd: number;
+  exchangeRate: number | null; // VNĐ / USD của email
   items: ParsedPayoutItem[];
   status: "OK" | "PARTIAL" | "FAILED";
   note: string | null;
 }
 
-/** Mã xác nhận đặt phòng Airbnb: HM + 8 ký tự chữ hoa/số. */
-export const CONFIRMATION_CODE_RE = /\bHM[A-Z0-9]{8}\b/g;
+/** Dòng nhận diện email payout (giống điều kiện lọc trong Apps Script). */
+export const PAYOUT_MARKER = /Tổng số tiền đã chi trả|Total paid out/i;
 
-const PAYOUT_SUBJECT = /payout|khoản thanh toán|khoản chi trả|khoản tiền chi trả|đã gửi .*tiền/i;
-// Thư không phải "đã chuyển tiền": payout lỗi, bị giữ, nhắc cập nhật phương thức nhận tiền, báo thuế…
-const NOT_A_SENT_PAYOUT = /fail|unsuccessful|on hold|paused|update|add a payout|set up|tax|thất bại|không thành công|bị giữ|tạm dừng|cập nhật|thiết lập|thêm phương thức|thuế/i;
+/** Các loại dòng là thuế Airbnb khấu trừ trước khi chuyển tiền. */
+export const TAX_TYPES = new Set(["Thuế TNCN", "Thuế VAT"]);
+
+const TYPE_MAP: Record<string, string> = {
+  vn_income_tax_withholding: "Thuế TNCN",
+  vn_vat_withholding: "Thuế VAT",
+  "Nơi lưu trú": "Tiền phòng",
+  Accommodation: "Tiền phòng",
+  "Income tax withholding": "Thuế TNCN",
+  "VAT withholding": "Thuế VAT",
+  "Cleaning fee": "Phí dọn dẹp",
+  "Phí dọn dẹp": "Phí dọn dẹp",
+};
+export const mapTransactionType = (raw: string) => TYPE_MAP[raw] ?? raw;
 
 // ---------- Tiền ----------
 
-const CURRENCY_HINT = /(₫|VND|VNĐ|\dđ|\d\s+đ(?![\p{L}])|\$|USD|€|EUR)/iu;
-// Một số tiền có ký hiệu tiền tệ ở trước hoặc sau: "₫1,234,567", "1.234.567 ₫", "₫1.234.567 VND", "$123.45 USD"
-const MONEY_RE = /(?:(₫|\$|€)\s?(-?\d[\d.,]*\d|\d)(?:\s?(VND|VNĐ|USD|EUR))?)|(?:(-?\d[\d.,]*\d|\d)\s?(₫|đ|VND|VNĐ|USD|EUR)(?![\p{L}]))/giu;
-
-export interface Money {
-  amount: number;
-  currency: string;
-  index: number;
-}
-
-function currencyOf(sym: string): string {
-  const s = sym.toUpperCase();
-  if (s === "$" || s === "USD") return "USD";
-  if (s === "€" || s === "EUR") return "EUR";
-  return "VND";
-}
-
-/** "1,234,567" / "1.234.567" / "123.45" / "1.234,56" → số. VND luôn là số nguyên nên mọi dấu . , đều là phân cách nghìn. */
-export function parseNumber(raw: string, currency: string): number | null {
-  const neg = raw.trim().startsWith("-");
-  const s = raw.replace(/^-/, "");
-  let n: number;
-  if (currency === "VND") {
-    n = Number(s.replace(/[.,\s]/g, ""));
-  } else {
-    // Dấu cuối cùng cách đúng 2 chữ số ở cuối là dấu thập phân
-    const m = s.match(/^(.*)[.,](\d{1,2})$/);
-    n = m ? Number(`${m[1].replace(/[.,]/g, "")}.${m[2]}`) : Number(s.replace(/[.,]/g, ""));
+/**
+ * Đọc số tiền mọi dạng: "$16,30 USD" | "-$1.234,56 USD" | "2.335.042" | "1,234.56".
+ * Dấu phân cách cuối cùng theo sau bởi 1–2 chữ số được coi là dấu thập phân (giống parseMoney của script).
+ */
+export function parseMoney(v: string | number | null | undefined): number {
+  if (typeof v === "number") return v;
+  let s = String(v ?? "").replace(/[^\d.,-]/g, "");
+  if (!s) return 0;
+  const neg = s.includes("-");
+  s = s.replace(/-/g, "");
+  const pos = Math.max(s.lastIndexOf("."), s.lastIndexOf(","));
+  let intPart = s, decPart = "";
+  if (pos >= 0) {
+    const after = s.length - pos - 1;
+    if (after >= 1 && after <= 2) { intPart = s.slice(0, pos); decPart = s.slice(pos + 1); }
   }
-  if (!Number.isFinite(n)) return null;
+  intPart = intPart.replace(/[.,]/g, "");
+  const n = parseFloat((intPart || "0") + (decPart ? "." + decPart : "")) || 0;
   return neg ? -n : n;
 }
 
-export function findMoney(line: string): Money[] {
-  const out: Money[] = [];
-  for (const m of line.matchAll(MONEY_RE)) {
-    const sym = m[1] ?? m[5] ?? "";
-    const cur = currencyOf(m[3] ?? sym);
-    const raw = m[2] ?? m[4] ?? "";
-    const n = parseNumber(raw, cur);
-    if (n !== null) out.push({ amount: cur === "VND" ? Math.round(n) : Math.round(n * 100) / 100, currency: cur, index: m.index ?? 0 });
+/** Tổng VNĐ: "Tổng số tiền đã chi trả: ₫2.335.042 VND". VNĐ không có phần lẻ nên bỏ mọi dấu phân cách. */
+export function extractTotalVND(body: string): number | null {
+  const pats = [/Tổng số tiền đã chi trả:?\s*₫?\s*([\d.,]+)\s*VND/i, /Total paid out:?\s*₫?\s*([\d.,]+)\s*VND/i, /₫\s*([\d.,]+)\s*VND/];
+  for (const p of pats) {
+    const m = body.match(p);
+    if (m) return Number(m[1].replace(/[.,]/g, "")) || null;
   }
-  return out;
+  return null;
+}
+
+export function extractPayoutCode(body: string): string | null {
+  const m = body.match(/(?:Mã khoản chi trả|Payout ID)\s*:?\s*\n*\s*([A-Za-z0-9]{10,})/i);
+  return m ? m[1].trim() : null;
 }
 
 // ---------- Ngày ----------
 
-const EN_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const pad = (n: number) => String(n).padStart(2, "0");
-const iso = (y: number, m: number, d: number) => (m >= 1 && m <= 12 && d >= 1 && d <= 31 ? `${y}-${pad(m)}-${pad(d)}` : null);
-const enMonth = (s: string) => EN_MONTHS.indexOf(s.slice(0, 3).toLowerCase()) + 1;
-const DASH = "\\s*[–—-]\\s*";
+const toIso = (y: number, m: number, d: number): string | null => {
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d ? `${y}-${pad(m)}-${pad(d)}` : null;
+};
+const dayNum = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / 86_400_000;
 
-/** Khoảng ngày ở trong một dòng. Năm bị thiếu ở ngày đầu thì lấy năm của ngày sau (lùi 1 năm nếu qua năm mới). */
-export function parseDateRange(line: string): { checkIn: string; checkOut: string } | null {
-  let m: RegExpMatchArray | null;
-  // 03/10/2026 – 05/10/2026 (ngày/tháng/năm, kiểu Việt Nam)
-  if ((m = line.match(new RegExp(`(\\d{1,2})/(\\d{1,2})/(\\d{4})${DASH}(\\d{1,2})/(\\d{1,2})/(\\d{4})`)))) {
-    const a = iso(+m[3], +m[2], +m[1]), b = iso(+m[6], +m[5], +m[4]);
-    return a && b ? { checkIn: a, checkOut: b } : null;
-  }
-  // 2026-10-03 – 2026-10-05
-  if ((m = line.match(new RegExp(`(\\d{4})-(\\d{2})-(\\d{2})${DASH}(\\d{4})-(\\d{2})-(\\d{2})`)))) {
-    return { checkIn: `${m[1]}-${m[2]}-${m[3]}`, checkOut: `${m[4]}-${m[5]}-${m[6]}` };
-  }
-  const MON = "(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\\.?";
-  // Oct 30, 2026 – Nov 2, 2026 | Oct 30 – Nov 2, 2026 | Dec 30, 2026 – Jan 2, 2027
-  if ((m = line.match(new RegExp(`${MON}\\s+(\\d{1,2})(?:,\\s*(\\d{4}))?${DASH}${MON}\\s+(\\d{1,2}),\\s*(\\d{4})`, "i")))) {
-    const y2 = +m[6], m1 = enMonth(m[1]), m2 = enMonth(m[4]);
-    const y1 = m[3] ? +m[3] : m1 > m2 ? y2 - 1 : y2;
-    const a = iso(y1, m1, +m[2]), b = iso(y2, m2, +m[5]);
-    return a && b ? { checkIn: a, checkOut: b } : null;
-  }
-  // Oct 3 – 5, 2026
-  if ((m = line.match(new RegExp(`${MON}\\s+(\\d{1,2})${DASH}(\\d{1,2}),\\s*(\\d{4})`, "i")))) {
-    const mo = enMonth(m[1]);
-    const a = iso(+m[4], mo, +m[2]), b = iso(+m[4], mo, +m[3]);
-    return a && b ? { checkIn: a, checkOut: b } : null;
-  }
-  // 30 thg 10, 2026 – 2 thg 11, 2026 | 30 thg 10 – 2 thg 11, 2026 | 30 tháng 10 – 2 tháng 11 năm 2026
-  const TH = "(?:thg|tháng)\\s*(\\d{1,2})";
-  const YR = "(?:,|\\s+năm)\\s*(\\d{4})";
-  if ((m = line.match(new RegExp(`(\\d{1,2})\\s*${TH}(?:${YR})?${DASH}(\\d{1,2})\\s*${TH}${YR}`, "i")))) {
-    const y2 = +m[6], m1 = +m[2], m2 = +m[5];
-    const y1 = m[3] ? +m[3] : m1 > m2 ? y2 - 1 : y2;
-    const a = iso(y1, m1, +m[1]), b = iso(y2, m2, +m[4]);
-    return a && b ? { checkIn: a, checkOut: b } : null;
-  }
-  // 3 – 5 thg 10, 2026
-  if ((m = line.match(new RegExp(`(\\d{1,2})${DASH}(\\d{1,2})\\s*${TH}${YR}`, "i")))) {
-    const a = iso(+m[4], +m[3], +m[1]), b = iso(+m[4], +m[3], +m[2]);
-    return a && b ? { checkIn: a, checkOut: b } : null;
-  }
-  return null;
+/**
+ * Cặp ngày trong email (Airbnb dùng d/M/yyyy hoặc M/d/yyyy tùy ngôn ngữ), theo parseDateRangeStr của script:
+ *  1. Một phần > 12 → biết kiểu viết, áp cho cả cặp.
+ *  2. Có số 0 đứng đầu ("04") → kiểu Mỹ.
+ *  3. Còn mơ hồ → chọn cách đọc hợp lý so với ngày gửi tiền; mặc định kiểu Việt Nam.
+ */
+export function parseDateRangeStr(cinStr: string, coutStr: string, payDate: string | null): { checkIn: string; checkOut: string } | null {
+  const sp = (s: string) => {
+    const p = s.trim().split("/");
+    if (p.length !== 3) return null;
+    const a = parseInt(p[0], 10), b = parseInt(p[1], 10), y = parseInt(p[2], 10);
+    if (!(y > 2000)) return null;
+    return { a, b, y, lz: (p[0].length === 2 && a <= 9) || (p[1].length === 2 && b <= 9) };
+  };
+  const x = sp(cinStr), z = sp(coutStr);
+  if (!x || !z) return null;
+  const mk = (p: NonNullable<typeof x>, us: boolean) => (us ? toIso(p.y, p.a, p.b) : toIso(p.y, p.b, p.a));
+  const valid = (c1: string | null, c2: string | null) => {
+    if (!c1 || !c2 || !(c1 < c2)) return false;
+    if (dayNum(c2) - dayNum(c1) > 400) return false;
+    if (!payDate) return true;
+    const diff = dayNum(c1) - dayNum(payDate);
+    return diff <= 45 && diff >= -400;
+  };
+  const pair = (us: boolean) => {
+    const c1 = mk(x, us), c2 = mk(z, us);
+    return c1 && c2 ? { checkIn: c1, checkOut: c2 } : null;
+  };
+
+  const usSure = x.b > 12 || z.b > 12;
+  const vnSure = x.a > 12 || z.a > 12;
+  if (usSure && !vnSure) return pair(true);
+  if (vnSure && !usSure) return pair(false);
+  if ((x.lz || z.lz) && valid(mk(x, true), mk(z, true))) return pair(true);
+  const vOk = valid(mk(x, false), mk(z, false)), uOk = valid(mk(x, true), mk(z, true));
+  if (uOk && !vOk) return pair(true);
+  return pair(false);
 }
 
-// ---------- Tên khách ----------
+// ---------- Các dòng giao dịch ----------
 
-const LABEL_LINE = /^(guest|khách|listing|chỗ ở|nhà\/phòng cho thuê|confirmation|mã xác nhận|dates|ngày|amount|số tiền|details|chi tiết|reservation|đặt phòng|payout|thanh toán|total|tổng|home|nights?|đêm)\b/i;
+const AMT = /^-?\s?\$\s?[\d.,]+\s*USD$/i;
+const INLINE = /^(.+?)\s{2,}(-?\s?\$\s?[\d.,]+\s*USD)$/i;
+const TYPE_DATES = /^(.+?)\s*[•·]\s*(\d{1,2}\/\d{1,2}\/\d{4})\s*-\s*(\d{1,2}\/\d{1,2}\/\d{4})$/;
+const LISTING = /^(.+?)\s*\((\d{10,})\)\s*$/;
+const CODE = /^[A-Z0-9]{6,12}$/;
 
-function guestFrom(lines: string[]): string | null {
-  for (const l of lines) {
-    const labeled = l.match(/^(?:guest|khách)\s*[:：]\s*(.+)$/i);
-    if (labeled) return labeled[1].trim();
-  }
-  // Không có nhãn: dòng đầu tiên chỉ gồm chữ (tên người), không phải nhãn, ngày hay tiền
-  for (const l of lines) {
-    if (l.length < 2 || l.length > 60 || /\d/.test(l) || LABEL_LINE.test(l) || CURRENCY_HINT.test(l)) continue;
-    if (/^[\p{L}][\p{L}\s.'’-]*$/u.test(l)) return l;
-  }
-  return null;
-}
+/** Đọc phần "Chi tiết" → các dòng giao dịch (theo parseTransactionBlocks của script). */
+export function parseTransactionBlocks(body: string, payDate: string | null): Omit<ParsedPayoutItem, "amount">[] {
+  const section =
+    body.match(/Chi ti[eế]t\s*\n([\s\S]*?)(?:Tổng số tiền đã chi trả|Total paid out)/i) ??
+    body.match(/Details\s*\n([\s\S]*?)(?:Total paid out)/i);
+  if (!section) return [];
+  const lines = section[1].split("\n").map((l) => l.trim()).filter(Boolean);
+  const blocks: Omit<ParsedPayoutItem, "amount">[] = [];
 
-// ---------- Tách cả email ----------
-
-/** Dòng tổng của payout, để không lấy nhầm tổng tiền làm tiền của đơn đầu tiên. */
-const TOTAL_LINE = /sent (you )?a payout|payout of|đã gửi|khoản thanh toán|khoản chi trả|total|tổng/i;
-
-export function parsePayoutEmail(input: { subject: string; text: string }): ParsedPayout {
-  const subject = input.subject ?? "";
-  const empty = { amount: null, currency: "VND", items: [], status: "FAILED" as const, note: null };
-  if (!PAYOUT_SUBJECT.test(subject)) return { ...empty, isPayout: false, skipReason: "Không phải thư payout" };
-  if (NOT_A_SENT_PAYOUT.test(subject)) return { ...empty, isPayout: false, skipReason: "Thư báo payout lỗi hoặc nhắc cập nhật, không phải tiền đã chuyển" };
-
-  const lines = input.text.split("\n").map((l) => l.trim()).filter(Boolean);
-
-  // Tổng tiền: ưu tiên số tiền trong tiêu đề, không có thì dòng tổng đầu tiên trong thân thư
-  let total: Money | undefined = findMoney(subject)[0];
-  let totalLine = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (!TOTAL_LINE.test(lines[i])) continue;
-    const m = findMoney(lines[i])[0];
-    if (m && (!total || m.amount === total.amount)) { total ??= m; totalLine = i; break; }
-  }
-
-  // Vị trí từng mã xác nhận (mỗi mã lấy lần xuất hiện đầu)
-  const codes: { code: string; line: number }[] = [];
-  const seen = new Set<string>();
-  lines.forEach((l, i) => {
-    for (const m of l.matchAll(CONFIRMATION_CODE_RE)) if (!seen.has(m[0])) { seen.add(m[0]); codes.push({ code: m[0], line: i }); }
-  });
-
-  const items: ParsedPayoutItem[] = [];
-  let prevEnd = totalLine; // dòng cuối đã thuộc về đơn trước
-  for (let k = 0; k < codes.length; k++) {
-    const { code, line } = codes[k];
-    const nextCode = codes[k + 1]?.line ?? lines.length;
-    // Tiền của đơn: số tiền đầu tiên từ dòng chứa mã trở đi (trước mã kế tiếp); không có thì số tiền cuối cùng ngay trước mã
-    let amount: number | null = null;
-    let end = line;
-    for (let j = line; j < nextCode; j++) {
-      const text = j === line ? lines[j].slice(lines[j].indexOf(code) + code.length) : lines[j];
-      const m = findMoney(text)[0];
-      if (m) { amount = m.amount; end = j; break; }
+  let i = 0;
+  while (i < lines.length) {
+    let guest: string | null = null, amountStr: string | null = null;
+    const inline = lines[i].match(INLINE);
+    if (inline) {
+      guest = inline[1].trim(); amountStr = inline[2];
+    } else if (i + 1 < lines.length && AMT.test(lines[i + 1]) && !AMT.test(lines[i])) {
+      guest = lines[i]; amountStr = lines[i + 1]; i++;
     }
-    const before = lines.slice(prevEnd + 1, line);
-    if (amount === null) {
-      for (let j = before.length - 1; j >= 0; j--) {
-        const m = findMoney(before[j]).at(-1);
-        if (m) { amount = m.amount; break; }
+    if (!guest) { i++; continue; }
+
+    let lineType: string | null = null, checkIn: string | null = null, checkOut: string | null = null;
+    let listingName: string | null = null, listingId: string | null = null, code: string | null = null;
+
+    if (i + 1 < lines.length) {
+      const t = lines[i + 1].match(TYPE_DATES);
+      if (t) {
+        lineType = mapTransactionType(t[1].trim());
+        const r = parseDateRangeStr(t[2], t[3], payDate);
+        checkIn = r?.checkIn ?? null; checkOut = r?.checkOut ?? null;
+        i++;
+      } else if (!/\(\d{10,}\)\s*$/.test(lines[i + 1]) && !CODE.test(lines[i + 1]) && !AMT.test(lines[i + 1])) {
+        lineType = mapTransactionType(lines[i + 1].split(/[•·]/)[0].trim()); // loại không kèm ngày
+        i++;
       }
     }
-    const block = lines.slice(prevEnd + 1, end + 1);
-    const range = block.map(parseDateRange).find(Boolean) ?? null;
-    items.push({ confirmationCode: code, guestName: guestFrom(before), checkIn: range?.checkIn ?? null, checkOut: range?.checkOut ?? null, amount });
-    prevEnd = end;
+    if (i + 1 < lines.length) {
+      const l = lines[i + 1].match(LISTING);
+      if (l) { listingName = l[1].trim(); listingId = l[2].trim(); i++; }
+    }
+    if (i + 1 < lines.length && CODE.test(lines[i + 1])) { code = lines[i + 1]; i++; }
+
+    blocks.push({ confirmationCode: code, guestName: guest, lineType, checkIn, checkOut, listingName, listingId, usdAmount: parseMoney(amountStr) });
+    i++;
   }
+  return blocks;
+}
+
+/**
+ * Chia tổng VNĐ của email cho từng dòng theo USD (fillVNDBooking của script):
+ * tỷ giá = tổng VNĐ ÷ tổng USD của chính email; phần dư làm tròn dồn vào dòng |USD| lớn nhất.
+ */
+export function allocateVnd(usd: number[], totalVnd: number | null): { vnd: (number | null)[]; rate: number | null } {
+  const totalUsd = usd.reduce((s, u) => s + u, 0);
+  if (!totalVnd || Math.abs(totalUsd) < 1e-9) return { vnd: usd.map(() => null), rate: null };
+  const rate = totalVnd / totalUsd;
+  const vnd: (number | null)[] = usd.map((u) => (u === 0 ? 0 : Math.round(u * rate)));
+  let biggest = -1;
+  usd.forEach((u, i) => { if (u !== 0 && (biggest < 0 || Math.abs(u) > Math.abs(usd[biggest]))) biggest = i; });
+  const sum = vnd.reduce<number>((s, v) => s + (v ?? 0), 0);
+  if (biggest >= 0) vnd[biggest] = (vnd[biggest] ?? 0) + (totalVnd - sum);
+  return { vnd, rate };
+}
+
+export function parsePayoutEmail(input: { subject: string; text: string; payDate?: string | null }): ParsedPayout {
+  const body = (input.text ?? "").replace(/\r/g, "");
+  const empty = { payoutCode: null, amount: null, currency: "VND", totalUsd: 0, exchangeRate: null, items: [], status: "FAILED" as const, note: null };
+  if (!PAYOUT_MARKER.test(body)) return { ...empty, isPayout: false, skipReason: 'Không có dòng "Tổng số tiền đã chi trả" / "Total paid out"' };
+
+  const payoutCode = extractPayoutCode(body);
+  const totalVnd = extractTotalVND(body);
+  const blocks = parseTransactionBlocks(body, input.payDate ?? null);
+  const { vnd, rate } = allocateVnd(blocks.map((b) => b.usdAmount), totalVnd);
+  const items: ParsedPayoutItem[] = blocks.map((b, i) => ({ ...b, amount: vnd[i] }));
+  const totalUsd = Math.round(blocks.reduce((s, b) => s + b.usdAmount, 0) * 100) / 100;
 
   const notes: string[] = [];
-  if (!total) notes.push("Không đọc được tổng tiền");
-  if (total && total.currency !== "VND") notes.push(`Tiền tệ ${total.currency}, không đối soát được với doanh thu VND`);
-  if (!items.length) notes.push("Không thấy mã đặt phòng (HM…)");
-  else if (items.some((i) => i.amount === null)) notes.push("Có đơn không đọc được số tiền");
-  else if (total && total.currency === "VND") {
-    const sum = items.reduce((s, i) => s + (i.amount ?? 0), 0);
-    if (sum !== total.amount) notes.push(`Tổng tiền các đơn (${sum.toLocaleString("vi-VN")}) khác tổng payout (${total.amount.toLocaleString("vi-VN")})`);
+  if (totalVnd === null) notes.push("Không đọc được tổng VNĐ");
+  if (!blocks.length) notes.push('Không đọc được phần "Chi tiết"');
+  const noCode = items.filter((i) => !i.confirmationCode).length;
+  if (noCode) notes.push(`${noCode} dòng không có mã đặt phòng`);
+  const noDate = items.filter((i) => i.confirmationCode && !i.checkIn).length;
+  if (noDate) notes.push(`${noDate} dòng không có ngày ở`);
+  const status = !blocks.length && totalVnd === null ? "FAILED" : notes.length ? "PARTIAL" : "OK";
+  return { isPayout: true, payoutCode, amount: totalVnd, currency: "VND", totalUsd, exchangeRate: rate, items, status, note: notes.join("; ") || null };
+}
+
+// ---------- Tách theo tháng (Báo cáo tháng của script) ----------
+
+export interface StayPart {
+  month: string; // YYYY-MM
+  nights: number;
+  totalNights: number;
+  checkIn: string;
+  checkOut: string;
+}
+
+/**
+ * Tách một kỳ ở theo tháng (splitStay của script). Phần đầu: check-in → ngày cuối tháng,
+ * phần giữa: ngày 1 → ngày cuối tháng, phần cuối: ngày 1 → check-out. null nếu ngày không hợp lệ.
+ */
+export function splitStay(checkIn: string | null, checkOut: string | null): StayPart[] | null {
+  if (!checkIn || !checkOut || !(checkIn < checkOut)) return null;
+  const counts = new Map<string, number>();
+  for (let d = dayNum(checkIn); d < dayNum(checkOut); d++) {
+    const m = new Date(d * 86_400_000).toISOString().slice(0, 7);
+    counts.set(m, (counts.get(m) ?? 0) + 1);
   }
-  const status = !total && !items.length ? "FAILED" : notes.length ? "PARTIAL" : "OK";
-  return { isPayout: true, amount: total?.amount ?? null, currency: total?.currency ?? "VND", items, status, note: notes.join("; ") || null };
+  const entries = [...counts];
+  const total = entries.reduce((s, [, n]) => s + n, 0);
+  return entries.map(([month, nights], idx) => {
+    const [y, mo] = month.split("-").map(Number);
+    const last = new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10);
+    return {
+      month, nights, totalNights: total,
+      checkIn: idx === 0 ? checkIn : `${month}-01`,
+      checkOut: idx === entries.length - 1 ? checkOut : last,
+    };
+  });
+}
+
+/** Chia số tiền theo số đêm; phần cuối nhận phần dư để tổng khớp đúng (prorate của script). */
+export function prorate(amount: number, parts: { nights: number; totalNights: number }[], decimals = 0): number[] {
+  if (parts.length === 1) return [amount];
+  const f = 10 ** decimals;
+  let used = 0;
+  return parts.map((p, i) => {
+    if (i === parts.length - 1) return Math.round((amount - used) * f) / f;
+    const v = Math.round(((amount * p.nights) / p.totalNights) * f) / f;
+    used += v;
+    return v;
+  });
+}
+
+/** "NTG402@Oldquarter/Studio/..." → "NTG402"; "Unix76NTG401. Máy chiếu..." → "NTG401" (extractNickname của script). */
+export function extractNickname(name: string | null): string {
+  if (!name) return "";
+  const at = name.indexOf("@");
+  if (at > 0) return name.slice(0, at).trim();
+  const m = name.match(/NTG\d+/i);
+  if (m) return m[0].toUpperCase();
+  const dot = name.indexOf(".");
+  if (dot > 0 && dot <= 10) return name.slice(0, dot).trim();
+  return name.slice(0, 10).trim();
 }
