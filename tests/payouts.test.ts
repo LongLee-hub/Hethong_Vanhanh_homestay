@@ -60,8 +60,8 @@ beforeAll(async () => {
     id, source: "DAYLADAU" as const, externalId: `DL-${id}`, propertyId, roomId, channel: "Airbnb", guestName, checkIn, checkOut, netAmount, grossAmount: netAmount, status: "CONFIRMED" as const, rawPayload: raw,
   });
   await db.insert(s.bookings).values([
-    // Mã đặt phòng Airbnb nằm trong dữ liệu gốc Dayladau; tiền phòng trong email ≈ 1.980.948 ₫
-    bk("b1", "X", "X1", "Nguyen Van An", "2026-10-03", "2026-10-05", 1_980_000, { ota_reservation_code: "HMABCD1234" }),
+    // Mã đặt phòng Airbnb nằm trong dữ liệu gốc Dayladau; email: tiền phòng 1.980.948 ₫ − thuế 148.571 ₫ = 1.832.377 ₫
+    bk("b1", "X", "X1", "Nguyen Van An", "2026-10-03", "2026-10-05", 1_832_000, { ota_reservation_code: "HMABCD1234" }),
     // Không có mã: khớp dự phòng bằng tên khách + ngày nhận phòng; hệ thống ghi thiếu (email 502.665 ₫)
     bk("b2", "X", "X1", "John Smith", "2026-10-30", "2026-11-02", 400_000, null),
     // Đơn Airbnb đã nhận phòng mà chưa có payout
@@ -95,7 +95,7 @@ describe("Kết nối Gmail", () => {
 });
 
 describe("Đồng bộ và đối soát payout", () => {
-  it("đọc email payout, bỏ qua thư khác, gộp dòng theo đơn, so tiền trước thuế với thực nhận", async () => {
+  it("đọc email payout, bỏ qua thư khác, gộp dòng theo đơn, so tiền sau thuế với thực nhận", async () => {
     const other = mail("m2", "Đặt phòng đã được xác nhận", ["HMABCD1234  $80,00 USD"]);
     const { client, calls } = fakeGmail([PAYOUT, other]);
     const sum = await syncPayouts(db, { client, accessToken: token, decrypt: plain, today: "2026-10-21" });
@@ -108,7 +108,7 @@ describe("Đồng bộ và đối soát payout", () => {
     const [p] = payouts;
     expect(p).toMatchObject({ amount: 2_335_042, payoutCode: "ABCDEF123456", totalUsd: 94.3 });
     expect(p.groups.map((g) => [g.confirmationCode, g.booking?.id, g.lines.map((l) => l.lineType), g.preTaxVnd, g.taxVnd, g.matchStatus, g.diffAmount])).toEqual([
-      ["HMABCD1234", "b1", ["Tiền phòng", "Thuế TNCN", "Thuế VAT"], 1_980_948, -148_571, "MATCHED", 948],
+      ["HMABCD1234", "b1", ["Tiền phòng", "Thuế TNCN", "Thuế VAT"], 1_980_948, -148_571, "MATCHED", 377],
       ["HMXYZ98765", "b2", ["Tiền phòng"], 502_665, 0, "AMOUNT_DIFF", 102_665],
     ]);
   });
@@ -126,6 +126,16 @@ describe("Đồng bộ và đối soát payout", () => {
     expect(missing.map((m) => m.bookingId)).toEqual(["b3"]);
     // Chưa quá 3 ngày thì chưa báo
     expect((await payoutsForMonth(db, invA, "2026-10", "2026-10-12")).missing).toEqual([]);
+  });
+
+  it("so với tiền trước thuế thì lệch đúng bằng thuế → báo lệch", async () => {
+    await db.update(schema.bookings).set({ netAmount: 1_980_948 }).where(eq(schema.bookings.id, "b1"));
+    const [p] = await db.select().from(schema.airbnbPayouts);
+    await reparsePayout(db, invA, p.id);
+    const g = (await payoutsForMonth(db, invA, "2026-10", "2026-10-21")).payouts[0].groups[0];
+    expect([g.matchStatus, g.diffAmount]).toEqual(["AMOUNT_DIFF", -148_571]);
+    await db.update(schema.bookings).set({ netAmount: 1_832_000 }).where(eq(schema.bookings.id, "b1"));
+    await reparsePayout(db, invA, p.id);
   });
 
   it("doanh thu theo tháng ở: đơn trải tháng chia theo đêm, phần cuối nhận phần dư", async () => {

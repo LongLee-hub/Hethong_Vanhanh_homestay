@@ -427,7 +427,7 @@ export const airbnbPayoutItems = pgTable(
     amount: bigint("amount", { mode: "number" }), // VNĐ phân bổ theo tỷ giá của email; null = email không có tổng VNĐ
     bookingId: text("booking_id").references(() => bookings.id, { onDelete: "set null" }),
     matchStatus: payoutMatchEnum("match_status").notNull().default("NOT_FOUND"),
-    diffAmount: bigint("diff_amount", { mode: "number" }), // cả đơn: VNĐ trước thuế Airbnb đã chuyển (mọi email) − thực nhận trong hệ thống
+    diffAmount: bigint("diff_amount", { mode: "number" }), // cả đơn: VNĐ sau thuế Airbnb đã chuyển (mọi email) − thực nhận trong hệ thống
   },
   (t) => [index("payout_items_payout").on(t.payoutId), index("payout_items_code").on(t.confirmationCode), index("payout_items_booking").on(t.bookingId)],
 );

@@ -212,8 +212,8 @@ export async function syncPayouts(db: DB, opts: PayoutSyncDeps & { accountIds?: 
 
 // ---------- Đối soát ----------
 // Một đơn có nhiều dòng (tiền phòng, phí dọn, thuế TNCN/VAT âm) và có thể nằm ở nhiều email payout.
-// So "trước thuế" = tổng VNĐ các dòng không phải thuế của đơn, cộng dồn mọi email, với "thực nhận" đang ghi
-// (Dayladau "Amount host" là tiền host nhận trước khi Airbnb khấu trừ thuế). TODO(CONFIRM)
+// So tổng VNĐ Airbnb đã chuyển cho đơn (mọi dòng, kể cả thuế khấu trừ âm, cộng dồn mọi email) với "thực nhận"
+// đang ghi: Dayladau "Amount host" là tiền host nhận sau khi đã trừ hết thuế phí (anh Long xác nhận 21/10/2026).
 // Dòng USD được quy ra VNĐ theo tỷ giá ngày chuyển tiền, còn Dayladau quy đổi lúc đặt phòng, nên cho lệch trong
 // khoảng PAYOUT_TOLERANCE_PCT. TODO(CONFIRM) mức chênh tỷ giá chấp nhận được.
 
@@ -243,11 +243,11 @@ async function findByGuest(db: DB, propIds: string[], guest: string, checkIn: st
   return rows.length === 1 ? rows[0] : null;
 }
 
-/** Trạng thái của cả đơn: preTaxVnd = VNĐ trước thuế Airbnb đã chuyển cho đơn (mọi email), null khi chưa quy được ra VNĐ. */
-export function matchStatus(preTaxVnd: number | null, booking: BookingRow | null): { matchStatus: "MATCHED" | "AMOUNT_DIFF" | "NOT_FOUND"; diffAmount: number | null } {
+/** Trạng thái của cả đơn: paidVnd = VNĐ sau thuế Airbnb đã chuyển cho đơn (mọi email), null khi chưa quy được ra VNĐ. */
+export function matchStatus(paidVnd: number | null, booking: BookingRow | null): { matchStatus: "MATCHED" | "AMOUNT_DIFF" | "NOT_FOUND"; diffAmount: number | null } {
   if (!booking) return { matchStatus: "NOT_FOUND", diffAmount: null };
-  if (preTaxVnd === null) return { matchStatus: "MATCHED", diffAmount: null };
-  const diff = preTaxVnd - booking.netAmount;
+  if (paidVnd === null) return { matchStatus: "MATCHED", diffAmount: null };
+  const diff = paidVnd - booking.netAmount;
   return { matchStatus: Math.abs(diff) <= toleranceFor(booking.netAmount) ? "MATCHED" : "AMOUNT_DIFF", diffAmount: diff };
 }
 
@@ -289,25 +289,25 @@ export async function matchPayouts(db: DB, opts: { investorIds?: string[]; payou
   }
   if (!touched.size) return 0;
 
-  // 2. Mỗi đơn: cộng VNĐ trước thuế của mọi dòng đã gắn (mọi email), so với thực nhận, ghi cho mọi dòng của đơn
+  // 2. Mỗi đơn: cộng VNĐ mọi dòng đã gắn (mọi email, sau thuế), so với thực nhận, ghi cho mọi dòng của đơn
   const ids = [...touched];
   const [lines, nets] = await Promise.all([
     db.select({ id: airbnbPayoutItems.id, bookingId: airbnbPayoutItems.bookingId, lineType: airbnbPayoutItems.lineType, amount: airbnbPayoutItems.amount, matchStatus: airbnbPayoutItems.matchStatus, diffAmount: airbnbPayoutItems.diffAmount })
       .from(airbnbPayoutItems).where(inArray(airbnbPayoutItems.bookingId, ids)),
     db.select({ id: bookings.id, netAmount: bookings.netAmount }).from(bookings).where(inArray(bookings.id, ids)),
   ]);
-  const preTax = new Map<string, number | null>();
+  const paid = new Map<string, number | null>();
   for (const l of lines) {
-    if (!l.bookingId || (l.lineType && TAX_TYPES.has(l.lineType))) continue;
-    const cur = preTax.has(l.bookingId) ? preTax.get(l.bookingId)! : 0;
-    preTax.set(l.bookingId, cur === null || l.amount === null ? null : cur + l.amount);
+    if (!l.bookingId) continue;
+    const cur = paid.has(l.bookingId) ? paid.get(l.bookingId)! : 0;
+    paid.set(l.bookingId, cur === null || l.amount === null ? null : cur + l.amount);
   }
   const netOf = new Map(nets.map((n) => [n.id, n]));
   let matched = 0;
   for (const id of ids) {
     if (!lines.some((l) => l.bookingId === id)) continue;
     matched++;
-    const st = matchStatus(preTax.has(id) ? preTax.get(id)! : 0, netOf.get(id) ?? null);
+    const st = matchStatus(paid.has(id) ? paid.get(id)! : 0, netOf.get(id) ?? null);
     for (const l of lines) {
       if (l.bookingId === id && (l.matchStatus !== st.matchStatus || l.diffAmount !== st.diffAmount)) {
         await db.update(airbnbPayoutItems).set(st).where(eq(airbnbPayoutItems.id, l.id));
@@ -407,7 +407,7 @@ export interface PayoutBookingGroup {
   preTaxVnd: number | null;
   taxVnd: number | null;
   matchStatus: "MATCHED" | "AMOUNT_DIFF" | "NOT_FOUND";
-  diffAmount: number | null; // cả đơn, cộng dồn mọi email
+  diffAmount: number | null; // cả đơn: VNĐ sau thuế cộng dồn mọi email − thực nhận
   booking: { id: string; roomId: string; guestName: string | null; checkIn: string; checkOut: string; netAmount: number; status: string } | null;
 }
 

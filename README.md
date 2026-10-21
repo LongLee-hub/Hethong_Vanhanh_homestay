@@ -74,7 +74,7 @@ Trang **Payout Airbnb** đọc email "Tổng số tiền đã chi trả" của A
 
 Hai cách xem:
 
-- **Theo lần chuyển tiền** — mỗi email một nhóm, các dòng gộp theo đơn. Đối soát cả đơn (cộng mọi email): tiền trước thuế Airbnb đã chuyển so với "thực nhận" trong hệ thống. **Khớp** khi lệch không quá 3% (chênh tỷ giá) hoặc 2.000 ₫; **Lệch tiền**; **Chưa thấy đơn** khi không khớp được theo mã đặt phòng hay tên khách + ngày nhận phòng. Kèm danh sách đơn Airbnb đã nhận phòng quá 3 ngày mà chưa có payout.
+- **Theo lần chuyển tiền** — mỗi email một nhóm, các dòng gộp theo đơn. Đối soát cả đơn (cộng mọi email): tiền Airbnb đã chuyển sau thuế so với "thực nhận" trong hệ thống (Dayladau "Amount host" đã trừ hết thuế phí). **Khớp** khi lệch không quá 3% (chênh tỷ giá) hoặc 2.000 ₫; **Lệch tiền**; **Chưa thấy đơn** khi không khớp được theo mã đặt phòng hay tên khách + ngày nhận phòng. Kèm danh sách đơn Airbnb đã nhận phòng quá 3 ngày mà chưa có payout.
 - **Theo tháng ở** — như sheet "Báo cáo tháng": gộp theo mã đặt phòng, đơn trải nhiều tháng chia theo số đêm, phần cuối nhận phần dư; tách trước thuế / thuế / thực nhận.
 
 Ai làm gì: Admin kết nối Gmail cho mọi NĐT; NĐT tự kết nối Gmail của mình; Kế toán chỉ xem. App chỉ xin quyền **đọc** Gmail (`gmail.readonly`), refresh token mã hóa AES-256-GCM như token Dayladau. Email được đọc mỗi lần đồng bộ (cùng lịch với Dayladau), hoặc bấm **Đọc thư ngay**.
@@ -87,7 +87,7 @@ Nếu đặt `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL` trong `.env` 
 
 **Dán email payout:** chưa kết nối Gmail vẫn đối soát được: mở email payout, copy toàn bộ nội dung dán vào mục *Dán email payout*, bấm *Xem trước* để thấy app tách được gì rồi *Lưu*. Email dán nhầm thì xóa được; email đọc từ Gmail thì không.
 
-**TODO(CONFIRM):** (1) "Amount host" của Dayladau là tiền trước khi Airbnb khấu trừ thuế, nên đang so với tiền trước thuế; (2) mức chênh tỷ giá chấp nhận được (đang 3%). Email nào tách thiếu hiện nhãn "Tách được một phần"; sau khi sửa bộ tách, bấm **Tách lại** để xử lý lại từ nội dung đã lưu, không cần đọc lại Gmail.
+**TODO(CONFIRM):** mức chênh tỷ giá chấp nhận được (đang 3%). Email nào tách thiếu hiện nhãn "Tách được một phần"; sau khi sửa bộ tách, bấm **Tách lại** để xử lý lại từ nội dung đã lưu, không cần đọc lại Gmail.
 
 ## Việc cần anh xác nhận trước khi bật đồng bộ thật
 

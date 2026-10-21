@@ -205,7 +205,7 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
       </div>
 
       <section className="panel">
-        <header><div><h2>Đối soát theo lần chuyển tiền</h2><p>Mỗi email payout gộp nhiều đơn; mỗi đơn có dòng tiền phòng và các dòng thuế Airbnb khấu trừ. VNĐ từng dòng quy theo tỷ giá của chính email. Số lệch = tiền trước thuế Airbnb đã chuyển cho đơn (mọi email) − thực nhận đang ghi trong hệ thống.</p></div></header>
+        <header><div><h2>Đối soát theo lần chuyển tiền</h2><p>Mỗi email payout gộp nhiều đơn; mỗi đơn có dòng tiền phòng và các dòng thuế Airbnb khấu trừ. VNĐ từng dòng quy theo tỷ giá của chính email. Số lệch = tiền Airbnb đã chuyển cho đơn sau thuế (cộng mọi email) − thực nhận đang ghi trong hệ thống.</p></div></header>
         <div className="tbl-wrap"><table className="payouts">
           <thead><tr><th>Khách</th><th>Phòng</th><th>Ngày ở</th><th>Chi tiết</th><th className="n">USD</th><th className="n">VNĐ chuyển</th><th>Đối soát</th></tr></thead>
           {payouts.map((p) => <PayoutRows key={p.id} p={p} roomName={roomName} multiInvestor={multiInvestor} />)}
