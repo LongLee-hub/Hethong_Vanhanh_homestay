@@ -416,7 +416,8 @@ export function forecastProperty(opts: {
 
   const pm = prevMonth(month);
   const prevK = computeKpis(nights, rooms, firstDay(pm), lastDay(pm));
-  const prevOcc = prevK.availableNights ? prevK.soldNights / prevK.availableNights : 0;
+  // Công suất không thể quá 100%; vượt là do ngày mở bán của phòng sai, đừng để nó nhân doanh thu ước tính
+  const prevOcc = prevK.availableNights ? Math.min(1, prevK.soldNights / prevK.availableNights) : 0;
   const curSold = pastSold.length + futureSold.length;
   const curRev = [...pastSold, ...futureSold].reduce((s, n) => s + n.netAmount, 0);
   const adr = curSold ? Math.floor(curRev / curSold) : prevK.adr;

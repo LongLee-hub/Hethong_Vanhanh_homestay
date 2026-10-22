@@ -1,8 +1,8 @@
 // Job đồng bộ Dayladau (Đặc tả mục 6). Chạy 06:00 hằng ngày và khi Admin bấm "Đồng bộ ngay".
-import { and, eq, gte, inArray, notInArray } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, notInArray, sql } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
-import { alerts, bookings, dayladauAccounts, investors, properties, syncRuns } from "../db/schema";
+import { alerts, bookings, dayladauAccounts, investors, properties, rooms, syncRuns } from "../db/schema";
 import { decryptSecret, getAllSettings, notifyLark } from "../services/settings";
 import { sameTracked, upsertBooking, type BookingInput } from "../services/bookings";
 import { httpDayladauClient, type DayladauClient } from "./client";
@@ -38,6 +38,27 @@ function stableJson(v: unknown): string {
 
 const CHUNK = 500;
 const chunks = <T>(xs: T[]) => Array.from({ length: Math.ceil(xs.length / CHUNK) }, (_, i) => xs.slice(i * CHUNK, (i + 1) * CHUNK));
+
+/**
+ * Ngày mở bán của phòng không được muộn hơn đơn đầu tiên của phòng. Phòng tạo lại hoặc gắn listing sau khi đã có đơn
+ * (ngày mở bán mặc định là hôm tạo) sẽ có đêm đã bán nhiều hơn đêm có thể bán: tỷ lệ kín phòng vượt 100% và doanh thu dự kiến
+ * bị nhân lên. Kéo ngày mở bán về ngày nhận phòng sớm nhất của đơn đã xác nhận.
+ */
+export async function backfillRoomOpenedOn(db: DB, propertyIds: string[]): Promise<number> {
+  if (!propertyIds.length) return 0;
+  const firsts = await db
+    .select({ roomId: bookings.roomId, first: sql<string>`MIN(${bookings.checkIn})` })
+    .from(bookings)
+    .where(and(inArray(bookings.propertyId, propertyIds), eq(bookings.status, "CONFIRMED")))
+    .groupBy(bookings.roomId);
+  let fixed = 0;
+  for (const { roomId, first } of firsts) {
+    const day = String(first).slice(0, 10);
+    const r = await db.update(rooms).set({ openedOn: day }).where(and(eq(rooms.id, roomId), gt(rooms.openedOn, day))).returning({ id: rooms.id });
+    fixed += r.length;
+  }
+  return fixed;
+}
 
 async function raiseAlert(db: DB, type: string, key: string, message: string, propertyId?: string) {
   await db.insert(alerts).values({ type, key, message, propertyId: propertyId ?? null }).onConflictDoNothing();
@@ -137,6 +158,7 @@ export async function syncBookings(
         sum.adjustments += r.adjustments.length;
       }
       for (const ids of chunks(untouched)) await db.update(bookings).set({ lastSyncedAt: new Date() }).where(inArray(bookings.id, ids));
+      await backfillRoomOpenedOn(db, pids);
 
       for (const [key, u] of unmapped) {
         sum.unmapped.push({ account: who, listing: u.name, count: u.count });

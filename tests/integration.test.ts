@@ -230,6 +230,18 @@ describe("Đồng bộ Dayladau (giả lập API)", () => {
     expect(logs.length).toBe(2);
   });
 
+  it("phòng tạo lại sau khi đã có đơn: đồng bộ kéo ngày mở bán về đơn đầu tiên", async () => {
+    const x1 = eq(schema.rooms.id, "X1");
+    // Giống Vạn Phúc: phòng tạo lại/gắn lại listing nên ngày mở bán thành hôm nay, muộn hơn các đơn đã có
+    await db.update(schema.rooms).set({ openedOn: "2026-09-29" }).where(x1);
+    await syncBookings(db, { client, today: "2026-09-30", decrypt: (s) => s });
+    expect((await db.select().from(schema.rooms).where(x1))[0].openedOn).toBe("2026-08-01");
+    // Phòng mở sớm hơn đơn đầu tiên thì giữ nguyên
+    await db.update(schema.rooms).set({ openedOn: "2026-01-01" }).where(x1);
+    await syncBookings(db, { client, today: "2026-09-30", decrypt: (s) => s });
+    expect((await db.select().from(schema.rooms).where(x1))[0].openedOn).toBe("2026-01-01");
+  });
+
   it("lỗi API của một NĐT tạo cảnh báo SYNC_FAILED, không ném lỗi", async () => {
     const bad = { listBookings: async () => { throw new Error("Token hết hạn"); } };
     const r = await syncBookings(db, { client: bad, today: "2026-09-30", decrypt: (s) => s });
