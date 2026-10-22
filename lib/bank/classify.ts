@@ -4,7 +4,7 @@
 // Quy ước nội dung chuyển khoản LOCI đang dùng (vd "khd-vtp-nuoc giat", "MBCT pkb luong don dep t9"):
 //   - mã cơ sở viết tắt: vp, pkb, ntg, vtp, kt, lt… (đặt ở trang Cơ sở & phòng → "Mã trên sao kê")
 //   - "coso" = chi phí chung toàn hệ thống
-//   - "t9", "t10" = tháng của khoản chi (lương t9 trả đầu tháng 10 → hạch toán tháng 9)
+//   - tháng hạch toán = tháng trả tiền (ngày hạch toán trên sao kê); "t9" trong nội dung không đổi tháng
 import { fold } from "./statement-parser";
 
 export const COMMON_CODE = "coso";
@@ -67,17 +67,9 @@ function titleCase(s: string): string {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-/** Tháng hạch toán: "t9"/"thang 9" trong nội dung, không có thì theo ngày giao dịch. */
-export function guessMonth(text: string, bookedOn: string): { month: string; fromText: boolean } {
-  const [y, m] = bookedOn.split("-").map(Number);
-  const hit = text.match(/\b(?:t|thang)\s?(1[0-2]|0?[1-9])\b/);
-  if (!hit) return { month: `${y}-${pad(m)}`, fromText: false };
-  const tm = Number(hit[1]);
-  // Lương t12 trả tháng 1 → năm trước; trả trước t1 vào tháng 12 → năm sau
-  let ty = y;
-  if (tm - m > 6) ty = y - 1;
-  else if (m - tm > 6) ty = y + 1;
-  return { month: `${ty}-${pad(tm)}`, fromText: true };
+/** Tháng hạch toán = tháng trả tiền (ngày hạch toán trên sao kê). Lương t9 trả đầu tháng 10 → tháng 10. */
+export function guessMonth(bookedOn: string): string {
+  return bookedOn.slice(0, 7);
 }
 
 export function classifyTransaction(
@@ -136,8 +128,7 @@ export function classifyTransaction(
     }
   }
 
-  const { month, fromText } = guessMonth(text, t.bookedOn);
-  if (fromText) hints.push(`tháng theo "${text.match(/\b(?:t|thang)\s?(1[0-2]|0?[1-9])\b/)?.[0]}"`);
+  const month = guessMonth(t.bookedOn);
 
   const propertyByCode = propertyId !== undefined && !hints.includes("cùng mã khách hàng với lần chi trước");
   return { propertyId, categoryId, month, description: cleanDescription(t.content, t.counterparty), hints, confident: propertyByCode && byRule };

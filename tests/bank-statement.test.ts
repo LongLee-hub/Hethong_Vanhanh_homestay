@@ -68,8 +68,8 @@ describe("Gợi ý phân loại", () => {
     expect(s(1).propertyId).toBeUndefined();
     expect(s(1).categoryId).toBe("Bảo trì");
   });
-  it("lương t9 trả tháng 10 → hạch toán tháng 9", () => {
-    expect(s(3)).toMatchObject({ propertyId: "VTP", categoryId: "Lương", month: "2026-09" });
+  it("lương t9 trả tháng 10 → hạch toán tháng 10 (tháng trả tiền)", () => {
+    expect(s(3)).toMatchObject({ propertyId: "VTP", categoryId: "Lương", month: "2026-10" });
   });
   it('"coso" → chi phí chung', () => {
     expect(s(4)).toMatchObject({ propertyId: null, categoryId: "Lương" });
@@ -79,10 +79,9 @@ describe("Gợi ý phân loại", () => {
     const history = [{ counterparty: "X", content: "VNPAY BILL ELECTRIC 1446341185 abc", categoryId: "Điện nước", propertyId: "KT" }];
     expect(s(5, { history }).propertyId).toBe("KT");
   });
-  it("tháng qua năm", () => {
-    expect(guessMonth("luong t12", "2027-01-05").month).toBe("2026-12");
-    expect(guessMonth("tien nha t1", "2026-12-28").month).toBe("2027-01");
-    expect(guessMonth("tang 7", "2026-09-29").month).toBe("2026-09");
+  it("tháng = tháng của ngày hạch toán", () => {
+    expect(guessMonth("2027-01-05")).toBe("2027-01");
+    expect(guessMonth("2026-12-28")).toBe("2026-12");
   });
   it("bỏ mã tham chiếu cuối nội dung", () => {
     expect(cleanDescription("MBCT coso luong nhan vien Toan t9 D  25ABR4Z/220019 ", "NGUYEN TIEN TOAN")).toBe("coso luong nhan vien Toan t9 · Nguyen Tien Toan");

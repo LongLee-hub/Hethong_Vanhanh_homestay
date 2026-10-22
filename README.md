@@ -158,7 +158,7 @@ Mỗi khoản **tiền ra** được gợi ý sẵn:
 
 - **Cơ sở** theo mã viết tắt trong nội dung chuyển khoản (`khd-vp-…` → Vạn Phúc). Đặt mã ở *Cơ sở & phòng → Sửa thông tin → Mã trên sao kê*. `coso` = chi phí chung. Nội dung có hai mã thì để kế toán chọn. Hóa đơn điện nước không có mã thì học theo mã khách hàng đã ghi nhận lần trước.
 - **Loại** theo từ khóa (lương, BHXH, điện/nước, internet/netflix, amenities/nước giặt, sửa chữa…), không có thì theo người nhận lần trước.
-- **Tháng hạch toán** theo `t9`, `t10` trong nội dung (lương t9 trả đầu tháng 10 → tháng 9), không có thì theo ngày giao dịch.
+- **Tháng hạch toán** = tháng trả tiền (ngày hạch toán trên sao kê): lương t9 trả đầu tháng 10 → tháng 10. Kế toán vẫn sửa tay được trước khi ghi nhận.
 
 Kế toán chỉnh, chọn dòng rồi **Ghi nhận & gửi duyệt**: mỗi dòng thành một khoản chi *Đã chi* nhưng vẫn *Chờ duyệt* như kê khai tay. Dòng không phải chi phí (chuyển nhầm, hoàn tiền) bấm *Không phải chi phí*. Xóa khoản chi thì dòng sao kê trở lại chưa phân loại.
 Chỉ đọc file `.xlsx`; file `.xls` cũ mở bằng Excel lưu lại dạng `.xlsx`.

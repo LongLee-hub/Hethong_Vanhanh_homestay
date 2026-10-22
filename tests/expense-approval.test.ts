@@ -25,8 +25,9 @@ const acc: SessionUser = { id: "u-acc", name: "Kế toán", role: "ACCOUNTANT" }
 const HOOK_A = "https://open.larksuite.com/open-apis/bot/v2/hook/aaaa";
 const HOOK_COMMON = "https://open.larksuite.com/open-apis/bot/v2/hook/common";
 
+let pg: PGlite;
 beforeAll(async () => {
-  const pg = new PGlite();
+  pg = new PGlite();
   for (const file of readdirSync(new URL("../drizzle/", import.meta.url)).filter((f) => f.endsWith(".sql")).sort()) {
     const sql = readFileSync(new URL(`../drizzle/${file}`, import.meta.url), "utf8");
     for (const stmt of sql.split("--> statement-breakpoint")) if (stmt.trim()) await pg.exec(stmt);
@@ -221,7 +222,7 @@ describe("Sao kê ngân hàng", () => {
     const ft1 = list.find((t) => t.ref === "FT1")!;
     const ft3 = list.find((t) => t.ref === "FT3")!;
     expect(ft1.suggestion).toMatchObject({ propertyId: "X", categoryId: "supplies", month: "2026-10" });
-    expect(ft3.suggestion).toMatchObject({ propertyId: "Z", categoryId: "salary", month: "2026-09" });
+    expect(ft3.suggestion).toMatchObject({ propertyId: "Z", categoryId: "salary", month: "2026-10" }); // tháng trả tiền, không theo "t9"
 
     const res = await recordTransactions(db, acc, [
       { txnId: ft1.id, propertyId: "X", categoryId: "supplies", month: "2026-10", description: ft1.suggestion!.description },
@@ -263,6 +264,21 @@ describe("Sao kê ngân hàng", () => {
     await recordTransactions(db, acc, [{ txnId: t10.id, propertyId: "X", categoryId: "supplies", month: "2026-10", description: "Tiền điện" }]);
     const t11 = (await statementTransactions(db, acc, null)).find((t) => t.ref === "FT11")!;
     expect(t11.suggestion!.propertyId).toBe("X");
+  });
+
+  it("migration 0011: chi phí từ sao kê chuyển về tháng trả tiền, bỏ qua tháng đã khóa sổ", async () => {
+    const t10 = (await db.select().from(schema.bankTransactions).where(eq(schema.bankTransactions.ref, "FT10")))[0];
+    const [e] = await db.select().from(schema.expenses).where(eq(schema.expenses.bankTransactionId, t10.id));
+    await db.update(schema.expenses).set({ month: "2026-09" }).where(eq(schema.expenses.id, e.id)); // ghi theo quy tắc cũ ("t9")
+    const sql = readFileSync(new URL("../drizzle/0011_bank_expense_paid_month.sql", import.meta.url), "utf8");
+    await pg.exec(sql);
+    expect((await db.select().from(schema.expenses).where(eq(schema.expenses.id, e.id)))[0].month).toBe("2026-10");
+
+    // Cơ sở Z: tháng 9 NĐT B đã khóa sổ → giữ nguyên
+    await db.update(schema.expenses).set({ month: "2026-09", propertyId: "Z" }).where(eq(schema.expenses.id, e.id));
+    await pg.exec(sql);
+    expect((await db.select().from(schema.expenses).where(eq(schema.expenses.id, e.id)))[0].month).toBe("2026-09");
+    await db.update(schema.expenses).set({ month: "2026-10", propertyId: "X" }).where(eq(schema.expenses.id, e.id));
   });
 
   it("mã cơ sở trùng nhau bị chặn", async () => {
