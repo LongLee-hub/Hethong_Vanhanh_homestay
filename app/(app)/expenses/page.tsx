@@ -34,6 +34,10 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
   const myRooms = Object.values(roomsByProp).reduce((s, n) => s + n, 0);
   const mine = user.role === "INVESTOR";
   const toApprove = can(user, "approveExpense") ? pending.filter((e) => e.propertyId !== null || user.role === "ADMIN") : [];
+  // Cơ sở đang hoạt động trong tháng còn thiếu loại chi phí bắt buộc; tháng tương lai chưa phát sinh nên không báo
+  const missing = month <= D.monthOf(D.todayVN())
+    ? D.missingExpenseCategories({ propertyIds: props.filter((p) => roomsByProp[p.id]).map((p) => p.id), expenses: [...direct, ...common], categoryName: catName })
+    : [];
   return (
     <>
       <div className="topbar">
@@ -46,6 +50,14 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
         <div className="banner info">
           <span>Có <b>{toApprove.length}</b> khoản chi ({vnd(sum(toApprove))}) đang chờ {mine ? "anh/chị" : "bạn"} duyệt. Chi phí chỉ được tính vào lãi lỗ sau khi duyệt.</span>
           <Link className="btn sm" href="/expenses/pending">Xem và duyệt</Link>
+        </div>
+      )}
+
+      {missing.length > 0 && (
+        <div className="expense-missing neg" role="alert">
+          {missing.map((m) => (
+            <div key={m.propertyId}>Cảnh báo: <b>{name[m.propertyId]}</b> còn thiếu chi phí {D.formatMonthVN(month).toLowerCase()}: {m.missing.join(", ")}.</div>
+          ))}
         </div>
       )}
 

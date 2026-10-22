@@ -233,6 +233,40 @@ export function commonCostForMonth(opts: {
   return { perProperty, provisional: true, total };
 }
 
+/** Loại chi phí tháng nào cũng phải có; thiếu thì trang Chi phí cảnh báo. Lương thường kê khai là chi phí chung. */
+export const REQUIRED_EXPENSE_CATEGORIES = ["Thuê nhà", "Internet", "Vật tư tiêu hao", "Lương", "Bảo trì", "Điện nước"];
+
+/**
+ * Mỗi cơ sở còn thiếu loại chi phí bắt buộc nào trong tháng. Khoản đã kê khai (chờ duyệt hoặc đã duyệt) coi là có,
+ * khoản bị từ chối coi như chưa có. Khoản chi phí chung (propertyId null) tính là có cho mọi cơ sở.
+ * Chỉ trả về cơ sở còn thiếu, giữ thứ tự propertyIds.
+ */
+export function missingExpenseCategories(opts: {
+  propertyIds: string[];
+  expenses: { propertyId: string | null; categoryId: string; approvalStatus: string }[];
+  categoryName: Record<string, string>;
+  required?: string[];
+}): { propertyId: string; missing: string[] }[] {
+  const required = opts.required ?? REQUIRED_EXPENSE_CATEGORIES;
+  const norm = (s: string) => s.normalize("NFC").trim().toLowerCase();
+  const has = new Map<string | null, Set<string>>();
+  for (const e of opts.expenses) {
+    if (e.approvalStatus === "REJECTED") continue;
+    const name = opts.categoryName[e.categoryId] && norm(opts.categoryName[e.categoryId]);
+    if (!name) continue;
+    if (!has.has(e.propertyId)) has.set(e.propertyId, new Set());
+    has.get(e.propertyId)!.add(name);
+  }
+  const common = has.get(null) ?? new Set<string>();
+  const out: { propertyId: string; missing: string[] }[] = [];
+  for (const pid of opts.propertyIds) {
+    const own = has.get(pid) ?? new Set<string>();
+    const missing = required.filter((c) => !own.has(norm(c)) && !common.has(norm(c)));
+    if (missing.length) out.push({ propertyId: pid, missing });
+  }
+  return out;
+}
+
 // ---------- 5.4 Quyết toán tháng ----------
 
 export interface PropertyLine {

@@ -4,6 +4,7 @@ import {
   NightLite,
   RoomLite,
   allocateCommonCost,
+  missingExpenseCategories,
   availableNights,
   canLockMonth,
   commonCostForMonth,
@@ -377,5 +378,22 @@ describe("Định dạng", () => {
   it("tiền VND", () => {
     expect(formatVND(1_250_000)).toBe("1.250.000 ₫");
     expect(formatVND(-5_000_000)).toBe("−5.000.000 ₫");
+  });
+});
+
+describe("Cảnh báo thiếu chi phí tháng", () => {
+  const categoryName = { c1: "Thuê nhà", c2: "Internet", c3: "Vật tư tiêu hao", c4: "Lương", c5: "Bảo trì", c6: "Điện nước" };
+  const all = (pid: string | null) => ["c1", "c2", "c3", "c5", "c6"].map((categoryId) => ({ propertyId: pid, categoryId, approvalStatus: "APPROVED" }));
+
+  it("liệt kê đúng loại còn thiếu theo cơ sở; lương kê khai chung tính cho mọi cơ sở", () => {
+    const expenses = [...all("A"), { propertyId: null, categoryId: "c4", approvalStatus: "PENDING" }, { propertyId: "B", categoryId: "c1", approvalStatus: "APPROVED" }];
+    expect(missingExpenseCategories({ propertyIds: ["A", "B"], expenses, categoryName })).toEqual([
+      { propertyId: "B", missing: ["Internet", "Vật tư tiêu hao", "Bảo trì", "Điện nước"] },
+    ]);
+  });
+
+  it("khoản bị từ chối coi như chưa có; chưa có khoản nào thì thiếu đủ 6 loại", () => {
+    const expenses = [{ propertyId: "A", categoryId: "c1", approvalStatus: "REJECTED" }];
+    expect(missingExpenseCategories({ propertyIds: ["A"], expenses, categoryName })[0].missing).toEqual(["Thuê nhà", "Internet", "Vật tư tiêu hao", "Lương", "Bảo trì", "Điện nước"]);
   });
 });

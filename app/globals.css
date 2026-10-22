@@ -389,6 +389,7 @@ tr.split td { background: var(--gold-soft); }
 /* Bảng phân loại sao kê: ô chọn trong bảng giữ đủ rộng để đọc được tên cơ sở / loại */
 table.statement td { vertical-align: top; }
 table.statement select { width: auto; min-width: 150px; }
+.expense-missing { display: grid; gap: 4px; margin: 0 0 16px; font-size: .92rem; }
 .assign-room select { width: auto; min-width: 160px; max-width: 240px; }
 table.statement input[type=month] { width: auto; min-width: 150px; }
 table.statement input[type=text] { width: 100%; min-width: 220px; }
