@@ -422,18 +422,22 @@ export function forecastProperty(opts: {
   const curRev = [...pastSold, ...futureSold].reduce((s, n) => s + n.netAmount, 0);
   const adr = curSold ? Math.floor(curRev / curSold) : prevK.adr;
 
-  const estEmptyNights = empty * prevOcc;
-  const estEmptyRevenue = Math.floor(estEmptyNights * adr);
   const revenuePast = past.reduce((s, n) => s + n.netAmount, 0);
   const revenueFuture = future.reduce((s, n) => s + n.netAmount, 0);
-  const expectedSold = curSold + estEmptyNights;
+
+  // Doanh thu dự kiến theo tốc độ bình quân ngày: doanh thu đến hôm nay ÷ số ngày đã qua (tính cả hôm nay) × số ngày của tháng.
+  // Tháng chưa tới: chưa có ngày nào để lấy bình quân, dùng doanh thu các đêm đã đặt. Tháng đã qua: bằng đúng doanh thu thực tế.
+  const daysInMonth = Number(to.slice(8, 10));
+  const daysElapsed = today < from ? 0 : today > to ? daysInMonth : Number(today.slice(8, 10));
+  const revenueForecast = daysElapsed ? Math.round((revenuePast / daysElapsed) * daysInMonth) : revenueFuture;
+  const expectedSold = daysElapsed ? (pastSold.length / daysElapsed) * daysInMonth : futureSold.length;
   const cost =
     opts.fixedCostMonthly + Math.floor(opts.variableCostPerNight * expectedSold) + opts.commonCost;
   return {
     revenuePast,
     revenueFutureBooked: revenueFuture,
-    revenueEstimatedEmpty: estEmptyRevenue,
-    revenueForecast: revenuePast + revenueFuture + estEmptyRevenue,
+    revenueEstimatedEmpty: Math.max(0, revenueForecast - revenuePast - revenueFuture),
+    revenueForecast,
     soldPast: pastSold.length,
     hourlyPast: past.filter((n) => n.kind === "HOURLY").length,
     bookedFuture: futureSold.length,

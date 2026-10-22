@@ -312,14 +312,20 @@ describe("5.8 Dự kiến", () => {
     });
   }
 
-  it("ngày 1: chưa có đêm nào, dùng ADR tháng trước", () => {
-    const x = f("2026-09-01", []);
-    expect(x.revenuePast).toBe(0);
-    // Đêm 1/9 đã tính là đã qua (trống), còn 29 ngày × 2 phòng
+  it("ngày 1: dự kiến = doanh thu ngày 1 × 30", () => {
+    const sep = splitNights(bk({ id: "s", checkIn: "2026-09-01", checkOut: "2026-09-02", netAmount: 500_000 }));
+    const x = f("2026-09-01", sep);
+    expect(x.revenuePast).toBe(500_000);
     expect(x.emptyRemaining).toBe(58);
-    expect(x.adrUsed).toBe(1_000_000);
-    expect(x.revenueForecast).toBe(29_000_000);
-    expect(x.costForecast).toBe(10_000_000 + 2_900_000 + 1_000_000);
+    expect(x.revenueForecast).toBe(15_000_000);
+    expect(x.costForecast).toBe(10_000_000 + 30 * 100_000 + 1_000_000);
+  });
+
+  it("tháng chưa tới: dùng doanh thu các đêm đã đặt", () => {
+    const sep = splitNights(bk({ id: "s", checkIn: "2026-09-05", checkOut: "2026-09-07", netAmount: 2_000_000 }));
+    const x = f("2026-08-20", sep);
+    expect(x.revenuePast).toBe(0);
+    expect(x.revenueForecast).toBe(2_000_000);
   });
 
   it("giữa tháng: đêm hôm nay đã tính vào doanh thu (Quy chế, Điều 1)", () => {
@@ -330,7 +336,8 @@ describe("5.8 Dự kiến", () => {
     expect(x.bookedFuture).toBe(4);
     expect(x.emptyRemaining).toBe(28 - 4);
     expect(x.adrUsed).toBe(1_200_000);
-    expect(x.revenueForecast).toBe(24_000_000 + Math.floor(24 * 0.5 * 1_200_000));
+    // Doanh thu đến hôm nay ÷ 16 ngày (gồm hôm nay) × 30 ngày
+    expect(x.revenueForecast).toBe(Math.round((16 * 1_200_000) / 16 * 30));
   });
 
   it("khách nhận phòng hôm nay: đêm nay có trong doanh thu đến hôm nay", () => {
@@ -355,6 +362,14 @@ describe("5.8 Dự kiến", () => {
     expect(x.bookedFuture).toBe(0);
     expect(x.emptyRemaining).toBe(0);
     expect(x.revenuePast).toBe(29_000_000);
+    expect(x.revenueForecast).toBe(29_000_000);
+  });
+
+  it("ví dụ ngày 22/10: 41.170.320 ÷ 22 × 31", () => {
+    const oct = splitNights(bk({ id: "o", checkIn: "2026-10-01", checkOut: "2026-10-23", netAmount: 41_170_320 }));
+    const x = forecastProperty({ month: "2026-10", today: "2026-10-22", rooms: r, nights: oct, fixedCostMonthly: 0, variableCostPerNight: 0, commonCost: 0 });
+    expect(x.revenuePast).toBe(41_170_320);
+    expect(x.revenueForecast).toBe(58_012_724);
   });
 });
 
