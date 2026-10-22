@@ -168,6 +168,29 @@ describe("Nhắc duyệt qua Lark", () => {
   });
 });
 
+describe("Thuế CĐT đặc biệt", () => {
+  const info = { phone: null, email: null, taxCode: null, address: null, bankName: null, bankAccountNo: null, bankAccountName: null, managementFeePct: null, contractStartOn: null, contractEndOn: null, contractUrl: null, payoutDay: null, active: true, note: null };
+
+  it("đặt GTGT 8%, TNCN 17% trong hồ sơ NĐT; quyết toán tính thuế, khóa sổ lưu lại mức thuế", async () => {
+    await expect(saveInvestor(db, admin, { id: "inv-a", name: "NĐT A", ...info, vatPct: 120 })).rejects.toThrow(/Thuế GTGT/);
+    await saveInvestor(db, admin, { id: "inv-a", name: "NĐT A", ...info, vatPct: 8, pitPct: 17 });
+    const s = await getSettlement(db, invA, "inv-a", "2026-10");
+    expect(s).toMatchObject({ vatPct: 8, pitPct: 17 });
+    expect(s.vat).toBe(s.totalRevenue > 0 ? Math.floor(s.totalRevenue * 0.08) : 0);
+    expect(s.totalProfit).toBe(s.operatingProfit - s.vat);
+    expect(s.investorNet).toBe(s.totalProfit - s.managementFee - s.pit);
+
+    await setCommonFinalized(db, admin, "2026-08", true);
+    const live = await getSettlement(db, invA, "inv-a", "2026-08");
+    await lockSettlement(db, admin, "inv-a", "2026-08");
+    // Đổi mức thuế sau khi khóa sổ không làm đổi tháng đã khóa
+    await saveInvestor(db, admin, { id: "inv-a", name: "NĐT A", ...info, vatPct: null, pitPct: null });
+    const locked = await getSettlement(db, invA, "inv-a", "2026-08");
+    expect(locked).toMatchObject({ status: "LOCKED", vatPct: 8, pitPct: 17, vat: live.vat, pit: live.pit, investorNet: live.investorNet, operatingProfit: live.operatingProfit });
+    expect((await getSettlement(db, invA, "inv-a", "2026-10")).vatPct).toBe(0);
+  });
+});
+
 describe("Sao kê ngân hàng", () => {
   const head: Cell[][] = [
     [null, null, "SAO KÊ CHI TIẾT TÀI KHOẢN", null, null, null, null, "NGÂN HÀNG TMCP QUÂN ĐỘI"],

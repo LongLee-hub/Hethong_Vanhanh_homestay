@@ -5,7 +5,6 @@ import { can } from "@/lib/auth/access";
 import { NoAccess } from "@/components/NoAccess";
 import { requireUser } from "@/lib/server";
 import { adjustmentDetails, commonCostBasis, getSettlement, paybackForInvestor } from "@/lib/services/settlement";
-import { feePct } from "@/lib/services/settings";
 import { visibleInvestors, visibleProperties, monthParam } from "@/lib/queries";
 import { MonthNav, sign, vnd } from "@/components/MonthNav";
 import { ActionForm } from "@/components/ActionForm";
@@ -21,12 +20,11 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
   if (!invs.length) return <div className="empty">Không có nhà đầu tư nào trong phạm vi được xem.</div>;
   const invId = invs.some((i) => i.id === sp.inv) ? sp.inv : invs[0].id;
   const s = await getSettlement(db, user, invId, month);
-  const [pb, props, adjs, basis, feeRate] = await Promise.all([
+  const [pb, props, adjs, basis] = await Promise.all([
     paybackForInvestor(db, user, invId),
     visibleProperties(db, user),
     adjustmentDetails(db, user, invId, month),
     commonCostBasis(db, month, s.status === "LOCKED"),
-    feePct(db),
   ]);
   const names = Object.fromEntries(props.map((p) => [p.id, p.name]));
   const pct = (l: (typeof s.lines)[number]) => (l.availableNights ? Math.round((l.soldNights / l.availableNights) * 1000) / 10 : 0);
@@ -40,6 +38,8 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
   const losers = s.lines.filter((l) => l.profit < 0);
   const offset = s.lines.length > 1 && losers.length > 0 && losers.length < s.lines.length;
   const loss = s.totalProfit <= 0;
+  // CĐT đặc biệt (vd Uxistay): thuế GTGT trừ trước phí quản lý, thuế TNCN trừ sau phí
+  const taxed = s.vatPct > 0 || s.pitPct > 0;
 
   // Công thức chi phí chung: tổng toàn hệ thống ÷ số phòng × số phòng của NĐT
   const myRooms = s.lines.reduce((t, l) => t + l.roomCount, 0);
@@ -64,8 +64,10 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
           <div><dt>Doanh thu (đã trừ hoa hồng OTA)</dt><dd>{vnd(s.totalRevenue)}</dd></div>
           <div><dt>Chi phí của cơ sở</dt><dd>− {vnd(s.totalDirectCost)}</dd></div>
           <div><dt>Chi phí chung được chia</dt><dd>− {vnd(s.totalCommonCost)}</dd></div>
+          {taxed && <div><dt>Thuế GTGT ({s.vatPct}% doanh thu)</dt><dd>− {vnd(s.vat)}</dd></div>}
           <div><dt>Lợi nhuận trước phí</dt><dd className={sign(s.totalProfit)}>{vnd(s.totalProfit)}</dd></div>
-          <div><dt>Phí quản lý LOCI ({feeRate}% lợi nhuận)</dt><dd>{loss ? "0 ₫" : `− ${vnd(s.managementFee)}`}</dd></div>
+          <div><dt>Phí quản lý LOCI ({s.feePct}% lợi nhuận)</dt><dd>{loss ? "0 ₫" : `− ${vnd(s.managementFee)}`}</dd></div>
+          {s.pitPct > 0 && <div><dt>Thuế TNCN ({s.pitPct}% lợi nhuận sau phí)</dt><dd>{s.pit ? `− ${vnd(s.pit)}` : "0 ₫"}</dd></div>}
           <div className="sum"><dt>{who}</dt><dd className={sign(s.investorNet)}>{vnd(s.investorNet)}</dd></div>
         </dl>
       </section>
@@ -95,7 +97,7 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
             {s.lines.map((l) => (
               <tr key={l.propertyId}><td><b>{names[l.propertyId] ?? l.propertyId}</b></td><td className="n">{l.roomCount}</td><td className="n">{pct(l)}%</td><td className="n">{vnd(l.nightRevenue)}</td><td className="n">{l.adjustments ? vnd(l.adjustments) : "—"}</td><td className="n">{vnd(l.directCost)}</td><td className="n">{vnd(l.commonCostAlloc)}</td><td className={`n ${sign(l.profit)}`}><b>{vnd(l.profit)}</b></td></tr>
             ))}
-            <tr className="total"><td colSpan={7}>Tổng lợi nhuận</td><td className={`n ${sign(s.totalProfit)}`}>{vnd(s.totalProfit)}</td></tr>
+            <tr className="total"><td colSpan={7}>Tổng lợi nhuận{taxed ? " (chưa trừ thuế)" : ""}</td><td className={`n ${sign(s.operatingProfit)}`}>{vnd(s.operatingProfit)}</td></tr>
           </tbody>
         </table></div>
         <div className="explain">
@@ -105,7 +107,13 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
               Phí quản lý tính trên tổng lợi nhuận {vnd(s.totalProfit)}, không tính riêng trên cơ sở có lãi.
             </p>
           )}
-          {loss && <p>Tổng các cơ sở {s.totalProfit < 0 ? "lỗ" : "hòa vốn"} trong tháng, nên LOCI không thu phí quản lý tháng này.</p>}
+          {loss && <p>{taxed ? "Lợi nhuận sau thuế GTGT" : "Tổng các cơ sở"} {s.totalProfit < 0 ? "lỗ" : "hòa vốn"} trong tháng, nên LOCI không thu phí quản lý tháng này.</p>}
+          {taxed && (
+            <p>
+              Thuế: GTGT {s.vatPct}% × doanh thu {vnd(s.totalRevenue)} = {vnd(s.vat)}, trừ trước khi tính phí quản lý.
+              {s.pitPct > 0 && <> TNCN {s.pitPct}% × lợi nhuận sau khi trừ hết chi phí, thuế GTGT và phí quản lý ({vnd(s.totalProfit - s.managementFee)}) = {vnd(s.pit)}.</>}
+            </p>
+          )}
           <p>
             Chi phí chung: {basis.provisional ? `tạm tính theo ${D.formatMonthVN(basis.basisMonth).toLowerCase()}, ` : ""}
             tổng {vnd(basis.total)} toàn hệ thống ÷ {basis.rooms} phòng = {perRoomTxt}/phòng × {myRooms} phòng của {mine ? "bạn" : "nhà đầu tư"}

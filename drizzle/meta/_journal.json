@@ -71,6 +71,13 @@
       "when": 1792663482617,
       "tag": "0009_payout_listing_rooms",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792673670879,
+      "tag": "0010_investor_taxes",
+      "breakpoints": true
     }
   ]
 }

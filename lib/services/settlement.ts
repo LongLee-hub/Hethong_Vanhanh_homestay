@@ -28,22 +28,24 @@ interface InvestorData {
   adjustments: D.AdjustmentLite[];
   finalized: Set<string>; // tháng đã chốt chi phí chung
   pct: number;
+  vatPct: number; // thuế GTGT của CĐT đặc biệt, 0 = không áp dụng
+  pitPct: number; // thuế TNCN của CĐT đặc biệt, 0 = không áp dụng
 }
 
-/** Phí quản lý của NĐT: mức trong hợp đồng, NĐT chưa đặt thì dùng mức chung. */
-export async function investorFeePct(db: DB, investorId: string): Promise<number> {
+/** Phí quản lý của NĐT (mức trong hợp đồng, chưa đặt thì dùng mức chung) và thuế nếu là CĐT đặc biệt. */
+export async function investorRates(db: DB, investorId: string): Promise<{ pct: number; vatPct: number; pitPct: number }> {
   const [[inv], global] = await Promise.all([
-    db.select({ pct: investors.managementFeePct }).from(investors).where(eq(investors.id, investorId)).limit(1),
+    db.select({ pct: investors.managementFeePct, vatPct: investors.vatPct, pitPct: investors.pitPct }).from(investors).where(eq(investors.id, investorId)).limit(1),
     feePct(db),
   ]);
-  return inv?.pct ?? global;
+  return { pct: inv?.pct ?? global, vatPct: inv?.vatPct ?? 0, pitPct: inv?.pitPct ?? 0 };
 }
 
 async function loadInvestorData(db: DB, investorId: string, months: string[], nightsFrom?: string): Promise<InvestorData> {
   const ms = [...months].sort();
   const expMonths = [...new Set(ms.flatMap((m) => [D.prevMonth(m), m]))];
   const invProps = db.select({ id: properties.id }).from(properties).where(eq(properties.investorId, investorId));
-  const [props, roomRows, nightRows, exps, adjs, periods, pct] = await Promise.all([
+  const [props, roomRows, nightRows, exps, adjs, periods, rates] = await Promise.all([
     db.select().from(properties).where(eq(properties.investorId, investorId)),
     allRooms(db),
     db
@@ -56,7 +58,7 @@ async function loadInvestorData(db: DB, investorId: string, months: string[], ni
       .where(and(eq(expenses.approvalStatus, "APPROVED"), inArray(expenses.month, expMonths), or(isNull(expenses.propertyId), inArray(expenses.propertyId, invProps)))),
     db.select().from(adjustments).where(and(inArray(adjustments.propertyId, invProps), inArray(adjustments.appliedMonth, ms))),
     db.select().from(monthPeriods).where(inArray(monthPeriods.month, ms)),
-    investorFeePct(db, investorId),
+    investorRates(db, investorId),
   ]);
   return {
     props,
@@ -65,7 +67,7 @@ async function loadInvestorData(db: DB, investorId: string, months: string[], ni
     expenses: exps,
     adjustments: adjs.map((a) => ({ propertyId: a.propertyId, appliedMonth: a.appliedMonth, amount: a.amount })),
     finalized: new Set(periods.filter((p) => p.commonCostsFinalized).map((p) => p.month)),
-    pct,
+    ...rates,
   };
 }
 
@@ -73,6 +75,7 @@ function settleFrom(d: InvestorData, month: string): D.InvestorSettlement {
   return D.settleInvestorMonth({
     month, propertyIds: d.props.map((p) => p.id), rooms: d.rooms, nights: d.nights, expenses: d.expenses,
     adjustments: d.adjustments, commonFinalized: d.finalized.has(month), feePct: d.pct,
+    vatPct: d.vatPct, pitPct: d.pitPct,
   });
 }
 
@@ -109,6 +112,7 @@ export async function getSettlements(db: DB, user: SessionUser, investorId: stri
         investorId, month, status: "LOCKED", lockedAt: s.lockedAt, commonProvisional: false, feePct: s.feePct ?? data.pct,
         totalRevenue: s.totalRevenue, totalDirectCost: s.totalDirectCost, totalCommonCost: s.totalCommonCost,
         totalProfit: s.totalProfit, managementFee: s.managementFee, investorNet: s.investorNet,
+        operatingProfit: s.totalProfit + s.vatAmount, vatPct: s.vatPct ?? 0, vat: s.vatAmount, pitPct: s.pitPct ?? 0, pit: s.pitAmount,
         lines: lines.map((l) => ({
           propertyId: l.propertyId, roomCount: l.roomCount, soldNights: l.soldNights, availableNights: l.availableNights,
           nightRevenue: l.revenue - l.adjustments, adjustments: l.adjustments, revenue: l.revenue, directCost: l.directCost,
@@ -179,6 +183,7 @@ export async function lockSettlement(db: DB, user: SessionUser, investorId: stri
     const values = {
       investorId, month, status: "LOCKED" as const, totalRevenue: c.totalRevenue, totalDirectCost: c.totalDirectCost, totalCommonCost: c.totalCommonCost,
       totalProfit: c.totalProfit, managementFee: c.managementFee, feePct: data.pct, investorNet: c.investorNet, lockedAt: new Date(), lockedById: user.id,
+      vatPct: c.vatPct || null, vatAmount: c.vat, pitPct: c.pitPct || null, pitAmount: c.pit,
     };
     let id = existing?.id;
     if (id) {
@@ -243,7 +248,7 @@ export async function paybackForInvestor(db: DB, user: SessionUser, investorId: 
 export async function investorForecast(db: DB, investorId: string, month: string, today = D.todayVN()) {
   // Lấy thêm đêm của tháng trước để ước công suất cho đêm còn trống
   const d = await loadInvestorData(db, investorId, [month], D.firstDay(D.prevMonth(month)));
-  const { props, rooms: roomsAll, nights, expenses: exps, adjustments: adjs, pct } = d;
+  const { props, rooms: roomsAll, nights, expenses: exps, adjustments: adjs, pct, vatPct, pitPct } = d;
   const finalized = d.finalized.has(month);
   const common = D.commonCostForMonth({ month, expenses: exps, rooms: roomsAll, finalized });
   const lines = props.map((p) => {
@@ -258,8 +263,11 @@ export async function investorForecast(db: DB, investorId: string, month: string
   const revenue = lines.reduce((s, l) => s + l.revenueForecast, 0);
   const cost = lines.reduce((s, l) => s + l.costForecast, 0);
   const profit = revenue - cost;
-  const fee = D.managementFee(profit, pct);
-  return { lines, revenueForecast: revenue, costForecast: cost, actualCost: lines.reduce((s, l) => s + l.actualCost, 0), profitForecast: profit, managementFee: fee, investorNet: profit - fee, commonProvisional: common.provisional };
+  const t = D.feeAndTaxes({ revenue, profit, feePct: pct, vatPct, pitPct });
+  return {
+    lines, revenueForecast: revenue, costForecast: cost, actualCost: lines.reduce((s, l) => s + l.actualCost, 0), profitForecast: profit,
+    managementFee: t.fee, vat: t.vat, pit: t.pit, investorNet: t.investorNet, commonProvisional: common.provisional,
+  };
 }
 
 export { desc };

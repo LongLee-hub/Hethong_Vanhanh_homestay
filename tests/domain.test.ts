@@ -5,6 +5,7 @@ import {
   RoomLite,
   allocateCommonCost,
   missingExpenseCategories,
+  feeAndTaxes,
   availableNights,
   canLockMonth,
   commonCostForMonth,
@@ -395,5 +396,21 @@ describe("Cảnh báo thiếu chi phí tháng", () => {
   it("khoản bị từ chối coi như chưa có; chưa có khoản nào thì thiếu đủ 6 loại", () => {
     const expenses = [{ propertyId: "A", categoryId: "c1", approvalStatus: "REJECTED" }];
     expect(missingExpenseCategories({ propertyIds: ["A"], expenses, categoryName })[0].missing).toEqual(["Thuê nhà", "Internet", "Vật tư tiêu hao", "Lương", "Bảo trì", "Điện nước"]);
+  });
+});
+
+describe("Thuế CĐT đặc biệt (GTGT, TNCN)", () => {
+  it("GTGT trừ trước phí quản lý, TNCN trên phần còn lại sau phí (ví dụ đã thống nhất)", () => {
+    expect(feeAndTaxes({ revenue: 100_000_000, profit: 60_000_000, feePct: 20, vatPct: 8, pitPct: 17 })).toEqual({
+      vat: 8_000_000, profitBeforeFee: 52_000_000, fee: 10_400_000, pit: 7_072_000, investorNet: 34_528_000,
+    });
+  });
+
+  it("CĐT thường không có thuế: kết quả như cũ", () => {
+    expect(feeAndTaxes({ revenue: 100_000_000, profit: 60_000_000, feePct: 20 })).toEqual({ vat: 0, profitBeforeFee: 60_000_000, fee: 12_000_000, pit: 0, investorNet: 48_000_000 });
+  });
+
+  it("lỗ sau GTGT: không phí, không TNCN, GTGT vẫn phải nộp", () => {
+    expect(feeAndTaxes({ revenue: 50_000_000, profit: 3_000_000, feePct: 20, vatPct: 8, pitPct: 17 })).toEqual({ vat: 4_000_000, profitBeforeFee: -1_000_000, fee: 0, pit: 0, investorNet: -1_000_000 });
   });
 });

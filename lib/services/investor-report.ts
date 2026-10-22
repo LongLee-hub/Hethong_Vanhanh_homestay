@@ -21,8 +21,10 @@ export interface ReportMonth {
   homestay: number; // chi phí cơ sở + chi phí chung, trừ các nhóm tách riêng
   host: number; // phí quản lý LOCI
   tax: number;
-  vat: number; // GTGT = DT × 8/108, không vượt quá CP Thuế đã nhập
-  cit: number; // TNDN = CP Thuế − GTGT
+  vat: number; // GTGT = DT × 8/108, không vượt quá CP Thuế đã nhập; CĐT đặc biệt: GTGT tự tính
+  cit: number; // TNDN = CP Thuế − GTGT; CĐT đặc biệt: TNCN tự tính
+  /** CĐT đặc biệt (vd Uxistay): thuế tự tính theo mức trong hồ sơ NĐT thay cho khoản chi loại "Thuế". null = CĐT thường. */
+  autoTax: { vatPct: number; pitPct: number } | null;
   bhxh: number;
   accounting: number;
   net: number; // về tay NĐT
@@ -80,8 +82,12 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
     const revenue = lines.reduce((t, l) => t + l.revenue, 0);
     const direct = lines.reduce((t, l) => t + l.directCost, 0);
     const common = lines.reduce((t, l) => t + l.commonCostAlloc, 0);
-    // Phí quản lý tính trên lãi của NĐT; xem riêng 1 cơ sở thì tính trên lãi của cơ sở đó.
-    const host = propertyId ? D.managementFee(lines[0].profit, s.feePct) : s.managementFee;
+    // Phí quản lý (và thuế tự tính của CĐT đặc biệt) tính trên lãi của NĐT; xem riêng 1 cơ sở thì tính trên lãi của cơ sở đó.
+    const auto = s.vatPct > 0 || s.pitPct > 0 ? { vatPct: s.vatPct, pitPct: s.pitPct } : null;
+    const t = propertyId
+      ? D.feeAndTaxes({ revenue, profit: lines[0].profit, feePct: s.feePct, vatPct: s.vatPct, pitPct: s.pitPct })
+      : { fee: s.managementFee, vat: s.vat, pit: s.pit };
+    const host = t.fee;
 
     const byCat: Record<string, number> = {};
     for (const r of catRows) {
@@ -90,26 +96,29 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
       byCat[name] = (byCat[name] ?? 0) + r.amount;
     }
     const sumWhere = (f: (n: string) => boolean) => Object.entries(byCat).filter(([n]) => f(n)).reduce((t, [, a]) => t + a, 0);
-    const tax = sumWhere(isTax);
+    // CĐT đặc biệt: CP Thuế là thuế tự tính; khoản chi loại "Thuế" nếu có vẫn trừ trong quyết toán nên để ở CP Homestay
+    const declaredTax = auto ? 0 : sumWhere(isTax);
     const bhxh = sumWhere(isBhxh);
     const accounting = sumWhere(isAccounting);
 
-    const homestayByCategory = Object.fromEntries(Object.entries(byCat).filter(([n]) => !isTax(n) && !isBhxh(n) && !isAccounting(n)));
+    const homestayByCategory = Object.fromEntries(Object.entries(byCat).filter(([n]) => (auto || !isTax(n)) && !isBhxh(n) && !isAccounting(n)));
     if (common) homestayByCategory[COMMON_ROW] = common;
 
-    const vat = Math.min(tax, Math.max(0, Math.round((revenue * 8) / 108)));
+    const vat = auto ? t.vat : Math.min(declaredTax, Math.max(0, Math.round((revenue * 8) / 108)));
+    const tax = auto ? t.vat + t.pit : declaredTax;
     return {
       month: m,
       hasData: revenue !== 0 || direct !== 0 || common !== 0,
       revenue,
-      homestay: direct + common - tax - bhxh - accounting,
+      homestay: direct + common - declaredTax - bhxh - accounting,
       host,
       tax,
       vat,
       cit: tax - vat,
+      autoTax: auto,
       bhxh,
       accounting,
-      net: revenue - direct - common - host,
+      net: revenue - direct - common - host - (auto ? tax : 0),
       homestayByCategory,
     };
   });

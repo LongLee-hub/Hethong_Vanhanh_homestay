@@ -288,8 +288,15 @@ export interface InvestorSettlement {
   totalRevenue: number;
   totalDirectCost: number;
   totalCommonCost: number;
+  /** Tổng lợi nhuận các cơ sở (doanh thu − chi phí), chưa trừ thuế. */
+  operatingProfit: number;
+  /** Lợi nhuận trước phí quản lý = operatingProfit − GTGT. CĐT không chịu thuế thì bằng operatingProfit. */
   totalProfit: number;
   managementFee: number;
+  vatPct: number;
+  vat: number;
+  pitPct: number;
+  pit: number;
   investorNet: number;
   commonProvisional: boolean;
 }
@@ -298,6 +305,24 @@ export interface InvestorSettlement {
 export function managementFee(profit: number, feePct: number): number {
   assertInt(profit, "Lợi nhuận");
   return profit > 0 ? Math.floor((profit * feePct) / 100) : 0;
+}
+
+/**
+ * Phí quản lý và thuế của CĐT đặc biệt (vd Uxistay), theo thứ tự:
+ * GTGT = vatPct % doanh thu → lợi nhuận trước phí = lợi nhuận − GTGT → phí quản lý trên lợi nhuận đó
+ * → TNCN = pitPct % phần còn lại sau phí. CĐT thường để 0 nên kết quả như cũ.
+ */
+export function feeAndTaxes(opts: { revenue: number; profit: number; feePct: number; vatPct?: number; pitPct?: number }): {
+  vat: number; profitBeforeFee: number; fee: number; pit: number; investorNet: number;
+} {
+  const { revenue, profit, feePct, vatPct = 0, pitPct = 0 } = opts;
+  assertInt(revenue, "Doanh thu");
+  const vat = revenue > 0 ? Math.floor((revenue * vatPct) / 100) : 0;
+  const profitBeforeFee = profit - vat;
+  const fee = managementFee(profitBeforeFee, feePct);
+  const afterFee = profitBeforeFee - fee;
+  const pit = afterFee > 0 ? Math.floor((afterFee * pitPct) / 100) : 0;
+  return { vat, profitBeforeFee, fee, pit, investorNet: afterFee - pit };
 }
 
 export function settleInvestorMonth(opts: {
@@ -309,8 +334,10 @@ export function settleInvestorMonth(opts: {
   adjustments: AdjustmentLite[];
   commonFinalized: boolean;
   feePct: number;
+  vatPct?: number;
+  pitPct?: number;
 }): InvestorSettlement {
-  const { month, propertyIds, rooms, nights, expenses, adjustments, commonFinalized, feePct } = opts;
+  const { month, propertyIds, rooms, nights, expenses, adjustments, commonFinalized, feePct, vatPct = 0, pitPct = 0 } = opts;
   const from = firstDay(month);
   const to = lastDay(month);
   const common = commonCostForMonth({ month, expenses, rooms, finalized: commonFinalized });
@@ -339,17 +366,23 @@ export function settleInvestorMonth(opts: {
   });
 
   const sum = (f: (l: PropertyLine) => number) => lines.reduce((s, l) => s + f(l), 0);
-  const totalProfit = sum((l) => l.profit);
-  const fee = managementFee(totalProfit, feePct);
+  const operatingProfit = sum((l) => l.profit);
+  const totalRevenue = sum((l) => l.revenue);
+  const t = feeAndTaxes({ revenue: totalRevenue, profit: operatingProfit, feePct, vatPct, pitPct });
   return {
     month,
     lines,
-    totalRevenue: sum((l) => l.revenue),
+    totalRevenue,
     totalDirectCost: sum((l) => l.directCost),
     totalCommonCost: sum((l) => l.commonCostAlloc),
-    totalProfit,
-    managementFee: fee,
-    investorNet: totalProfit - fee,
+    operatingProfit,
+    totalProfit: t.profitBeforeFee,
+    managementFee: t.fee,
+    vatPct,
+    vat: t.vat,
+    pitPct,
+    pit: t.pit,
+    investorNet: t.investorNet,
     commonProvisional: common.provisional,
   };
 }

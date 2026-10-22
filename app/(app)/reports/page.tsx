@@ -122,16 +122,19 @@ export default async function InvestorReportPage({ searchParams }: { searchParam
     );
   };
 
+  // CĐT đặc biệt: thuế tự tính GTGT + TNCN thay cho GTGT + TNDN từ khoản chi đã nhập
+  const at = cur.autoTax;
+  const taxNote = at ? "GTGT + TNCN" : "GTGT + TNDN";
   const summary: [string, number, string, string | undefined][] = [
     ["CP Homestay", cur.homestay, "vận hành cơ sở", undefined],
     ["CP Host", cur.host, "phí quản lý LOCI", "#378ADD"],
-    ["CP Thuế", cur.tax, "GTGT + TNDN", "#BA7517"],
+    ["CP Thuế", cur.tax, taxNote, "#BA7517"],
     ["CP BHXH", cur.bhxh, "bảo hiểm XH", "#7B5EA7"],
     ["CP Kế toán", cur.accounting, "dịch vụ kế toán", "#7B5EA7"],
   ];
   const spBars: [string, number, string, string][] = [
     ["CP Homestay (vận hành)", p.homestay, "#888780", "#888780"],
-    ["CP Thuế (GTGT + TNDN)", p.tax, "#BA7517", "#BA7517"],
+    [`CP Thuế (${taxNote})`, p.tax, "#BA7517", "#BA7517"],
     ["CP Host (quản lý)", p.host, "#378ADD", "#378ADD"],
     ["CP Kế toán", p.accounting, "#7B5EA7", "#7B5EA7"],
     ["CP BHXH", p.bhxh, "#7B5EA7", "#9B7EC7"],
@@ -318,8 +321,8 @@ export default async function InvestorReportPage({ searchParams }: { searchParam
             <div className={s.plGroup}>Chi phí Host</div>
             <PlRow name="Phí quản lý LOCI" color="#378ADD" pct={plBar(p.host)} amount={cur.host} />
             <div className={s.plGroup}>Chi phí Thuế</div>
-            <PlRow name="GTGT 8%" color="#BA7517" pct={plBar(p.vat)} amount={cur.vat} minor tight />
-            <PlRow name="TNDN" color="#BA7517" pct={plBar(p.cit)} amount={cur.cit} minor />
+            <PlRow name={`GTGT ${at ? at.vatPct : 8}%`} color="#BA7517" pct={plBar(p.vat)} amount={cur.vat} minor tight />
+            <PlRow name={at ? `TNCN ${at.pitPct}%` : "TNDN"} color="#BA7517" pct={plBar(p.cit)} amount={cur.cit} minor />
             <div className={s.plGroup}>BHXH &amp; Kế toán</div>
             <PlRow name="Bảo hiểm XH" color="#7B5EA7" pct={plBar(p.bhxh)} amount={cur.bhxh} minor tight />
             <PlRow name="Kế toán" color="#7B5EA7" pct={plBar(p.accounting)} amount={cur.accounting} minor />
@@ -413,7 +416,9 @@ export default async function InvestorReportPage({ searchParams }: { searchParam
           <div className={s.footnote}>
             DT tham chiếu: {tLabel(t0.month)} = {full(t0.revenue)} ₫ · {tLabel(t1.month)} = {full(t1.revenue)} ₫ · {tLabel(t2.month)} = {full(t2.revenue)} ₫<br />
             <span style={{ color: "#A32D2D" }}>■ Đỏ</span> = tỷ lệ cao hơn tháng báo cáo (bất lợi) · <span style={{ color: "#0F6E56" }}>■ Xanh</span> = tỷ lệ thấp hơn (tốt hơn)<br />
-            CP Host = phí quản lý LOCI {prop ? "tính trên lãi của riêng cơ sở này" : "tính trên tổng lãi các cơ sở"}. CP Thuế, BHXH, Kế toán lấy từ các khoản chi đã nhập đúng loại; GTGT = DT × 8/108, phần thuế còn lại tính là TNDN.
+            CP Host = phí quản lý LOCI {prop ? "tính trên lãi của riêng cơ sở này" : "tính trên tổng lãi các cơ sở"}. {at
+              ? `CP Thuế tự tính theo hồ sơ NĐT: GTGT ${at.vatPct}% × DT, TNCN ${at.pitPct}% × lợi nhuận sau phí quản lý. BHXH, Kế toán lấy từ các khoản chi đã nhập đúng loại.`
+              : "CP Thuế, BHXH, Kế toán lấy từ các khoản chi đã nhập đúng loại; GTGT = DT × 8/108, phần thuế còn lại tính là TNDN."}
           </div>
         </div>
 

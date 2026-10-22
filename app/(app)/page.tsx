@@ -40,6 +40,9 @@ export default async function Dashboard() {
   const revenue = showFee ? forecasts.reduce((s, x) => s + x.f.revenueForecast, 0) : sum("revenueForecast");
   const cost = showFee ? forecasts.reduce((s, x) => s + x.f.costForecast, 0) : sum("costForecast");
   const fee = forecasts.reduce((s, x) => s + x.f.managementFee, 0);
+  // Thuế của CĐT đặc biệt (GTGT trên doanh thu, TNCN trên lợi nhuận sau phí); CĐT thường bằng 0
+  const vat = forecasts.reduce((s, x) => s + x.f.vat, 0);
+  const pit = forecasts.reduce((s, x) => s + x.f.pit, 0);
   const headline = showFee ? forecasts.reduce((s, x) => s + x.f.investorNet, 0) : revenue - cost;
   // Tiền phòng về thẳng tài khoản NĐT; NĐT chuyển phí quản lý cho LOCI, nên con số chính là lợi nhuận sau phí chứ không phải "tiền nhận từ LOCI".
   const mine = user.role === "INVESTOR";
@@ -66,7 +69,9 @@ export default async function Dashboard() {
             <dl className="calc">
               <div><dt>Doanh thu dự kiến</dt><dd>{vnd(revenue)}</dd></div>
               <div><dt>Chi phí dự kiến</dt><dd>− {vnd(cost)}</dd></div>
+              {showFee && vat > 0 && <div><dt>Thuế GTGT</dt><dd>− {vnd(vat)}</dd></div>}
               {showFee && <div><dt>Phí quản lý {mine ? "bạn chuyển" : "chuyển"} cho LOCI</dt><dd>− {vnd(fee)}</dd></div>}
+              {showFee && pit > 0 && <div><dt>Thuế TNCN</dt><dd>− {vnd(pit)}</dd></div>}
               <div className="sum"><dt>{resultLabel}</dt><dd className={sign(headline)}>{vnd(headline)}</dd></div>
             </dl>
           </section>

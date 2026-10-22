@@ -42,6 +42,9 @@ export interface InvestorInfo {
   bankAccountNo: string | null;
   bankAccountName: string | null;
   managementFeePct: number | null; // null = dùng mức chung
+  /** CĐT đặc biệt: thuế GTGT % doanh thu, thuế TNCN % lợi nhuận sau phí. null = không áp dụng. Không truyền = giữ nguyên. */
+  vatPct?: number | null;
+  pitPct?: number | null;
   contractStartOn: string | null;
   contractEndOn: string | null;
   contractUrl: string | null;
@@ -77,7 +80,7 @@ export async function listConnections(db: DB, user: SessionUser, decrypt = decry
   return invs.map((i) => ({
     id: i.id, name: i.name, phone: i.phone, email: i.email, taxCode: i.taxCode, address: i.address,
     bankName: i.bankName, bankAccountNo: i.bankAccountNo, bankAccountName: i.bankAccountName,
-    managementFeePct: i.managementFeePct, contractStartOn: i.contractStartOn, contractEndOn: i.contractEndOn,
+    managementFeePct: i.managementFeePct, vatPct: i.vatPct, pitPct: i.pitPct, contractStartOn: i.contractStartOn, contractEndOn: i.contractEndOn,
     contractUrl: i.contractUrl, payoutDay: i.payoutDay, active: i.active, note: i.note, larkWebhookUrl: i.larkWebhookUrl, hasAccount: !!i.userId,
     accounts: accs
       .filter((a) => a.investorId === i.id)
@@ -96,6 +99,9 @@ export async function saveInvestor(db: DB, user: SessionUser, input: { id?: stri
   if (!name) throw badRequest("Nhập tên nhà đầu tư");
   const fee = input.managementFeePct;
   if (fee != null && (!Number.isFinite(fee) || fee < 0 || fee > 100)) throw badRequest("Phí quản lý phải từ 0 đến 100%");
+  for (const [v, label] of [[input.vatPct, "Thuế GTGT"], [input.pitPct, "Thuế TNCN"]] as const) {
+    if (v != null && (!Number.isFinite(v) || v < 0 || v > 100)) throw badRequest(`${label} phải từ 0 đến 100%`);
+  }
   if (input.payoutDay != null && (!Number.isInteger(input.payoutDay) || input.payoutDay < 1 || input.payoutDay > 28)) throw badRequest("Ngày chuyển tiền phải từ 1 đến 28");
   for (const d of [input.contractStartOn, input.contractEndOn]) if (d && !DATE_RE.test(d)) throw badRequest("Ngày hợp đồng không hợp lệ");
   if (input.contractStartOn && input.contractEndOn && input.contractEndOn < input.contractStartOn) throw badRequest("Ngày kết thúc hợp đồng phải sau ngày bắt đầu");
@@ -109,6 +115,9 @@ export async function saveInvestor(db: DB, user: SessionUser, input: { id?: stri
     bankName: t(input.bankName), bankAccountNo: t(input.bankAccountNo), bankAccountName: t(input.bankAccountName),
     managementFeePct: fee, contractStartOn: input.contractStartOn || null, contractEndOn: input.contractEndOn || null,
     contractUrl: t(input.contractUrl), payoutDay: input.payoutDay, active: input.active, note: t(input.note),
+    // 0% coi như không áp dụng
+    ...(input.vatPct !== undefined ? { vatPct: input.vatPct || null } : {}),
+    ...(input.pitPct !== undefined ? { pitPct: input.pitPct || null } : {}),
     // Không truyền (form cũ / test) thì giữ nguyên webhook đang lưu
     ...(input.larkWebhookUrl !== undefined ? { larkWebhookUrl: t(input.larkWebhookUrl) } : {}),
   };

@@ -149,6 +149,20 @@ describe("Doanh thu, chi phí, quyết toán (giai đoạn 2)", () => {
     const one = await buildInvestorReport(db, invA, "inv-a", "2026-08", "X");
     expect(one.rooms.rows.map((x) => x.roomId)).toEqual(["X1"]);
   });
+
+  it("báo cáo NĐT của CĐT đặc biệt: CP Thuế là GTGT + TNCN tự tính, khớp quyết toán; tháng đã khóa giữ như cũ", async () => {
+    await saveInvestor(db, admin, { ...emptyInfo, id: "inv-a", name: "NĐT A", vatPct: 8, pitPct: 17 });
+    try {
+      const r = await buildInvestorReport(db, invA, "inv-a", "2026-09", null);
+      const cur = r.months[3];
+      const st = await getSettlement(db, invA, "inv-a", "2026-09");
+      expect(cur.autoTax).toEqual({ vatPct: 8, pitPct: 17 });
+      expect(cur).toMatchObject({ vat: st.vat, cit: st.pit, tax: st.vat + st.pit, host: st.managementFee, net: st.investorNet });
+      expect(r.months[2].autoTax).toBeNull(); // 08/2026 đã khóa sổ trước khi đặt thuế
+    } finally {
+      await saveInvestor(db, admin, { ...emptyInfo, id: "inv-a", name: "NĐT A", vatPct: null, pitPct: null });
+    }
+  });
 });
 
 describe("Đồng bộ Dayladau (giả lập API)", () => {
