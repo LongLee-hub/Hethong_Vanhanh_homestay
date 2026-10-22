@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-// File cài app (PWA) phải tải được trước khi đăng nhập.
-const PUBLIC_FILES = ["/favicon.ico", "/manifest.webmanifest", "/sw.js", "/offline.html"];
+// File cài app (PWA) và trang pháp lý (Google OAuth kiểm tra) phải tải được trước khi đăng nhập.
+const PUBLIC_FILES = ["/favicon.ico", "/manifest.webmanifest", "/sw.js", "/offline.html", "/privacy", "/terms"];
 
 // Chặn sớm người chưa có cookie phiên; kiểm tra chữ ký và vai trò nằm ở máy chủ (lib/server.ts).
 export function middleware(req: NextRequest) {

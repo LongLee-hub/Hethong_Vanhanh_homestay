@@ -339,6 +339,19 @@ textarea { min-height: 72px; resize: vertical; }
 .login .btn { justify-content: center; padding-block: 14px; }
 form.inline { display: inline; }
 
+/* Trang pháp lý công khai (/privacy, /terms): Google OAuth yêu cầu, mở được khi chưa đăng nhập */
+.legal { max-width: 720px; margin: 48px auto; padding: 40px; border-radius: 24px; }
+.legal-logo { display: inline-block; text-decoration: none; }
+.legal h1 { font-size: 1.75rem; margin: 24px 0 4px; }
+.legal h2 { font-size: 1.1rem; margin: 32px 0 8px; }
+.legal p, .legal li { color: var(--ink); }
+.legal ul { padding-left: 20px; margin: 8px 0; }
+.legal li + li { margin-top: 4px; }
+.legal .meta { color: var(--muted); font-size: .9rem; margin: 0; }
+.legal blockquote { margin: 12px 0; padding: 12px 16px; background: var(--surface-2); border-radius: 12px; font-size: .9rem; }
+.legal footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); display: flex; gap: 16px; font-size: .9rem; }
+@media (max-width: 640px) { .legal { margin: 0; padding: 24px 16px; border-radius: 0; border-inline: 0; } }
+
 /* Payout Airbnb: mỗi lần chuyển tiền là một nhóm dòng, dòng đầu nhóm nền xám nhạt */
 table.payouts tbody + tbody tr.payout-head td { border-top: 8px solid var(--surface); }
 tr.payout-head td { background: var(--surface-2); border-bottom: 0; }
