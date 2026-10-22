@@ -487,3 +487,17 @@ export const airbnbPayoutItems = pgTable(
   },
   (t) => [index("payout_items_payout").on(t.payoutId), index("payout_items_code").on(t.confirmationCode), index("payout_items_booking").on(t.bookingId)],
 );
+
+/**
+ * Phòng gán tay cho một listing Airbnb trong email payout, dùng khi dòng payout chưa khớp được đơn nào.
+ * Gán theo listing nên áp dụng cho mọi payout (cũ và mới) của listing đó. Đơn đã khớp vẫn lấy phòng của đơn.
+ */
+export const airbnbListingRooms = pgTable(
+  "airbnb_listing_rooms",
+  {
+    investorId: text("investor_id").notNull().references(() => investors.id),
+    listingKey: text("listing_key").notNull(), // ID listing Airbnb; email không có ID thì là tên listing
+    roomId: text("room_id").notNull().references(() => rooms.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.investorId, t.listingKey] })],
+);

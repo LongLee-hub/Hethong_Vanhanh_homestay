@@ -7,7 +7,7 @@ import { gmailAccounts } from "@/lib/db/schema";
 import { badRequest, can, notFound } from "@/lib/auth/access";
 import { action, requireUser } from "@/lib/server";
 import * as D from "@/lib/domain";
-import { canManageGmail, deletePastedPayout, disconnectGmail, importPastedPayout, previewPastedPayout, reparsePayout, syncPayouts, validateBackfill, type BackfillOptions } from "@/lib/airbnb/payouts";
+import { assignListingRoom, canManageGmail, deletePastedPayout, disconnectGmail, importPastedPayout, previewPastedPayout, reparsePayout, syncPayouts, validateBackfill, type BackfillOptions } from "@/lib/airbnb/payouts";
 import type { ParsedPayout } from "@/lib/airbnb/payout-parser";
 import { saveGoogleSetup } from "@/lib/gmail/config";
 
@@ -88,6 +88,13 @@ export async function importPasteAction(input: { investorId: string; text: strin
   const r = await action(() => importPastedPayout(getDb(), user, input));
   revalidatePath("/payouts");
   return r.ok ? { ok: true, message: "Đã lưu payout" } : r;
+}
+
+export async function assignListingRoomAction(input: { investorId: string; listingKey: string; roomId: string | null }): Promise<State> {
+  const user = await requireUser();
+  const r = await action(() => assignListingRoom(getDb(), user, input));
+  revalidatePath("/payouts");
+  return r.ok ? { ok: true, message: input.roomId ? "Đã gán" : "Đã bỏ gán" } : r;
 }
 
 export async function deletePastedAction(payoutId: string): Promise<State> {

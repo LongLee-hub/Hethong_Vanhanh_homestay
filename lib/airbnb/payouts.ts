@@ -4,7 +4,7 @@
 import { and, desc, eq, gt, gte, ilike, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
-import { airbnbPayoutItems, airbnbPayouts, bookings, gmailAccounts, investors, properties } from "../db/schema";
+import { airbnbListingRooms, airbnbPayoutItems, airbnbPayouts, bookings, gmailAccounts, investors, properties, rooms } from "../db/schema";
 import { allowedInvestorIds, badRequest, notFound, type SessionUser } from "../auth/access";
 import { decryptSecret, encryptSecret } from "../services/settings";
 import { httpGmailClient, type GmailClient } from "../gmail/client";
@@ -453,6 +453,42 @@ export async function reparsePayout(db: DB, user: SessionUser, payoutId: string)
   await rematchBookings(db, affected);
 }
 
+// ---------- Gán phòng cho listing Airbnb ----------
+// Dòng payout chưa khớp được đơn (đơn chưa đồng bộ, hoặc không có trong Dayladau) thì chưa biết thuộc phòng nào.
+// Người quản lý Gmail của NĐT gán tay phòng cho listing Airbnb; gán một lần, áp dụng cho mọi payout của listing.
+
+/** Khóa listing của một dòng payout: ID listing Airbnb, email không có ID thì dùng tên listing. */
+export const listingKeyOf = (i: { listingId: string | null; listingName: string | null }): string | null => i.listingId?.trim() || i.listingName?.trim() || null;
+
+/** roomId = null: bỏ gán. Phòng phải thuộc một cơ sở của chính NĐT đó. */
+export async function assignListingRoom(db: DB, user: SessionUser, input: { investorId: string; listingKey: string; roomId: string | null }) {
+  await requireManage(db, user, input.investorId);
+  const listingKey = input.listingKey.trim();
+  if (!listingKey) throw badRequest("Thiếu listing Airbnb");
+  if (!input.roomId) {
+    await db.delete(airbnbListingRooms).where(and(eq(airbnbListingRooms.investorId, input.investorId), eq(airbnbListingRooms.listingKey, listingKey)));
+    return;
+  }
+  const [r] = await db
+    .select({ id: rooms.id })
+    .from(rooms)
+    .innerJoin(properties, eq(properties.id, rooms.propertyId))
+    .where(and(eq(rooms.id, input.roomId), eq(properties.investorId, input.investorId)))
+    .limit(1);
+  if (!r) throw badRequest("Phòng không thuộc nhà đầu tư này");
+  await db
+    .insert(airbnbListingRooms)
+    .values({ investorId: input.investorId, listingKey, roomId: r.id })
+    .onConflictDoUpdate({ target: [airbnbListingRooms.investorId, airbnbListingRooms.listingKey], set: { roomId: r.id } });
+}
+
+/** Phòng đã gán theo listing: khóa `${investorId}|${listingKey}` → roomId. */
+async function listingRoomMap(db: DB, investorIds: string[]): Promise<Map<string, string>> {
+  if (!investorIds.length) return new Map();
+  const rs = await db.select().from(airbnbListingRooms).where(inArray(airbnbListingRooms.investorId, investorIds));
+  return new Map(rs.map((r) => [`${r.investorId}|${r.listingKey}`, r.roomId]));
+}
+
 // ---------- Xem theo lần chuyển tiền ----------
 
 export interface PayoutLine {
@@ -469,6 +505,10 @@ export interface PayoutBookingGroup {
   guestName: string | null;
   listingName: string | null;
   listingId: string | null;
+  /** Khóa listing để gán phòng (null = email không ghi listing). */
+  listingKey: string | null;
+  /** Phòng gán tay theo listing; chỉ dùng khi chưa khớp đơn. */
+  assignedRoomId: string | null;
   checkIn: string | null;
   checkOut: string | null;
   lines: PayoutLine[];
@@ -521,7 +561,7 @@ function groupLines<T extends { item: typeof airbnbPayoutItems.$inferSelect; b: 
     if (!g) {
       g = {
         key, confirmationCode: i.confirmationCode, guestName: i.guestName, listingName: i.listingName, listingId: i.listingId,
-        checkIn: i.checkIn, checkOut: i.checkOut, lines: [], usd: 0, vnd: 0, preTaxVnd: 0, taxVnd: 0,
+        listingKey: listingKeyOf(i), assignedRoomId: null, checkIn: i.checkIn, checkOut: i.checkOut, lines: [], usd: 0, vnd: 0, preTaxVnd: 0, taxVnd: 0,
         matchStatus: i.matchStatus, diffAmount: i.diffAmount, booking: b && b.id ? (b as PayoutBookingGroup["booking"]) : null,
       };
       map.set(key, g);
@@ -563,15 +603,20 @@ export async function payoutsForMonth(db: DB, user: SessionUser, month: string, 
         .where(inArray(airbnbPayoutItems.payoutId, ps.map((x) => x.p.id)))
         .orderBy(airbnbPayoutItems.payoutId)
     : [];
+  const invIds = [...new Set(ps.map((x) => x.p.investorId))];
   const manage = new Map<string, boolean>();
-  for (const id of new Set(ps.map((x) => x.p.investorId))) manage.set(id, await canManageGmail(db, user, id));
+  for (const id of invIds) manage.set(id, await canManageGmail(db, user, id));
+  const assigned = await listingRoomMap(db, invIds);
 
-  const payouts: PayoutView[] = ps.map(({ p, investorName, email }) => ({
-    id: p.id, investorId: p.investorId, investorName, email, payoutDate: p.payoutDate, amount: p.amount, currency: p.currency,
-    payoutCode: p.payoutCode, totalUsd: p.totalUsd, exchangeRate: p.exchangeRate, subject: p.subject, parseStatus: p.parseStatus, parseNote: p.parseNote,
-    groups: groupLines(items.filter((x) => x.item.payoutId === p.id) as { item: typeof airbnbPayoutItems.$inferSelect; b: PayoutBookingGroup["booking"] }[]),
-    canManage: manage.get(p.investorId) ?? false,
-  }));
+  const payouts: PayoutView[] = ps.map(({ p, investorName, email }) => {
+    const groups = groupLines(items.filter((x) => x.item.payoutId === p.id) as { item: typeof airbnbPayoutItems.$inferSelect; b: PayoutBookingGroup["booking"] }[]);
+    for (const g of groups) if (g.listingKey) g.assignedRoomId = assigned.get(`${p.investorId}|${g.listingKey}`) ?? null;
+    return {
+      id: p.id, investorId: p.investorId, investorName, email, payoutDate: p.payoutDate, amount: p.amount, currency: p.currency,
+      payoutCode: p.payoutCode, totalUsd: p.totalUsd, exchangeRate: p.exchangeRate, subject: p.subject, parseStatus: p.parseStatus, parseNote: p.parseNote,
+      groups, canManage: manage.get(p.investorId) ?? false,
+    };
+  });
 
   // Đơn Airbnb đã nhận phòng trong tháng mà chưa thấy payout. Chỉ xét NĐT đã kết nối Gmail và các đơn
   // nhận phòng từ ngày kết nối trở đi trừ đi số ngày đọc lại lần đầu (trước đó email chưa được đọc).
@@ -616,7 +661,7 @@ export interface MonthlyPayoutRow {
   guestName: string | null;
   listingName: string | null;
   nickname: string;
-  roomId: string | null; // phòng trong hệ thống nếu đã khớp đơn
+  roomId: string | null; // phòng của đơn đã khớp; chưa khớp thì phòng gán tay theo listing
   checkIn: string | null; // kỳ ở đầy đủ
   checkOut: string | null;
   partCheckIn: string | null; // phần nằm trong tháng
@@ -657,7 +702,10 @@ export async function payoutRevenueByMonth(db: DB, user: SessionUser, month: str
 
   type Acc = Omit<MonthlyPayoutRow, "partCheckIn" | "partCheckOut" | "nights" | "totalNights">;
   const map = new Map<string, Acc>();
-  for (const { i, p, investorName, roomId } of rows) {
+  const assigned = await listingRoomMap(db, [...new Set(rows.map((r) => r.p.investorId))]);
+  for (const { i, p, investorName, roomId: bookingRoomId } of rows) {
+    const lk = listingKeyOf(i);
+    const roomId = bookingRoomId ?? (lk ? assigned.get(`${p.investorId}|${lk}`) : undefined);
     const noDates = !i.checkIn || !i.checkOut;
     const key = noDates ? `line|${i.id}` : `${p.investorId}|${i.confirmationCode ?? i.guestName}|${i.checkIn}|${i.checkOut}`;
     let a = map.get(key);

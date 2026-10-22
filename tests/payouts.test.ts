@@ -8,7 +8,7 @@ import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import type { SessionUser } from "../lib/auth/access";
 import type { GmailClient, GmailMessage } from "../lib/gmail/client";
-import { deletePastedPayout, disconnectGmail, gmailSearch, importPastedPayout, listGmailAccounts, MAX_BACKFILL, payoutRevenueByMonth, payoutsForMonth, reparsePayout, saveGmailConnection, syncPayouts, validateBackfill } from "../lib/airbnb/payouts";
+import { assignListingRoom, deletePastedPayout, disconnectGmail, gmailSearch, importPastedPayout, listGmailAccounts, MAX_BACKFILL, payoutRevenueByMonth, payoutsForMonth, reparsePayout, saveGmailConnection, syncPayouts, validateBackfill } from "../lib/airbnb/payouts";
 import { SAMPLE_PASTE, SAMPLE_VI } from "./fixtures/payout-emails";
 import { googleReady, googleSetup, loadGoogleConfig, saveGoogleSetup } from "../lib/gmail/config";
 import { redirectUri } from "../lib/gmail/oauth";
@@ -323,5 +323,31 @@ describe("Đọc lùi email payout cũ", () => {
 
   it("NĐT A không thấy payout đọc lùi của NĐT B", async () => {
     expect((await payoutsForMonth(db, invA, "2026-03", "2026-10-22")).payouts).toEqual([]);
+  });
+});
+
+describe("Gán phòng cho listing Airbnb", () => {
+  const TEXT = [
+    "Chi tiết", "Khach Moi  $40,00 USD", "Nơi lưu trú • 9/12/2026 - 9/13/2026", "VP999@Van Phuc moi (7777777777)", "HMNOBOOK01",
+    "Tổng số tiền đã chi trả: ₫1.000.000 VND", "Mã khoản chi trả: ASSIGNROOM001",
+  ].join("\n");
+  const group = async (u: SessionUser) => (await payoutsForMonth(db, u, "2026-09", "2026-10-22")).payouts.flatMap((p) => p.groups).find((g) => g.confirmationCode === "HMNOBOOK01")!;
+
+  it("dòng chưa khớp đơn gán được phòng theo listing, hiện cả ở doanh thu theo tháng; bỏ gán được", async () => {
+    await importPastedPayout(db, invA, { investorId: "inv-a", text: TEXT, receivedOn: "2026-09-14" });
+    expect(await group(invA)).toMatchObject({ booking: null, listingKey: "7777777777", assignedRoomId: null });
+
+    await assignListingRoom(db, invA, { investorId: "inv-a", listingKey: "7777777777", roomId: "X1" });
+    expect((await group(invA)).assignedRoomId).toBe("X1");
+    expect((await payoutRevenueByMonth(db, invA, "2026-09")).find((r) => r.confirmationCode === "HMNOBOOK01")?.roomId).toBe("X1");
+
+    await assignListingRoom(db, invA, { investorId: "inv-a", listingKey: "7777777777", roomId: null });
+    expect((await group(invA)).assignedRoomId).toBeNull();
+  });
+
+  it("không gán phòng của NĐT khác; kế toán và NĐT khác không gán được", async () => {
+    await expect(assignListingRoom(db, invA, { investorId: "inv-a", listingKey: "7777777777", roomId: "Z1" })).rejects.toThrow(/không thuộc/);
+    await expect(assignListingRoom(db, invB, { investorId: "inv-a", listingKey: "7777777777", roomId: "X1" })).rejects.toThrow();
+    await expect(assignListingRoom(db, acc, { investorId: "inv-a", listingKey: "7777777777", roomId: "X1" })).rejects.toThrow();
   });
 });

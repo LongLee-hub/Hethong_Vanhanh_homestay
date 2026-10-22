@@ -18,6 +18,7 @@ import { deletePastedAction, disconnectGmailAction, reparsePayoutAction, saveGoo
 import { BackfillGmail, CopyField, PastePayout } from "./setup";
 import { usd } from "@/lib/airbnb/format";
 import { RunButton } from "./run-button";
+import { AssignRoom, type RoomOption } from "./assign-room";
 
 export const maxDuration = 300;
 
@@ -58,7 +59,16 @@ function Diff({ g }: { g: PayoutBookingGroup }) {
   );
 }
 
-function PayoutRows({ p, roomName, multiInvestor }: { p: PayoutView; roomName: Record<string, string>; multiInvestor: boolean }) {
+/** Phòng của đơn đã khớp; chưa khớp thì phòng gán tay theo listing (người quản lý đổi được ngay tại đây). */
+function RoomCell({ g, p, roomName, rooms }: { g: PayoutBookingGroup; p: PayoutView; roomName: Record<string, string>; rooms: RoomOption[] }) {
+  if (g.booking) return <>{roomName[g.booking.roomId] ?? "—"}</>;
+  const nickname = extractNickname(g.listingName);
+  if (p.canManage && g.listingKey && rooms.length) return <AssignRoom investorId={p.investorId} listingKey={g.listingKey} nickname={nickname} roomId={g.assignedRoomId} rooms={rooms} />;
+  if (g.assignedRoomId) return <>{roomName[g.assignedRoomId] ?? "—"}<div className="small muted">Gán theo listing {nickname}</div></>;
+  return <span className="muted">{nickname || "—"}</span>;
+}
+
+function PayoutRows({ p, roomName, rooms, multiInvestor }: { p: PayoutView; roomName: Record<string, string>; rooms: RoomOption[]; multiInvestor: boolean }) {
   const parse = PARSE[p.parseStatus];
   return (
     <tbody>
@@ -88,7 +98,7 @@ function PayoutRows({ p, roomName, multiInvestor }: { p: PayoutView; roomName: R
       {p.groups.map((g) => (
         <tr key={g.key}>
           <td><b>{g.booking?.guestName ?? g.guestName ?? "Khách"}</b><div className="small muted">{g.confirmationCode ?? "Không có mã"}</div></td>
-          <td>{g.booking ? roomName[g.booking.roomId] ?? "—" : <span className="muted">{extractNickname(g.listingName) || "—"}</span>}</td>
+          <td><RoomCell g={g} p={p} roomName={roomName} rooms={rooms} /></td>
           <td className="num">{dates(g.checkIn, g.checkOut)}</td>
           <td>
             <ul className="pay-lines">
@@ -165,6 +175,9 @@ async function loadPayoutPage(user: SessionUser, month: string, view: "payout" |
   const invs = invIds.length ? await db.select({ id: investors.id, name: investors.name }).from(investors).where(inArray(investors.id, invIds)).orderBy(investors.name) : [];
   const manageable = (await Promise.all(invs.map(async (i) => ((await canManageGmail(db, user, i.id)) ? i : null)))).filter((i) => i !== null);
   const roomName = Object.fromEntries(props.flatMap((p) => p.rooms.map((r) => [r.id, `${p.name} · ${r.name}`])));
+  // Phòng gán được cho payout của từng NĐT: phòng thuộc cơ sở của chính NĐT đó
+  const roomsByInvestor: Record<string, RoomOption[]> = {};
+  for (const p of props) (roomsByInvestor[p.investorId] ??= []).push(...p.rooms.map((r) => ({ id: r.id, name: r.name, property: p.name })));
   const multiInvestor = invs.length > 1;
   const cfg = await loadGoogleConfig(db);
   const configured = googleReady(cfg);
@@ -173,7 +186,7 @@ async function loadPayoutPage(user: SessionUser, month: string, view: "payout" |
   const h = await headers();
   const reqOrigin = `${(h.get("x-forwarded-proto") ?? "http").split(",")[0]}://${(h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000").split(",")[0]}`;
   const callback = redirectUri(cfg, reqOrigin);
-  return { accounts, payouts, missing, monthly, invs, manageable, roomName, multiInvestor, cfg, configured, isAdmin, setup, reqOrigin, callback };
+  return { accounts, payouts, missing, monthly, invs, manageable, roomName, roomsByInvestor, multiInvestor, cfg, configured, isAdmin, setup, reqOrigin, callback };
 }
 
 export default async function Payouts({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
@@ -209,7 +222,7 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
       </>
     );
   }
-  const { accounts, payouts, missing, monthly, invs, manageable, roomName, multiInvestor, configured, setup, reqOrigin, callback } = data;
+  const { accounts, payouts, missing, monthly, invs, manageable, roomName, roomsByInvestor, multiInvestor, configured, setup, reqOrigin, callback } = data;
 
   const groups = payouts.flatMap((p) => p.groups).filter((g) => g.confirmationCode);
   const matched = groups.filter((g) => g.matchStatus === "MATCHED").length;
@@ -242,7 +255,7 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
         <header><div><h2>Đối soát theo lần chuyển tiền</h2><p>Mỗi email payout gộp nhiều đơn; mỗi đơn có dòng tiền phòng và các dòng thuế Airbnb khấu trừ. VNĐ từng dòng quy theo tỷ giá của chính email. Số lệch = tiền Airbnb đã chuyển cho đơn sau thuế (cộng mọi email) − thực nhận đang ghi trong hệ thống.</p></div></header>
         <div className="tbl-wrap"><table className="payouts">
           <thead><tr><th>Khách</th><th>Phòng</th><th>Ngày ở</th><th>Chi tiết</th><th className="n">USD</th><th className="n">VNĐ chuyển</th><th>Đối soát</th></tr></thead>
-          {payouts.map((p) => <PayoutRows key={p.id} p={p} roomName={roomName} multiInvestor={multiInvestor} />)}
+          {payouts.map((p) => <PayoutRows key={p.id} p={p} roomName={roomName} rooms={roomsByInvestor[p.investorId] ?? []} multiInvestor={multiInvestor} />)}
           {!payouts.length && <tbody><tr><td colSpan={7} className="muted small">{accounts.some((a) => a.active) ? "Chưa có email payout nào trong tháng." : "Kết nối Gmail ở bên dưới để đọc email payout."}</td></tr></tbody>}
         </table></div>
       </section>
