@@ -61,7 +61,7 @@ export default async function Dashboard() {
             <div>
               <span className="cap">{headlineLabel}</span>
               <div className={`big ${sign(headline) === "neg" ? "neg" : ""}`}>{vnd(headline)}</div>
-              <p className="note">Đây là số ước tính đến cuối tháng, gồm các đêm đã có khách và các đêm còn trống ước theo tháng trước. Số chính thức có ở mục Quyết toán sau khi khóa sổ.{showFee ? ` Tiền phòng về thẳng tài khoản ${mine ? "của bạn" : "của nhà đầu tư"}, LOCI chỉ thu phí quản lý.` : ""}</p>
+              <p className="note">Đây là số ước tính đến cuối tháng, tính bằng doanh thu đến hôm nay chia số ngày đã qua (gồm cả hôm nay) rồi nhân số ngày của tháng. Số chính thức có ở mục Quyết toán sau khi khóa sổ.{showFee ? ` Tiền phòng về thẳng tài khoản ${mine ? "của bạn" : "của nhà đầu tư"}, LOCI chỉ thu phí quản lý.` : ""}</p>
             </div>
             <dl className="calc">
               <div><dt>Doanh thu dự kiến</dt><dd>{vnd(revenue)}</dd></div>
