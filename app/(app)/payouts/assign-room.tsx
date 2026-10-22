@@ -13,6 +13,7 @@ export function AssignRoom({ investorId, listingKey, nickname, roomId, rooms }: 
   rooms: RoomOption[];
 }) {
   const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
   const [pending, start] = useTransition();
   const props = [...new Set(rooms.map((r) => r.property))];
   return (
@@ -27,6 +28,7 @@ export function AssignRoom({ investorId, listingKey, nickname, roomId, rooms }: 
           start(async () => {
             const r = await assignListingRoomAction({ investorId, listingKey, roomId: next });
             setError(r?.ok ? "" : r?.error ?? "");
+            setMsg(r?.ok ? r.message ?? "" : "");
           });
         }}
       >
@@ -35,6 +37,7 @@ export function AssignRoom({ investorId, listingKey, nickname, roomId, rooms }: 
       </select>
       <div className="small muted">{pending ? "Đang lưu…" : `Listing ${nickname || listingKey}`}</div>
       {error && <div className="err small" role="alert">{error}</div>}
+      {msg && <div className="small pos" role="status">{msg}</div>}
     </div>
   );
 }

@@ -9,6 +9,10 @@ import {
 } from "@/lib/dayladau/admin";
 import { syncBookings, type SyncSummary } from "@/lib/dayladau/sync";
 import { computeAlerts } from "@/lib/services/alerts";
+import { reconcilePayoutRevenue } from "@/lib/airbnb/payouts";
+
+/** Đơn Dayladau mới có thể trùng đơn đã dựng từ payout Airbnb: đối soát lại để hủy đơn payout, không tính doanh thu hai lần. */
+const reconcilePayouts = (db: ReturnType<typeof getDb>) => reconcilePayoutRevenue(db).catch((e) => console.error("[payout-revenue]", e));
 import * as D from "@/lib/domain";
 
 type State = { ok: boolean; error?: string } | null;
@@ -86,6 +90,7 @@ export async function syncNowAction(accountId: string, full = false): Promise<{ 
     requirePermission(user, "admin");
     const db = getDb();
     const summary = await syncBookings(db, { accountIds: [accountId], full });
+    await reconcilePayouts(db);
     await computeAlerts(db);
     revalidatePath("/dayladau");
     return { ok: summary.errors.length === 0, summary, error: summary.errors[0]?.message };
@@ -102,6 +107,7 @@ export async function syncMonthAction(month: string, accountId?: string): Promis
     if (!/^\d{4}-\d{2}$/.test(month)) return { ok: false, error: "Tháng không hợp lệ" };
     const db = getDb();
     const summary = await syncBookings(db, { month, accountIds: accountId ? [accountId] : undefined });
+    await reconcilePayouts(db);
     await computeAlerts(db);
     revalidatePath("/bookings");
     revalidatePath("/dayladau");

@@ -92,9 +92,18 @@ export async function importPasteAction(input: { investorId: string; text: strin
 
 export async function assignListingRoomAction(input: { investorId: string; listingKey: string; roomId: string | null }): Promise<State> {
   const user = await requireUser();
-  const r = await action(() => assignListingRoom(getDb(), user, input));
+  let message = input.roomId ? "Đã gán" : "Đã bỏ gán";
+  const r = await action(async () => {
+    const s = await assignListingRoom(getDb(), user, input);
+    const n = s.created + s.updated;
+    if (n) message += `, tính ${n} đơn vào doanh thu phòng`;
+    if (s.cancelled) message += `, bỏ ${s.cancelled} đơn khỏi doanh thu`;
+    if (s.skipped.length) message += `. Chưa tính ${s.skipped.length} đơn: ${s.skipped[0].reason}`;
+  });
   revalidatePath("/payouts");
-  return r.ok ? { ok: true, message: input.roomId ? "Đã gán" : "Đã bỏ gán" } : r;
+  revalidatePath("/settlements");
+  revalidatePath("/bookings");
+  return r.ok ? { ok: true, message } : r;
 }
 
 export async function deletePastedAction(payoutId: string): Promise<State> {

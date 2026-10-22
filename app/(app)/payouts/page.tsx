@@ -48,7 +48,14 @@ function Recon({ p }: { p: PayoutView }) {
 }
 
 function Diff({ g }: { g: PayoutBookingGroup }) {
-  if (!g.booking) return <span className={`pill ${MATCH.NOT_FOUND[1]}`}>{MATCH.NOT_FOUND[0]}</span>;
+  if (!g.booking) {
+    return (
+      <>
+        <span className={`pill ${MATCH.NOT_FOUND[1]}`}>{MATCH.NOT_FOUND[0]}</span>
+        {g.revenueBooked && <div className="small pos">Đã tính vào doanh thu phòng</div>}
+      </>
+    );
+  }
   return (
     <>
       <span className={`pill ${MATCH[g.matchStatus][1]}`}>{MATCH[g.matchStatus][0]}</span>

@@ -129,7 +129,8 @@ export const userPropertyAccess = pgTable(
 );
 
 // ---------- 4.2 Doanh thu ----------
-export const bookingSourceEnum = pgEnum("booking_source", ["DAYLADAU", "MANUAL"]);
+// AIRBNB_PAYOUT: đơn dựng từ email payout Airbnb chưa khớp đơn Dayladau nào, phòng gán tay theo listing (lib/airbnb/payout-bookings.ts)
+export const bookingSourceEnum = pgEnum("booking_source", ["DAYLADAU", "MANUAL", "AIRBNB_PAYOUT"]);
 export const bookingStatusEnum = pgEnum("booking_status", ["CONFIRMED", "CANCELLED"]);
 
 export const bookings = pgTable(

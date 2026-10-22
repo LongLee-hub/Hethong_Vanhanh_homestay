@@ -8,10 +8,12 @@ import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import type { SessionUser } from "../lib/auth/access";
 import type { GmailClient, GmailMessage } from "../lib/gmail/client";
-import { assignListingRoom, deletePastedPayout, disconnectGmail, gmailSearch, importPastedPayout, listGmailAccounts, MAX_BACKFILL, payoutRevenueByMonth, payoutsForMonth, reparsePayout, saveGmailConnection, syncPayouts, validateBackfill } from "../lib/airbnb/payouts";
+import { assignListingRoom, reconcilePayoutRevenue, deletePastedPayout, disconnectGmail, gmailSearch, importPastedPayout, listGmailAccounts, MAX_BACKFILL, payoutRevenueByMonth, payoutsForMonth, reparsePayout, saveGmailConnection, syncPayouts, validateBackfill } from "../lib/airbnb/payouts";
 import { SAMPLE_PASTE, SAMPLE_VI } from "./fixtures/payout-emails";
 import { googleReady, googleSetup, loadGoogleConfig, saveGoogleSetup } from "../lib/gmail/config";
 import { redirectUri } from "../lib/gmail/oauth";
+import { getSettlement } from "../lib/services/settlement";
+import { upsertBooking } from "../lib/services/bookings";
 
 let db: DB;
 const admin: SessionUser = { id: "u-admin", name: "Admin", role: "ADMIN" };
@@ -349,5 +351,52 @@ describe("Gán phòng cho listing Airbnb", () => {
     await expect(assignListingRoom(db, invA, { investorId: "inv-a", listingKey: "7777777777", roomId: "Z1" })).rejects.toThrow(/không thuộc/);
     await expect(assignListingRoom(db, invB, { investorId: "inv-a", listingKey: "7777777777", roomId: "X1" })).rejects.toThrow();
     await expect(assignListingRoom(db, acc, { investorId: "inv-a", listingKey: "7777777777", roomId: "X1" })).rejects.toThrow();
+  });
+});
+
+describe("Doanh thu phòng từ payout đã gán", () => {
+  const CODE = "HMNOBOOK01";
+  const derived = async (code = CODE) => (await db.select().from(schema.bookings).where(eq(schema.bookings.externalId, `airbnb-payout:${code}`)))[0];
+  const nightsOf = async (id: string) => db.select().from(schema.bookingNights).where(eq(schema.bookingNights.bookingId, id));
+  const group = async () => (await payoutsForMonth(db, invA, "2026-09", "2026-10-22")).payouts.flatMap((p) => p.groups).find((g) => g.confirmationCode === CODE)!;
+
+  it("gán phòng → dựng đơn payout, đêm và doanh thu tính vào phòng; bỏ gán → hủy đơn, gỡ doanh thu", async () => {
+    const s = await assignListingRoom(db, invA, { investorId: "inv-a", listingKey: "7777777777", roomId: "X1" });
+    expect(s.created + s.updated).toBe(1); // đơn payout có thể đã dựng rồi hủy ở test trước: dựng lại = cập nhật
+    const b = await derived();
+    expect(b).toMatchObject({ source: "AIRBNB_PAYOUT", roomId: "X1", propertyId: "X", status: "CONFIRMED", netAmount: 1_000_000, checkIn: "2026-09-12", checkOut: "2026-09-13", guestName: "Khach Moi" });
+    expect((await nightsOf(b.id)).map((n) => [n.nightDate, n.netAmount])).toEqual([["2026-09-12", 1_000_000]]);
+    expect((await group()).revenueBooked).toBe(true);
+    expect((await getSettlement(db, admin, "inv-a", "2026-09")).lines.find((l) => l.propertyId === "X")?.nightRevenue).toBe(1_000_000);
+    // Đơn payout không bị báo "chưa thấy payout"
+    expect((await payoutsForMonth(db, invA, "2026-09", "2026-10-22")).missing.some((m) => m.bookingId === b.id)).toBe(false);
+
+    expect(await assignListingRoom(db, invA, { investorId: "inv-a", listingKey: "7777777777", roomId: null })).toMatchObject({ cancelled: 1 });
+    expect((await derived()).status).toBe("CANCELLED");
+    expect(await nightsOf(b.id)).toEqual([]);
+    expect((await group()).revenueBooked).toBe(false);
+  });
+
+  it("phòng đã có đơn khác trùng ngày: không dựng để khỏi tính trùng", async () => {
+    await importPastedPayout(db, invA, { investorId: "inv-a", receivedOn: "2026-09-23", text: [
+      "Chi tiết", "Khach Trung  $40,00 USD", "Nơi lưu trú • 9/20/2026 - 9/22/2026", "VP999@Van Phuc moi (7777777777)", "HMCLASH001",
+      "Tổng số tiền đã chi trả: ₫1.000.000 VND", "Mã khoản chi trả: CLASHPAY001",
+    ].join("\n") });
+    await upsertBooking(db, { id: "b7", source: "DAYLADAU", externalId: "DL-b7", propertyId: "X", roomId: "X1", channel: "Booking.com", guestName: "Khac", checkIn: "2026-09-21", checkOut: "2026-09-23", netAmount: 900_000, grossAmount: 900_000, status: "CONFIRMED", rawPayload: null }, "SYNC");
+    const s = await assignListingRoom(db, invA, { investorId: "inv-a", listingKey: "7777777777", roomId: "X1" });
+    expect(s.skipped).toEqual([{ confirmationCode: "HMCLASH001", reason: "Phòng đã có đơn DL-b7 trùng ngày" }]);
+    expect((await derived("HMCLASH001"))?.status).not.toBe("CONFIRMED");
+    expect((await derived()).status).toBe("CONFIRMED"); // mã kia vẫn được dựng lại
+  });
+
+  it("đơn Dayladau có mã về sau: đối soát khớp đơn thật, đơn payout tự hủy", async () => {
+    await upsertBooking(db, { id: "b6", source: "DAYLADAU", externalId: "DL-b6", propertyId: "X", roomId: "X1", channel: "Airbnb", guestName: "Khach Moi", checkIn: "2026-09-12", checkOut: "2026-09-13", netAmount: 1_000_000, grossAmount: 1_000_000, status: "CONFIRMED", rawPayload: { ota_reservation_code: CODE } }, "SYNC");
+    const s = await reconcilePayoutRevenue(db, "2026-10-22");
+    expect(s.cancelled).toBeGreaterThanOrEqual(1);
+    expect((await derived()).status).toBe("CANCELLED");
+    const g = await group();
+    expect(g).toMatchObject({ matchStatus: "MATCHED", revenueBooked: false });
+    expect(g.booking?.id).toBe("b6");
+    expect((await getSettlement(db, admin, "inv-a", "2026-09")).lines.find((l) => l.propertyId === "X")?.nightRevenue).toBe(1_000_000 + 900_000);
   });
 });

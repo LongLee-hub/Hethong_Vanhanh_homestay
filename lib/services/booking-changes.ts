@@ -46,7 +46,7 @@ export interface BookingChange {
   reason: string | null;
   kind: ChangeKind;
   fields: ReturnType<typeof changedFields>;
-  booking: { id: string; externalId: string | null; guestName: string | null; propertyId: string; roomId: string; channel: string; checkIn: string; checkOut: string; netAmount: number | null; source: "DAYLADAU" | "MANUAL" };
+  booking: { id: string; externalId: string | null; guestName: string | null; propertyId: string; roomId: string; channel: string; checkIn: string; checkOut: string; netAmount: number | null; source: "DAYLADAU" | "MANUAL" | "AIRBNB_PAYOUT" };
 }
 
 /** Thay đổi từ `since` trở đi, mới nhất trước. Thay đổi chỉ khác số tiền bị bỏ với người không xem được số tiền. */
