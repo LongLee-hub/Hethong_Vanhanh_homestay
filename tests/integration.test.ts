@@ -150,6 +150,23 @@ describe("Doanh thu, chi phí, quyết toán (giai đoạn 2)", () => {
     expect(one.rooms.rows.map((x) => x.roomId)).toEqual(["X1"]);
   });
 
+  it("báo cáo NĐT: BHXH, Kế toán trả dưới dạng chi phí chung được tách khỏi CP Homestay", async () => {
+    await db.insert(schema.expenseCategories).values([
+      { id: "bhxh", name: "BHXH", scope: "COMMON" },
+      { id: "kt", name: "Kế toán", scope: "COMMON" },
+    ]);
+    const mk = (categoryId: string, amount: number) =>
+      createExpense(db, acc, { propertyId: null, categoryId, month: "2026-10", incurredOn: "2026-10-05", amount, description: categoryId });
+    const ids = [(await mk("bhxh", 4_000_000)).id, (await mk("kt", 2_000_000)).id, (await mk("salary", 2_000_000)).id];
+    await approveExpenses(db, admin, ids);
+    await setCommonFinalized(db, acc, "2026-10", true);
+    const cur = (await buildInvestorReport(db, invA, "inv-a", "2026-10", null)).months[3];
+    // 8tr chi phí chung ÷ 4 phòng; NĐT A có 2 phòng → 4tr, chia theo tỷ trọng loại
+    expect(cur).toMatchObject({ bhxh: 2_000_000, accounting: 1_000_000 });
+    expect(cur.homestayByCategory["Chi phí chung được chia"]).toBe(1_000_000);
+    expect(cur.homestay + cur.bhxh + cur.accounting).toBe(4_000_000);
+  });
+
   it("báo cáo NĐT của CĐT đặc biệt: CP Thuế là GTGT + TNCN tự tính, khớp quyết toán; tháng đã khóa giữ như cũ", async () => {
     await saveInvestor(db, admin, { ...emptyInfo, id: "inv-a", name: "NĐT A", vatPct: 8, pitPct: 17 });
     try {

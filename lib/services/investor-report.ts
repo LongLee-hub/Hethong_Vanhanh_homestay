@@ -1,11 +1,11 @@
 // Báo cáo NĐT theo mẫu bc-ndt: tách chi phí thành 5 nhóm (Homestay, Host, Thuế, BHXH, Kế toán)
 // cho 1 cơ sở hoặc toàn bộ cơ sở của một NĐT, kèm 3 tháng liền trước để so sánh.
-import { and, asc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
 import { bookingNights, expenseCategories, expenses, properties, rooms } from "../db/schema";
 import { notFound, type SessionUser } from "../auth/access";
-import { getSettlements } from "./settlement";
+import { commonCostBasis, getSettlements } from "./settlement";
 
 /** Loại chi phí được tách khỏi CP Homestay, nhận theo tên loại. */
 const isTax = (name: string) => /thuế/i.test(name);
@@ -65,7 +65,11 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
 
   // Chi phí theo loại của cả 4 tháng và doanh thu từng phòng: đọc song song
   const allPids = [...new Set(scoped.flatMap((x) => x.lines.map((l) => l.propertyId)))];
-  const [catRows, roomsReport] = await Promise.all([
+  // Chi phí chung được chia theo đúng căn cứ của quyết toán (tháng chưa kê khai xong: tạm tính theo tháng trước),
+  // để tách phần BHXH / Kế toán / Thuế nằm trong chi phí chung ra khỏi CP Homestay.
+  const bases = await Promise.all(list.map((m, i) => commonCostBasis(db, m, scoped[i].s.status === "LOCKED")));
+  const basisMonths = [...new Set(bases.map((b) => b.basisMonth))];
+  const [catRows, commonRows, roomsReport] = await Promise.all([
     allPids.length
       ? db
           .select({ month: expenses.month, propertyId: expenses.propertyId, name: expenseCategories.name, amount: expenses.amount })
@@ -73,6 +77,11 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
           .innerJoin(expenseCategories, eq(expenseCategories.id, expenses.categoryId))
           .where(and(eq(expenses.approvalStatus, "APPROVED"), inArray(expenses.month, list), inArray(expenses.propertyId, allPids)))
       : [],
+    db
+      .select({ month: expenses.month, name: expenseCategories.name, amount: expenses.amount })
+      .from(expenses)
+      .innerJoin(expenseCategories, eq(expenseCategories.id, expenses.categoryId))
+      .where(and(eq(expenses.approvalStatus, "APPROVED"), isNull(expenses.propertyId), inArray(expenses.month, basisMonths))),
     roomRevenue(db, propertyIds, month),
   ]);
 
@@ -96,13 +105,19 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
       byCat[name] = (byCat[name] ?? 0) + r.amount;
     }
     const sumWhere = (f: (n: string) => boolean) => Object.entries(byCat).filter(([n]) => f(n)).reduce((t, [, a]) => t + a, 0);
+    // Phần chi phí chung được chia cho các cơ sở này, tách theo tỷ trọng từng loại trong quỹ chi phí chung
+    const pool = commonRows.filter((r) => r.month === bases[i].basisMonth);
+    const poolTotal = pool.reduce((t, r) => t + r.amount, 0);
+    const commonPart = (f: (n: string) => boolean) =>
+      poolTotal ? Math.round((common * pool.filter((r) => f(r.name.normalize("NFC"))).reduce((t, r) => t + r.amount, 0)) / poolTotal) : 0;
     // CĐT đặc biệt: CP Thuế là thuế tự tính; khoản chi loại "Thuế" nếu có vẫn trừ trong quyết toán nên để ở CP Homestay
-    const declaredTax = auto ? 0 : sumWhere(isTax);
-    const bhxh = sumWhere(isBhxh);
-    const accounting = sumWhere(isAccounting);
+    const declaredTax = auto ? 0 : sumWhere(isTax) + commonPart(isTax);
+    const bhxh = sumWhere(isBhxh) + commonPart(isBhxh);
+    const accounting = sumWhere(isAccounting) + commonPart(isAccounting);
+    const commonRest = common - (auto ? 0 : commonPart(isTax)) - commonPart(isBhxh) - commonPart(isAccounting);
 
     const homestayByCategory = Object.fromEntries(Object.entries(byCat).filter(([n]) => (auto || !isTax(n)) && !isBhxh(n) && !isAccounting(n)));
-    if (common) homestayByCategory[COMMON_ROW] = common;
+    if (commonRest) homestayByCategory[COMMON_ROW] = commonRest;
 
     const vat = auto ? t.vat : Math.min(declaredTax, Math.max(0, Math.round((revenue * 8) / 108)));
     const tax = auto ? t.vat + t.pit : declaredTax;

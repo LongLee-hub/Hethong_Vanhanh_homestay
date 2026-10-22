@@ -31,8 +31,8 @@ export interface Suggestion {
 // Từ khóa → tên loại chi phí (so khớp với tên loại trong hệ thống, không phân biệt dấu). Thứ tự = độ ưu tiên.
 const RULES: [RegExp, string[]][] = [
   [/\bbhxh\b|bao hiem xa hoi/, ["BHXH"]],
-  [/luong|tro cap thoi viec|\bung luong\b|thuong nhan vien/, ["Lương"]],
   [/\bke toan\b/, ["Kế toán"]],
+  [/luong|tro cap thoi viec|\bung luong\b|thuong nhan vien/, ["Lương"]],
   [/thue nha|tien nha|tien thue nha/, ["Thuê nhà"]],
   [/bill electric|tien dien|\bevn\b|bill water|\bwater\b|tien nuoc|hawaco|nuoc sach/, ["Điện nước"]],
   [/internet|wifi|netflix|hotline|\bcuoc\b|\bfpt\b|viettel|vnpt|truyen hinh/, ["Internet"]],
