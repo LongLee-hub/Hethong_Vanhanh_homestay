@@ -15,7 +15,8 @@ import { ActionForm } from "@/components/ActionForm";
 import { NoAccess } from "@/components/NoAccess";
 import { MonthNav, vnd } from "@/components/MonthNav";
 import { deletePastedAction, disconnectGmailAction, reparsePayoutAction, saveGoogleSetupAction, syncGmailAction } from "./actions";
-import { BackfillGmail, CopyField, PastePayout, usd } from "./setup";
+import { BackfillGmail, CopyField, PastePayout } from "./setup";
+import { usd } from "@/lib/airbnb/format";
 import { RunButton } from "./run-button";
 
 export const maxDuration = 300;

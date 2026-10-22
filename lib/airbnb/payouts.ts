@@ -528,7 +528,10 @@ function groupLines<T extends { item: typeof airbnbPayoutItems.$inferSelect; b: 
     }
     g.lines.push({ id: i.id, lineType: i.lineType, usdAmount: i.usdAmount, amount: i.amount });
   }
+  // Tiền phòng trước, các khoản khác, thuế khấu trừ cuối
+  const rank = (t: string | null) => (t === "Tiền phòng" ? 0 : t && TAX_TYPES.has(t) ? 2 : 1);
   for (const g of map.values()) {
+    g.lines.sort((x, y) => rank(x.lineType) - rank(y.lineType) || (x.lineType ?? "").localeCompare(y.lineType ?? ""));
     g.usd = Math.round(g.lines.reduce((s, l) => s + (l.usdAmount ?? 0), 0) * 100) / 100;
     g.vnd = sumOrNull(g.lines.map((l) => l.amount));
     const isTax = (l: PayoutLine) => !!l.lineType && TAX_TYPES.has(l.lineType);

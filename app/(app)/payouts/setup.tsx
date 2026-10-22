@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import * as D from "@/lib/domain";
 import type { ParsedPayout } from "@/lib/airbnb/payout-parser";
+import { usd } from "@/lib/airbnb/format";
 import { backfillGmailAction, importPasteAction, previewPasteAction } from "./actions";
 
 export function CopyField({ value, label }: { value: string; label: string }) {
@@ -35,7 +36,6 @@ const STATUS: Record<ParsedPayout["status"], [string, string]> = {
   FAILED: ["Không tách được", "bad"],
 };
 
-export const usd = (n: number | null) => (n === null ? "—" : `${n < 0 ? "−" : ""}$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 const dates = (a: string | null, b: string | null) => (a && b ? `${D.formatDateVN(a)} – ${D.formatDateVN(b)}` : "—");
 
 function Preview({ p }: { p: ParsedPayout }) {
