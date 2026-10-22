@@ -1,15 +1,16 @@
 /* Bố cục: thanh điều hướng trên cùng (pill-tab) trên máy tính, thanh tab dưới trên điện thoại;
    nội dung nằm giữa trang, chữ to, thẻ bo tròn, khoảng cách theo lưới 4px. */
 :root {
-  --bg: #f7f7f7;
+  --bg: #f3f6f6;
   --surface: #ffffff;
-  --surface-2: #f2f2f2;
-  --ink: #222222;
-  --muted: #6a6a6a;
-  --line: #e4e4e4;
-  --accent: #0e6a5b;        /* ngọc bích LOCI: hành động, điều hướng */
+  --surface-2: #eaf0f0;
+  --ink: #12343b;           /* mực của logo baocaodau */
+  --muted: #5a6e72;
+  --line: #dce5e5;
+  --brand: #2e9c92;         /* xanh ngọc logo: chỉ dùng cho mảng màu và chữ lớn */
+  --accent: #1f766f;        /* xanh ngọc đậm hơn để chữ/nút đạt tương phản 4.5:1 */
   --accent-ink: #ffffff;
-  --accent-soft: #e3f1ee;
+  --accent-soft: #e3f4f2;
   --gold: #8a5d10;          /* lá vàng: số dự kiến / tạm tính */
   --gold-soft: #fbf3e2;
   --pos: #177a3c;
@@ -20,19 +21,19 @@
   --ch-airbnb: #d24a60;
   --ch-booking: #2c5ea8;
   --ch-agoda: #7a4fb0;
-  --ch-direct: #0e6a5b;
+  --ch-direct: #1f766f;
   --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.06);
-  --f-display: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --f-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-display: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-body: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --r: 16px;
   color-scheme: light;
 }
 /* Giao diện sáng là mặc định cho mọi máy; nền tối chỉ bật khi đặt data-theme="dark". */
 :root[data-theme="dark"] {
-  --bg: #0e1513; --surface: #151f1c; --surface-2: #1c2925; --ink: #e5ece9; --muted: #95a6a0; --line: #283632;
-  --accent: #3db39a; --accent-ink: #06201a; --accent-soft: #173a33; --gold: #e2b35c; --gold-soft: #3a2f19;
+  --bg: #0c1a1c; --surface: #10201f; --surface-2: #172b2b; --ink: #e4efee; --muted: #9bb3b1; --line: #24393a;
+  --brand: #2e9c92; --accent: #4fc2b6; --accent-ink: #06201d; --accent-soft: #163a37; --gold: #e2b35c; --gold-soft: #3a2f19;
   --pos: #5cc27e; --neg: #f07068; --neg-soft: #3d1c1a; --warn: #e8a445; --warn-soft: #3a2a12;
-  --ch-airbnb: #ec7488; --ch-booking: #6e9ce0; --ch-agoda: #a887d6; --ch-direct: #3db39a;
+  --ch-airbnb: #ec7488; --ch-booking: #6e9ce0; --ch-agoda: #a887d6; --ch-direct: #4fc2b6;
   --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark;
 }
 
@@ -50,9 +51,12 @@ a { color: var(--accent); }
 .app { min-height: 100%; display: flex; flex-direction: column; }
 .topnav { background: var(--surface); border-bottom: 1px solid var(--line); }
 .topnav-in { max-width: 1120px; margin-inline: auto; padding: 12px 24px 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; }
-.brand { display: flex; align-items: baseline; gap: 8px; text-decoration: none; color: var(--ink); flex: none; }
-.brand b { font-family: var(--f-display); font-size: 1.35rem; letter-spacing: .06em; color: var(--accent); }
-.brand span { color: var(--muted); font-size: .8rem; }
+.brand { display: flex; align-items: center; text-decoration: none; color: var(--ink); flex: none; border-radius: 10px; }
+.logo { display: inline-flex; align-items: center; gap: 10px; }
+.logo-mark { flex: none; display: block; }
+.logo-word { font-family: var(--f-display); font-weight: 800; font-size: 1.4rem; letter-spacing: -.035em; line-height: 1; color: var(--ink); }
+.logo-dau { color: var(--brand); }
+.logo-tld { font-weight: 500; color: var(--muted); letter-spacing: 0; }
 /* Menu nằm hàng riêng dưới logo để đủ chỗ cho mọi mục (Admin có 7 mục), không mục nào bị che */
 .tabs { display: flex; flex-wrap: wrap; gap: 2px; order: 3; flex-basis: 100%; min-width: 0; margin-left: -12px; }
 .nav-btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; text-decoration: none; color: var(--muted); font-weight: 500; white-space: nowrap; }
@@ -299,7 +303,6 @@ textarea { min-height: 72px; resize: vertical; }
   .topnav { padding-top: env(safe-area-inset-top, 0px); }
   .topnav-in { padding: 12px 16px; gap: 12px; }
   .tabs { display: none; }
-  .brand span { display: none; }
   .who { display: none; }
   .main { padding: 0 16px calc(96px + env(safe-area-inset-bottom, 0px)); }
   .tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: var(--surface); border-top: 1px solid var(--line);
@@ -329,6 +332,10 @@ textarea { min-height: 72px; resize: vertical; }
   @keyframes skel-pulse { 50% { opacity: .5; } }
 }
 .login { max-width: 400px; margin: 12vh auto; padding: 32px; display: grid; gap: 16px; border-radius: 24px; box-shadow: var(--shadow); }
+.login-head { display: grid; justify-items: center; gap: 12px; text-align: center; margin-bottom: 8px; }
+.login-head .logo { flex-direction: column; gap: 14px; }
+.login-head .logo-word { font-size: 2rem; }
+.login-head p { margin: 0; color: var(--muted); }
 .login .btn { justify-content: center; padding-block: 14px; }
 form.inline { display: inline; }
 

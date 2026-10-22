@@ -90,7 +90,7 @@ export function MobileNav({ items, primary, user }: { items: [string, string][];
 
           {install && (
             <button type="button" className="btn primary sheet-wide" onClick={async () => { await install.prompt(); setInstall(null); }}>
-              Cài LOCI lên màn hình chính
+              Cài baocaodau lên màn hình chính
             </button>
           )}
           {!install && iosHint && (

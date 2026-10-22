@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { Logo } from "@/components/Logo";
 
 export default function LoginPage() {
   const [error, setError] = useState("");
@@ -19,7 +20,10 @@ export default function LoginPage() {
   }
   return (
     <form className="login panel" onSubmit={submit}>
-      <div className="brand"><b>LOCI</b><span>Homestay Manager</span></div>
+      <div className="login-head">
+        <h1 aria-label="baocaodau.com"><Logo size={64} tld /></h1>
+        <p>Báo cáo nhanh, số liệu rõ</p>
+      </div>
       <label className="field"><span>Số điện thoại hoặc email</span><input type="text" name="login" id="login" autoComplete="username" required /></label>
       <label className="field"><span>Mật khẩu</span><input type="password" name="password" id="password" autoComplete="current-password" required /></label>
       {error && <p className="err">{error}</p>}

@@ -3,6 +3,7 @@ import { can } from "@/lib/auth/access";
 import { requireUser } from "@/lib/server";
 import { NavLinks } from "@/components/NavLinks";
 import { MobileNav } from "@/components/MobileNav";
+import { Logo } from "@/components/Logo";
 
 const ROLE_LABEL = { ADMIN: "Admin LOCI", INVESTOR: "Nhà đầu tư", MANAGER: "Quản lý cơ sở", ACCOUNTANT: "Kế toán", HOUSEKEEPER: "Buồng phòng" };
 
@@ -34,7 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <div className="app">
       <header className="topnav">
         <div className="topnav-in">
-          <Link className="brand" href="/"><b>LOCI</b><span>Homestay Manager</span></Link>
+          <Link className="brand" href="/" aria-label="baocaodau.com – về trang tổng quan"><Logo size={32} /></Link>
           <nav className="tabs"><NavLinks items={nav} /></nav>
           <div className="who">
             <span className="name"><b>{user.name}</b><span className="lbl">{ROLE_LABEL[user.role]}</span></span>
