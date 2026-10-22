@@ -51,6 +51,55 @@ npm run dev                   # http://localhost:3000
 3. `vercel.json` đã đặt 2 lịch: 06:00 giờ VN đồng bộ Dayladau + tính cảnh báo, 06:30 sinh việc dọn phòng.
 4. Chạy `npm run db:migrate` và `npm run db:seed` một lần từ máy anh (trỏ `DATABASE_URL` vào Supabase).
 
+## Triển khai server riêng (VPS)
+
+App chạy trên VPS Ubuntu bằng PM2, Caddy đứng trước lo HTTPS. Cơ sở dữ liệu và ảnh vẫn ở Supabase như cũ. Lịch đồng bộ không cần `vercel.json`: `lib/scheduler.ts` tự chạy đồng bộ Dayladau + cảnh báo + sinh việc dọn phòng mỗi 30 phút (đổi bằng `AUTO_SYNC_MINUTES`).
+
+**Chuẩn bị**
+
+- VPS Ubuntu 22.04/24.04, tối thiểu 1 vCPU, **2GB RAM** (bước build Next.js cần ~1.5GB). Chọn vùng Singapore hoặc Việt Nam, gần Supabase để trang tải nhanh.
+- Một tên miền (ví dụ `app.tenmien.vn`), tạo bản ghi **A** trỏ về IP của VPS.
+- Repo GitHub đang để private thì cần cấp quyền đọc cho VPS (deploy key hoặc personal access token).
+
+**Cài lần đầu** (SSH vào VPS bằng root):
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/LongLee-hub/Hethong_Vanhanh_homestay/main/deploy/setup-vps.sh
+bash setup-vps.sh app.tenmien.vn
+```
+
+Script cài Node.js 22, PM2, Caddy, bật tường lửa (chỉ mở 22/80/443), tạo người dùng `loci` và tải mã nguồn về `/home/loci/app`.
+
+Tạo file `.env` rồi chạy bản đầu tiên:
+
+```bash
+sudo -u loci cp /home/loci/app/.env.example /home/loci/app/.env
+sudo -u loci nano /home/loci/app/.env     # điền giống biến môi trường trên Vercel
+sudo -u loci bash /home/loci/app/deploy/deploy.sh
+```
+
+Mở `https://app.tenmien.vn` để kiểm tra. Lần đầu Caddy cần vài giây để xin chứng chỉ HTTPS.
+
+**Cập nhật bản mới** (sau khi đẩy mã lên GitHub):
+
+```bash
+sudo -u loci bash /home/loci/app/deploy/deploy.sh
+```
+
+**Xem log / khởi động lại**
+
+```bash
+sudo -u loci pm2 logs loci        # có dòng [auto-sync] mỗi lần đồng bộ
+sudo -u loci pm2 restart loci
+```
+
+Ghi chú:
+
+- PM2 chỉ chạy **1 tiến trình** (`deploy/ecosystem.config.cjs`). Đừng đổi sang cluster mode, mỗi tiến trình sẽ tự đồng bộ riêng.
+- `CRON_SECRET` vẫn cần nếu muốn gọi `/api/cron/sync` từ ngoài; nút "Đồng bộ ngay" của Admin không cần.
+- Server chạy liên tục nên có thể dùng chuỗi kết nối *Session pooler* (cổng 5432) của Supabase thay cho *Transaction pooler* (6543).
+- Khi đã chạy ổn trên VPS, xóa project trên Vercel để không chạy hai nơi cùng đồng bộ.
+
 ## Kết nối Dayladau
 
 Mỗi nhà đầu tư có **host ID** và **access token** riêng (giống `HOST_ID` / `ACCESS_TOKEN` trong script Apps Script).

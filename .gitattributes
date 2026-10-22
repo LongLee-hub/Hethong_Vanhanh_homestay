@@ -1,0 +1,3 @@
+# Script chạy trên VPS Linux phải giữ xuống dòng kiểu LF
+*.sh text eol=lf
+deploy/Caddyfile text eol=lf

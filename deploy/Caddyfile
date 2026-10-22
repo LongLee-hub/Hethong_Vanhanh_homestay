@@ -1,0 +1,7 @@
+# Caddy tự xin và gia hạn chứng chỉ HTTPS (Let's Encrypt) cho tên miền.
+# Đổi app.example.com thành tên miền thật, đã trỏ bản ghi A về IP của VPS.
+app.example.com {
+	encode zstd gzip
+	request_body max_size 12MB # ảnh hóa đơn / nghiệm thu (next.config.ts cho phép 10MB)
+	reverse_proxy 127.0.0.1:3000
+}
