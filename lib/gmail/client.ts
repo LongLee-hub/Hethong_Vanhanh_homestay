@@ -16,12 +16,35 @@ export interface GmailClient {
   getMessage(accessToken: string, id: string): Promise<GmailMessage>;
 }
 
+/**
+ * Lỗi Gmail API → câu tiếng Việt nói rõ cách sửa. Google trả JSON dạng
+ * { error: { code, message, errors: [{ reason }], details: [{ reason, metadata: { consumer: "projects/123" } }] } }.
+ */
+export function gmailErrorMessage(status: number, body: string): string {
+  let err: { message?: string; status?: string; errors?: { reason?: string }[]; details?: { reason?: string; metadata?: Record<string, string> }[] } = {};
+  try {
+    err = JSON.parse(body)?.error ?? {};
+  } catch {
+    /* không phải JSON */
+  }
+  const reasons = [err.status, ...(err.errors ?? []).map((e) => e.reason), ...(err.details ?? []).map((d) => d.reason)].filter(Boolean).join(" ");
+  const msg = err.message ?? body;
+  if (status === 403 && /SERVICE_DISABLED|accessNotConfigured/i.test(reasons + " " + msg) || /has not been used in project|is disabled/i.test(msg)) {
+    const project = (err.details ?? []).map((d) => d.metadata?.consumer?.match(/projects\/(\d+)/)?.[1]).find(Boolean) ?? msg.match(/project (\d+)/)?.[1];
+    const link = `https://console.cloud.google.com/apis/library/gmail.googleapis.com${project ? `?project=${project}` : ""}`;
+    return `Gmail API chưa được bật${project ? ` cho project Google Cloud ${project}` : ""}. Mở ${link}, bấm Enable, đợi 2–5 phút rồi bấm "Đọc thư ngay" (không cần kết nối lại).`;
+  }
+  if (status === 403 && /insufficientPermissions|SCOPE_INSUFFICIENT|insufficient.*scope/i.test(reasons + " " + msg)) {
+    return 'Chưa cấp quyền đọc Gmail. Bấm "Thêm Gmail" để kết nối lại và tích ô cho phép xem email ở màn hình Google.';
+  }
+  if (status === 401) return "Phiên đăng nhập Google hết hạn hoặc bị thu hồi, cần kết nối lại Gmail.";
+  if (status === 429 || /rateLimit|RESOURCE_EXHAUSTED/i.test(reasons)) return "Gmail đang giới hạn số lần đọc, thử lại sau vài phút.";
+  return `Gmail API lỗi ${status}: ${String(msg).replace(/\s+/g, " ").slice(0, 200)}`;
+}
+
 async function get(accessToken: string, url: string) {
   const res = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` } });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Gmail API ${res.status}: ${body.slice(0, 200)}`);
-  }
+  if (!res.ok) throw new Error(gmailErrorMessage(res.status, await res.text().catch(() => "")));
   return res.json() as Promise<any>;
 }
 

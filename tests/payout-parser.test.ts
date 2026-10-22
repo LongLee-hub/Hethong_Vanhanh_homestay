@@ -1,7 +1,7 @@
 // Bộ tách email payout Airbnb, theo Apps Script "AIRBNB PAYOUT EMAIL IMPORTER v2" của LOCI.
 import { describe, expect, it } from "vitest";
 import { allocateVnd, extractNickname, parseDateRangeStr, parseMoney, parsePayoutEmail, prorate, splitStay } from "../lib/airbnb/payout-parser";
-import { htmlToText, messageText } from "../lib/gmail/client";
+import { gmailErrorMessage, htmlToText, messageText } from "../lib/gmail/client";
 import { SAMPLE_VI } from "./fixtures/payout-emails";
 
 describe("Tách email payout Airbnb", () => {
@@ -84,5 +84,14 @@ describe("Tách email payout Airbnb", () => {
     expect(messageText({ mimeType: "multipart/alternative", parts: [{ mimeType: "text/plain", body: { data: b64("plain") } }, { mimeType: "text/html", body: { data: b64("<p>html</p>") } }] })).toBe("plain");
     expect(messageText({ mimeType: "text/html", body: { data: b64("<p>a</p><p>&#8363;1&nbsp;VND</p>") } })).toBe("a\n₫1 VND");
     expect(htmlToText("<style>x</style><div>HMABCD1234</div>")).toBe("HMABCD1234");
+  });
+
+  it("lỗi Gmail API → hướng dẫn sửa bằng tiếng Việt", () => {
+    const disabled = JSON.stringify({ error: { code: 403, message: "Gmail API has not been used in project 485731234567 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=485731234567 then retry.", errors: [{ message: "...", domain: "usageLimits", reason: "accessNotConfigured" }], status: "PERMISSION_DENIED", details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "SERVICE_DISABLED", domain: "googleapis.com", metadata: { service: "gmail.googleapis.com", consumer: "projects/485731234567" } }] } }, null, 2);
+    expect(gmailErrorMessage(403, disabled)).toBe('Gmail API chưa được bật cho project Google Cloud 485731234567. Mở https://console.cloud.google.com/apis/library/gmail.googleapis.com?project=485731234567, bấm Enable, đợi 2–5 phút rồi bấm "Đọc thư ngay" (không cần kết nối lại).');
+    const scope = JSON.stringify({ error: { code: 403, message: "Request had insufficient authentication scopes.", errors: [{ reason: "insufficientPermissions" }], status: "PERMISSION_DENIED", details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }] } });
+    expect(gmailErrorMessage(403, scope)).toMatch(/Chưa cấp quyền đọc Gmail/);
+    expect(gmailErrorMessage(401, "{}")).toMatch(/kết nối lại Gmail/);
+    expect(gmailErrorMessage(500, "Backend\nError")).toBe("Gmail API lỗi 500: Backend Error");
   });
 });

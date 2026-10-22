@@ -2,7 +2,7 @@ import { inArray } from "drizzle-orm";
 import * as D from "@/lib/domain";
 import { getDb } from "@/lib/db";
 import { investors } from "@/lib/db/schema";
-import { allowedInvestorIds, can } from "@/lib/auth/access";
+import { allowedInvestorIds, can, type SessionUser } from "@/lib/auth/access";
 import { requireUser } from "@/lib/server";
 import { monthParam, visibleProperties } from "@/lib/queries";
 import Link from "next/link";
@@ -151,12 +151,8 @@ function ViewTabs({ month, view }: { month: string; view: "payout" | "month" }) 
   );
 }
 
-export default async function Payouts({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
-  const user = await requireUser();
-  if (!can(user, "viewFee")) return <NoAccess />;
-  const sp = await searchParams;
-  const month = monthParam(sp.month);
-  const view = sp.view === "month" ? "month" : "payout";
+/** Đọc toàn bộ dữ liệu của trang; lỗi được bắt ở trang để báo cho Admin thay vì sập cả trang. */
+async function loadPayoutPage(user: SessionUser, month: string, view: "payout" | "month") {
   const db = getDb();
   const [accounts, { payouts, missing }, monthly, props, invIds] = await Promise.all([
     listGmailAccounts(db, user),
@@ -176,6 +172,43 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
   const h = await headers();
   const reqOrigin = `${(h.get("x-forwarded-proto") ?? "http").split(",")[0]}://${(h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000").split(",")[0]}`;
   const callback = redirectUri(cfg, reqOrigin);
+  return { accounts, payouts, missing, monthly, invs, manageable, roomName, multiInvestor, cfg, configured, isAdmin, setup, reqOrigin, callback };
+}
+
+export default async function Payouts({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
+  const user = await requireUser();
+  if (!can(user, "viewFee")) return <NoAccess />;
+  const sp = await searchParams;
+  const month = monthParam(sp.month);
+  const view = sp.view === "month" ? "month" : "payout";
+  const isAdmin = can(user, "admin");
+  let data;
+  try {
+    data = await loadPayoutPage(user, month, view);
+  } catch (e) {
+    // Không để cả trang sập: báo đúng lỗi cho Admin (thường gặp: máy chủ chưa chạy npm run db:migrate)
+    console.error("[payouts] lỗi đọc dữ liệu", e);
+    // drizzle bọc lỗi thành "Failed query: <câu SQL>", nguyên nhân thật nằm ở cause
+    const err = e as Error & { cause?: Error };
+    const msg = err.cause?.message ?? err.message ?? String(e);
+    return (
+      <>
+        <div className="topbar"><h1>Payout Airbnb</h1></div>
+        {sp.gmail && <div className="banner bad" role="alert">{sp.gmail}</div>}
+        <div className="banner bad" role="alert">
+          <div>
+            <b>Không đọc được dữ liệu payout.</b>
+            {isAdmin
+              ? <><div className="small" style={{ marginTop: 4, overflowWrap: "anywhere" }}>{msg.slice(0, 500)}</div>
+                  {/column|relation|does not exist|không tồn tại/i.test(msg) && <div className="small" style={{ marginTop: 4 }}>Cơ sở dữ liệu thiếu bảng hoặc cột mới: chạy <code>npm run db:migrate</code> trên máy chủ rồi tải lại trang.</div>}</>
+              : <div className="small">Báo Admin để kiểm tra.</div>}
+          </div>
+        </div>
+        <a className="btn" href={`/payouts?month=${month}`}>Tải lại</a>
+      </>
+    );
+  }
+  const { accounts, payouts, missing, monthly, invs, manageable, roomName, multiInvestor, configured, setup, reqOrigin, callback } = data;
 
   const groups = payouts.flatMap((p) => p.groups).filter((g) => g.confirmationCode);
   const matched = groups.filter((g) => g.matchStatus === "MATCHED").length;

@@ -28,7 +28,7 @@ export async function GET(req: Request) {
     const acc = await saveGmailConnection(db, user, { investorId: state.investorId, email: t.email, refreshToken: t.refreshToken });
     const sum = await syncPayouts(db, { accountIds: [acc.id] });
     const err = sum.errors[0]?.message;
-    return err ? back(`Đã kết nối ${t.email} nhưng đọc thư lỗi: ${err}`) : back(`Đã kết nối ${t.email}, đọc được ${sum.created} email payout`, true);
+    return err ? back(`Đã kết nối ${t.email} nhưng chưa đọc được thư. ${err}`) : back(`Đã kết nối ${t.email}, đọc được ${sum.created} email payout`, true);
   } catch (e) {
     if (!(e instanceof HttpError)) console.error(e);
     return back((e as Error).message || "Kết nối Gmail lỗi");
