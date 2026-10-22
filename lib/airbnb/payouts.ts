@@ -20,6 +20,10 @@ export const FIRST_SYNC_DAYS = 180;
 /** Các lần sau đọc lùi thêm vài ngày trước lần đồng bộ trước, phòng email đến trễ. */
 const OVERLAP_DAYS = 7;
 export const MAX_MESSAGES = 500;
+/** Đọc lùi: tối đa chừng này email mỗi lần bấm (vừa thời gian một yêu cầu 300 giây). */
+export const MAX_BACKFILL = 300;
+/** Số email tải song song khi đọc lùi. */
+const FETCH_CONCURRENCY = 5;
 /** Airbnb thường chuyển tiền khoảng 24 giờ sau giờ nhận phòng; quá số ngày này mà chưa có payout thì báo thiếu. */
 export const MISSING_AFTER_DAYS = 3;
 /** Đối soát lại các payout trong khoảng này (đơn có thể đồng bộ về sau email payout). */
@@ -114,7 +118,22 @@ export interface PayoutSyncSummary {
   /** Email Airbnb gửi lặp cùng một "Mã khoản chi trả" — bỏ qua. */
   duplicates: number;
   matched: number;
+  /** Số đơn (mã đặt phòng khác nhau) trong các email vừa thêm. */
+  bookings: number;
+  /** Ngày gửi tiền cũ nhất / mới nhất trong các email vừa thêm. */
+  oldest: string | null;
+  newest: string | null;
   errors: { accountId: string; email: string; message: string }[];
+}
+
+/**
+ * Đọc lùi email cũ: count = số email payout gần nhất cần đọc (mới → cũ); since/until (YYYY-MM-DD, tính cả hai đầu)
+ * giới hạn theo ngày nhận email. Email đã có trong hệ thống được bỏ qua nên bấm lại nhiều lần vẫn an toàn.
+ */
+export interface BackfillOptions {
+  count?: number;
+  since?: string;
+  until?: string;
 }
 
 export interface PayoutSyncDeps {
@@ -157,11 +176,46 @@ async function payoutCodeExists(db: DB, investorId: string, code: string | null)
 /** Các email đã lưu giữ tối đa chừng này ký tự thân thư (đủ cho email payout nhiều đơn). */
 const MAX_BODY = 60_000;
 
-export async function syncPayouts(db: DB, opts: PayoutSyncDeps & { accountIds?: string[]; investorIds?: string[] } = {}): Promise<PayoutSyncSummary> {
+/** Câu tìm Gmail và số email tối đa cho một tài khoản. */
+export function gmailSearch(a: { lastSyncedAt: Date | null }, today: string, backfill?: BackfillOptions): { query: string; max: number } {
+  if (!backfill) {
+    const since = a.lastSyncedAt ? D.addDays(D.todayVN(a.lastSyncedAt), -OVERLAP_DAYS) : D.addDays(today, -FIRST_SYNC_DAYS);
+    return { query: `${GMAIL_QUERY} after:${gmailDate(since)}`, max: MAX_MESSAGES };
+  }
+  // Gmail: after: và before: tính theo ngày, before: không gồm chính ngày đó
+  let query = GMAIL_QUERY;
+  if (backfill.since) query += ` after:${gmailDate(D.addDays(backfill.since, -1))}`;
+  if (backfill.until) query += ` before:${gmailDate(D.addDays(backfill.until, 1))}`;
+  return { query, max: Math.min(Math.max(1, Math.floor(backfill.count ?? MAX_BACKFILL)), MAX_BACKFILL) };
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export function validateBackfill(b: BackfillOptions, today: string): BackfillOptions {
+  const out: BackfillOptions = {};
+  if (b.count !== undefined) {
+    if (!Number.isInteger(b.count) || b.count < 1) throw badRequest("Số email phải là số nguyên dương");
+    if (b.count > MAX_BACKFILL) throw badRequest(`Mỗi lần đọc tối đa ${MAX_BACKFILL} email, bấm thêm lần nữa để đọc tiếp`);
+    out.count = b.count;
+  }
+  for (const k of ["since", "until"] as const) {
+    if (!b[k]) continue;
+    if (!DATE_RE.test(b[k]!)) throw badRequest("Ngày không hợp lệ");
+    if (b[k]! > today) throw badRequest("Ngày không được sau hôm nay");
+    out[k] = b[k];
+  }
+  if (out.since && out.until && out.since > out.until) throw badRequest("Từ ngày phải trước đến ngày");
+  if (out.count === undefined && !out.since) throw badRequest("Chọn số email cần đọc hoặc ngày bắt đầu");
+  return out;
+}
+
+export async function syncPayouts(db: DB, opts: PayoutSyncDeps & { accountIds?: string[]; investorIds?: string[]; backfill?: BackfillOptions } = {}): Promise<PayoutSyncSummary> {
   const client = opts.client ?? httpGmailClient;
   const decrypt = opts.decrypt ?? decryptSecret;
   const today = opts.today ?? D.todayVN();
-  const sum: PayoutSyncSummary = { accounts: 0, messages: 0, created: 0, skipped: 0, duplicates: 0, matched: 0, errors: [] };
+  const sum: PayoutSyncSummary = { accounts: 0, messages: 0, created: 0, skipped: 0, duplicates: 0, matched: 0, bookings: 0, oldest: null, newest: null, errors: [] };
+  const createdIds: string[] = [];
+  const codes = new Set<string>();
 
   const conds = [eq(gmailAccounts.active, true)];
   if (opts.accountIds?.length) conds.push(inArray(gmailAccounts.id, opts.accountIds));
@@ -180,24 +234,36 @@ export async function syncPayouts(db: DB, opts: PayoutSyncDeps & { accountIds?: 
     sum.accounts++;
     try {
       const at = await getToken(decrypt(a.refreshTokenEncrypted));
-      const since = a.lastSyncedAt ? D.addDays(D.todayVN(a.lastSyncedAt), -OVERLAP_DAYS) : D.addDays(today, -FIRST_SYNC_DAYS);
-      const ids = await client.listMessageIds(at, `${GMAIL_QUERY} after:${gmailDate(since)}`, MAX_MESSAGES);
+      const { query, max } = gmailSearch(a, today, opts.backfill);
+      const ids = await client.listMessageIds(at, query, max);
       sum.messages += ids.length;
-      const stored = new Set(
-        ids.length
-          ? (await db.select({ id: airbnbPayouts.gmailMessageId }).from(airbnbPayouts).where(and(eq(airbnbPayouts.gmailAccountId, a.id), inArray(airbnbPayouts.gmailMessageId, ids)))).map((r) => r.id)
-          : [],
-      );
-      for (const id of ids) {
-        if (stored.has(id)) continue;
-        const msg = await client.getMessage(at, id);
-        const parsed = parsePayoutEmail({ subject: msg.subject, text: msg.text, payDate: D.todayVN(msg.receivedAt) });
-        if (!parsed.isPayout) { sum.skipped++; continue; }
-        if (await payoutCodeExists(db, a.investorId, parsed.payoutCode)) { sum.duplicates++; continue; }
-        const row = await insertParsed(db, { gmailAccountId: a.id, investorId: a.investorId, gmailMessageId: msg.id, receivedAt: msg.receivedAt, subject: msg.subject, bodyText: msg.text.slice(0, MAX_BODY) }, parsed);
-        if (row) sum.created++;
+      const stored = new Set<string>();
+      for (let k = 0; k < ids.length; k += 500) {
+        const part = ids.slice(k, k + 500);
+        for (const r of await db.select({ id: airbnbPayouts.gmailMessageId }).from(airbnbPayouts).where(and(eq(airbnbPayouts.gmailAccountId, a.id), inArray(airbnbPayouts.gmailMessageId, part)))) stored.add(r.id);
       }
-      await db.update(gmailAccounts).set({ lastSyncedAt: new Date(), lastSyncStatus: "OK", lastSyncError: null }).where(eq(gmailAccounts.id, a.id));
+      const todo = ids.filter((id) => !stored.has(id));
+      // Tải vài email song song, ghi lần lượt (để kiểm tra trùng mã khoản chi trả đúng thứ tự)
+      for (let k = 0; k < todo.length; k += FETCH_CONCURRENCY) {
+        const msgs = await Promise.all(todo.slice(k, k + FETCH_CONCURRENCY).map((id) => client.getMessage(at, id)));
+        for (const msg of msgs) {
+          const parsed = parsePayoutEmail({ subject: msg.subject, text: msg.text, payDate: D.todayVN(msg.receivedAt) });
+          if (!parsed.isPayout) { sum.skipped++; continue; }
+          if (await payoutCodeExists(db, a.investorId, parsed.payoutCode)) { sum.duplicates++; continue; }
+          const row = await insertParsed(db, { gmailAccountId: a.id, investorId: a.investorId, gmailMessageId: msg.id, receivedAt: msg.receivedAt, subject: msg.subject, bodyText: msg.text.slice(0, MAX_BODY) }, parsed);
+          if (!row) continue;
+          sum.created++;
+          createdIds.push(row.id);
+          for (const i of parsed.items) if (i.confirmationCode) codes.add(`${a.investorId}|${i.confirmationCode}`);
+          if (!sum.oldest || row.payoutDate < sum.oldest) sum.oldest = row.payoutDate;
+          if (!sum.newest || row.payoutDate > sum.newest) sum.newest = row.payoutDate;
+        }
+      }
+      // Đọc lùi không dời mốc đọc hằng ngày (lần đọc thường kế tiếp vẫn lùi đủ 180 ngày nếu chưa đọc lần nào)
+      await db
+        .update(gmailAccounts)
+        .set(opts.backfill ? { lastSyncStatus: "OK", lastSyncError: null } : { lastSyncedAt: new Date(), lastSyncStatus: "OK", lastSyncError: null })
+        .where(eq(gmailAccounts.id, a.id));
     } catch (e) {
       const message = (e as Error).message.slice(0, 500);
       sum.errors.push({ accountId: a.id, email: a.email, message });
@@ -205,8 +271,12 @@ export async function syncPayouts(db: DB, opts: PayoutSyncDeps & { accountIds?: 
     }
   }
 
+  sum.bookings = codes.size;
   const investorIds = [...new Set(accounts.map((a) => a.investorId))];
-  sum.matched = await matchPayouts(db, { investorIds, today });
+  // Đọc lùi: đối soát đúng các email vừa thêm (có thể cũ hơn khoảng đối soát lại hằng ngày)
+  sum.matched = opts.backfill
+    ? createdIds.length ? await matchPayouts(db, { payoutIds: createdIds }) : 0
+    : await matchPayouts(db, { investorIds, today });
   return sum;
 }
 

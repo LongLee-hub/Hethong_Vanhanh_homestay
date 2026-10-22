@@ -15,7 +15,7 @@ import { ActionForm } from "@/components/ActionForm";
 import { NoAccess } from "@/components/NoAccess";
 import { MonthNav, vnd } from "@/components/MonthNav";
 import { deletePastedAction, disconnectGmailAction, reparsePayoutAction, saveGoogleSetupAction, syncGmailAction } from "./actions";
-import { CopyField, PastePayout, usd } from "./setup";
+import { BackfillGmail, CopyField, PastePayout, usd } from "./setup";
 import { RunButton } from "./run-button";
 
 export const maxDuration = 300;
@@ -256,10 +256,11 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
                       {a.active && a.lastSyncError && <div className="small neg">{a.lastSyncError}</div>}
                     </div>
                     {a.canManage && a.active && (
-                      <span className="row">
+                      <div className="row gmail-actions">
                         <RunButton run={syncGmailAction.bind(null, a.id)} label="Đọc thư ngay" pendingLabel="Đang đọc…" />
+                        <BackfillGmail accountId={a.id} email={a.email} today={D.todayVN()} />
                         <RunButton run={disconnectGmailAction.bind(null, a.id)} label="Ngắt kết nối" pendingLabel="Đang ngắt…" danger confirm={`Ngắt kết nối ${a.email}? Các payout đã đọc vẫn được giữ.`} />
-                      </span>
+                      </div>
                     )}
                   </div>
                 ))}

@@ -6,7 +6,8 @@ import { getDb } from "@/lib/db";
 import { gmailAccounts } from "@/lib/db/schema";
 import { badRequest, can, notFound } from "@/lib/auth/access";
 import { action, requireUser } from "@/lib/server";
-import { canManageGmail, deletePastedPayout, disconnectGmail, importPastedPayout, previewPastedPayout, reparsePayout, syncPayouts } from "@/lib/airbnb/payouts";
+import * as D from "@/lib/domain";
+import { canManageGmail, deletePastedPayout, disconnectGmail, importPastedPayout, previewPastedPayout, reparsePayout, syncPayouts, validateBackfill, type BackfillOptions } from "@/lib/airbnb/payouts";
 import type { ParsedPayout } from "@/lib/airbnb/payout-parser";
 import { saveGoogleSetup } from "@/lib/gmail/config";
 
@@ -22,6 +23,29 @@ export async function syncGmailAction(accountId: string): Promise<State> {
     const sum = await syncPayouts(db, { accountIds: [accountId] });
     if (sum.errors.length) throw badRequest(`Đọc Gmail lỗi: ${sum.errors[0].message}`);
     message = sum.created ? `Thêm ${sum.created} email payout` : "Không có email payout mới";
+  });
+  revalidatePath("/payouts");
+  return r.ok ? { ok: true, message } : r;
+}
+
+export async function backfillGmailAction(accountId: string, input: BackfillOptions): Promise<State> {
+  const user = await requireUser();
+  let message = "";
+  const r = await action(async () => {
+    const db = getDb();
+    const [a] = await db.select().from(gmailAccounts).where(eq(gmailAccounts.id, accountId)).limit(1);
+    if (!a || !(await canManageGmail(db, user, a.investorId))) throw notFound("Không tìm thấy Gmail");
+    const backfill = validateBackfill(input, D.todayVN());
+    const sum = await syncPayouts(db, { accountIds: [accountId], backfill });
+    if (sum.errors.length) throw badRequest(`Đọc Gmail lỗi: ${sum.errors[0].message}`);
+    const fmt = (d: string) => D.formatDateVN(d);
+    if (!sum.messages) message = "Không tìm thấy email payout nào trong khoảng này";
+    else if (!sum.created) message = `Đã xem ${sum.messages} email, tất cả đã có trong hệ thống`;
+    else {
+      message = `Thêm ${sum.created} email payout (${sum.bookings} đơn, ${sum.oldest === sum.newest ? fmt(sum.oldest!) : `${fmt(sum.oldest!)} – ${fmt(sum.newest!)}`}), khớp ${sum.matched} đơn trong hệ thống`;
+      if (sum.messages - sum.created > 0) message += `. Bỏ qua ${sum.messages - sum.created} email đã có hoặc gửi lặp`;
+    }
+    if (backfill.count && sum.messages >= backfill.count) message += ". Muốn đọc xa hơn: chọn Theo khoảng ngày, đặt Đến ngày trước ngày cũ nhất vừa đọc";
   });
   revalidatePath("/payouts");
   return r.ok ? { ok: true, message } : r;

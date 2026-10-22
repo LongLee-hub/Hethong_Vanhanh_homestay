@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import * as D from "@/lib/domain";
 import type { ParsedPayout } from "@/lib/airbnb/payout-parser";
-import { importPasteAction, previewPasteAction } from "./actions";
+import { backfillGmailAction, importPasteAction, previewPasteAction } from "./actions";
 
 export function CopyField({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
@@ -115,6 +115,59 @@ export function PastePayout({ investors, today }: { investors: { id: string; nam
             {pending ? "Đang lưu…" : "Lưu payout"}
           </button>
         )}
+        {msg && <span className={msg.ok ? "small pos" : "err"} role={msg.ok ? "status" : "alert"}>{msg.text}</span>}
+      </div>
+    </form>
+  );
+}
+
+const COUNTS = [50, 100, 200] as const;
+
+/** Đọc lùi email payout cũ của một Gmail: theo số email gần nhất hoặc theo khoảng ngày. */
+export function BackfillGmail({ accountId, email, today }: { accountId: string; email: string; today: string }) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<number | "range">(100);
+  const [since, setSince] = useState("");
+  const [until, setUntil] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pending, start] = useTransition();
+
+  if (!open) {
+    return <button type="button" className="btn sm" onClick={() => setOpen(true)} aria-expanded={false}>Đọc email cũ</button>;
+  }
+  return (
+    <form
+      className="backfill"
+      aria-label={`Đọc email cũ của ${email}`}
+      onSubmit={(e) => {
+        e.preventDefault();
+        setMsg(null);
+        start(async () => {
+          const r = await backfillGmailAction(accountId, mode === "range" ? { since, until: until || undefined } : { count: mode });
+          setMsg(r?.ok ? { ok: true, text: r.message ?? "Đã đọc xong" } : { ok: false, text: r?.error ?? "Đọc không được" });
+        });
+      }}
+    >
+      <div className="backfill-head">
+        <b>Đọc email payout cũ</b>
+        <button type="button" className="btn sm" onClick={() => { setOpen(false); setMsg(null); }} disabled={pending}>Đóng</button>
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>Đọc lùi từ email mới nhất. Email đã có trong hệ thống được bỏ qua nên bấm lại vẫn không ghi trùng. Mỗi email payout thường gồm vài đơn.</p>
+      <div className="chips" role="radiogroup" aria-label="Phạm vi đọc">
+        {COUNTS.map((n) => (
+          <button key={n} type="button" role="radio" className="chip" aria-checked={mode === n} aria-pressed={mode === n} onClick={() => setMode(n)} disabled={pending}>{n} email gần nhất</button>
+        ))}
+        <button type="button" role="radio" className="chip" aria-checked={mode === "range"} aria-pressed={mode === "range"} onClick={() => setMode("range")} disabled={pending}>Theo khoảng ngày</button>
+      </div>
+      {mode === "range" && (
+        <div className="row">
+          <label className="field"><span>Từ ngày</span><input type="date" value={since} max={until || today} onChange={(e) => setSince(e.target.value)} required disabled={pending} /></label>
+          <label className="field"><span>Đến ngày (để trống = hôm nay)</span><input type="date" value={until} min={since || undefined} max={today} onChange={(e) => setUntil(e.target.value)} disabled={pending} /></label>
+        </div>
+      )}
+      <div className="row">
+        <button className="btn primary" disabled={pending || (mode === "range" && !since)}>{pending ? "Đang đọc email…" : "Bắt đầu đọc"}</button>
+        {pending && <span className="small muted" role="status">Có thể mất 1–2 phút với 100–200 email, đừng đóng trang.</span>}
         {msg && <span className={msg.ok ? "small pos" : "err"} role={msg.ok ? "status" : "alert"}>{msg.text}</span>}
       </div>
     </form>

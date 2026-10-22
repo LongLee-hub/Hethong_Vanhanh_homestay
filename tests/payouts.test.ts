@@ -8,7 +8,7 @@ import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import type { SessionUser } from "../lib/auth/access";
 import type { GmailClient, GmailMessage } from "../lib/gmail/client";
-import { deletePastedPayout, disconnectGmail, importPastedPayout, listGmailAccounts, payoutRevenueByMonth, payoutsForMonth, reparsePayout, saveGmailConnection, syncPayouts } from "../lib/airbnb/payouts";
+import { deletePastedPayout, disconnectGmail, gmailSearch, importPastedPayout, listGmailAccounts, MAX_BACKFILL, payoutRevenueByMonth, payoutsForMonth, reparsePayout, saveGmailConnection, syncPayouts, validateBackfill } from "../lib/airbnb/payouts";
 import { SAMPLE_PASTE, SAMPLE_VI } from "./fixtures/payout-emails";
 import { googleReady, googleSetup, loadGoogleConfig, saveGoogleSetup } from "../lib/gmail/config";
 import { redirectUri } from "../lib/gmail/oauth";
@@ -235,5 +235,93 @@ describe("Dán email payout trên web", () => {
     await deletePastedPayout(db, invA, pasted.id);
     expect((await db.select().from(schema.airbnbPayoutItems).where(eq(schema.airbnbPayoutItems.payoutId, pasted.id)))).toEqual([]);
     expect((await payoutsForMonth(db, invA, "2026-10", "2026-10-21")).missing.map((m) => m.bookingId)).toEqual(["b3"]);
+  });
+});
+
+describe("Đọc lùi email payout cũ", () => {
+  /** n email payout, mỗi email 1 đơn, mới nhất trước (như Gmail trả về); email thứ k nhận lùi k ngày từ 20/10/2026. */
+  function oldEmails(n: number) {
+    return Array.from({ length: n }, (_, k) => {
+      const day = new Date(Date.UTC(2026, 9, 20 - k, 3));
+      const d = `${day.getUTCDate()}/${day.getUTCMonth() + 1}/${day.getUTCFullYear()}`;
+      const code = `HMOLD${String(k).padStart(5, "0")}`;
+      return mail(`old-${k}`, "Chúng tôi đã gửi cho bạn một khoản chi trả", [
+        "Chi tiết", `Khach ${k}  $10,00 USD`, `Nơi lưu trú • ${d} - ${d}`, "NTG101@Nguyen Tu Gian (2222222222)", code,
+        "Tổng số tiền đã chi trả: ₫250.000 VND", `Mã khoản chi trả: OLDPAYOUT${String(k).padStart(5, "0")}`,
+      ], day.toISOString());
+    });
+  }
+  function fakeOld(messages: GmailMessage[]) {
+    const queries: { query: string; max: number }[] = [];
+    let fetched = 0;
+    const client: GmailClient = {
+      async listMessageIds(_t, query, max) {
+        queries.push({ query, max });
+        const after = query.match(/after:(\S+)/)?.[1].replace(/\//g, "-");
+        const before = query.match(/before:(\S+)/)?.[1].replace(/\//g, "-");
+        return messages
+          .filter((m) => { const d = m.receivedAt.toISOString().slice(0, 10); return (!after || d > after) && (!before || d < before); })
+          .slice(0, max).map((m) => m.id);
+      },
+      async getMessage(_t, id) { fetched++; return messages.find((m) => m.id === id)!; },
+    };
+    return { client, queries, fetched: () => fetched };
+  }
+  const tokenB = async () => "access-b";
+  let accId = "";
+
+  beforeAll(async () => {
+    accId = (await saveGmailConnection(db, admin, { investorId: "inv-b", email: "b@gmail.com", refreshToken: "refresh-b" }, plain)).id;
+  });
+
+  it("kiểm tra đầu vào: số email, ngày, giới hạn mỗi lần", () => {
+    expect(() => validateBackfill({}, "2026-10-22")).toThrow(/Chọn số email/);
+    expect(() => validateBackfill({ count: MAX_BACKFILL + 1 }, "2026-10-22")).toThrow(/tối đa/);
+    expect(() => validateBackfill({ since: "2026-10-10", until: "2026-10-01" }, "2026-10-22")).toThrow(/trước đến ngày/);
+    expect(() => validateBackfill({ since: "2026-11-01" }, "2026-10-22")).toThrow(/sau hôm nay/);
+    expect(validateBackfill({ count: 100 }, "2026-10-22")).toEqual({ count: 100 });
+  });
+
+  it("câu tìm Gmail: đọc thường lùi từ mốc lần trước; đọc lùi không giới hạn ngày hoặc theo khoảng tính cả hai đầu", () => {
+    expect(gmailSearch({ lastSyncedAt: new Date("2026-10-20T03:00:00Z") }, "2026-10-22").query).toMatch(/after:2026\/10\/13$/);
+    expect(gmailSearch({ lastSyncedAt: new Date() }, "2026-10-22", { count: 100 })).toEqual({ query: expect.not.stringMatching(/after:|before:/), max: 100 });
+    expect(gmailSearch({ lastSyncedAt: null }, "2026-10-22", { since: "2026-05-01", until: "2026-05-31" }).query).toMatch(/after:2026\/04\/30 before:2026\/06\/01$/);
+  });
+
+  it("đọc 50 email gần nhất: ghi đủ đơn, không dời mốc đọc hằng ngày", async () => {
+    const emails = oldEmails(120);
+    const g = fakeOld(emails);
+    const sum = await syncPayouts(db, { client: g.client, accessToken: tokenB, decrypt: plain, accountIds: [accId], backfill: { count: 50 }, today: "2026-10-22" });
+    expect(sum).toMatchObject({ messages: 50, created: 50, bookings: 50, oldest: "2026-09-01", newest: "2026-10-20", errors: [] });
+    expect(g.queries[0].max).toBe(50);
+    const [acc] = await db.select().from(schema.gmailAccounts).where(eq(schema.gmailAccounts.id, accId));
+    expect(acc).toMatchObject({ lastSyncedAt: null, lastSyncStatus: "OK" });
+  });
+
+  it("bấm lại 100 email: bỏ qua 50 email đã có, chỉ tải 50 email mới", async () => {
+    const g = fakeOld(oldEmails(120));
+    const sum = await syncPayouts(db, { client: g.client, accessToken: tokenB, decrypt: plain, accountIds: [accId], backfill: { count: 100 }, today: "2026-10-22" });
+    expect(sum).toMatchObject({ messages: 100, created: 50, oldest: "2026-07-13", newest: "2026-08-31" });
+    expect(g.fetched()).toBe(50);
+    expect((await db.select().from(schema.airbnbPayouts).where(eq(schema.airbnbPayouts.investorId, "inv-b"))).length).toBe(100);
+  });
+
+  it("theo khoảng ngày: đọc được email cũ hơn 180 ngày và đối soát luôn", async () => {
+    const old = mail("very-old", "Chúng tôi đã gửi cho bạn một khoản chi trả", [
+      "Chi tiết", "Nguyen Van An  $80,00 USD", "Nơi lưu trú • 3/3/2026 - 5/3/2026", "NTG101@Nguyen Tu Gian (2222222222)", "HMZZZZ0000",
+      "Tổng số tiền đã chi trả: ₫1.980.000 VND", "Mã khoản chi trả: VERYOLDPAY001",
+    ], "2026-03-06T03:00:00Z");
+    await db.insert(schema.bookings).values({ id: "b5", source: "DAYLADAU", externalId: "DL-b5", propertyId: "Z", roomId: "Z1", channel: "Airbnb", guestName: "Nguyen Van An", checkIn: "2026-03-03", checkOut: "2026-03-05", netAmount: 1_980_000, grossAmount: 1_980_000, status: "CONFIRMED", rawPayload: { ota_reservation_code: "HMZZZZ0000" } });
+    const g = fakeOld([...oldEmails(120), old]);
+    const sum = await syncPayouts(db, { client: g.client, accessToken: tokenB, decrypt: plain, accountIds: [accId], backfill: { since: "2026-03-01", until: "2026-03-31" }, today: "2026-10-22" });
+    expect(sum).toMatchObject({ messages: 1, created: 1, matched: 1 });
+    expect(g.queries[0].query).toMatch(/after:2026\/02\/28 before:2026\/04\/01/);
+    const [p] = (await payoutsForMonth(db, invB, "2026-03", "2026-10-22")).payouts;
+    expect(p.groups[0]).toMatchObject({ confirmationCode: "HMZZZZ0000", matchStatus: "MATCHED" });
+    expect(p.groups[0].booking?.id).toBe("b5");
+  });
+
+  it("NĐT A không thấy payout đọc lùi của NĐT B", async () => {
+    expect((await payoutsForMonth(db, invA, "2026-03", "2026-10-22")).payouts).toEqual([]);
   });
 });
