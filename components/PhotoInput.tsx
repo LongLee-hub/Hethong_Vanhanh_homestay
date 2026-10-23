@@ -1,6 +1,7 @@
 "use client";
 // Ô chọn ảnh: nén về tối đa 1600px JPEG trước khi gửi (Đặc tả mục 3: nén trước khi tải lên).
-export function PhotoInput({ name, required, label }: { name: string; required?: boolean; label: string }) {
+// camera: mở thẳng máy ảnh trên điện thoại; mặc định cho chọn ảnh có sẵn trong thư viện.
+export function PhotoInput({ name, required, label, camera }: { name: string; required?: boolean; label: string; camera?: boolean }) {
   async function onChange(e: React.ChangeEvent<HTMLInputElement>) {
     const input = e.currentTarget;
     const f = input.files?.[0];
@@ -24,7 +25,7 @@ export function PhotoInput({ name, required, label }: { name: string; required?:
   return (
     <label className="field full">
       <span>{label}</span>
-      <input type="file" name={name} id={name} accept="image/*" capture="environment" required={required} onChange={onChange} />
+      <input type="file" name={name} id={name} accept="image/*" capture={camera ? "environment" : undefined} required={required} onChange={onChange} />
     </label>
   );
 }

@@ -55,7 +55,7 @@ export default async function Tasks() {
               <p className="small muted">{t.photoUrls.length} ảnh nghiệm thu</p>
               {t.status !== "DONE" && (
                 <div className="grid g2">
-                  <ActionForm action={taskPhotoAction} submit="Tải ảnh nghiệm thu" okText="Đã thêm ảnh"><input type="hidden" name="taskId" value={t.id} /><PhotoInput name="photo" label="Ảnh" required /></ActionForm>
+                  <ActionForm action={taskPhotoAction} submit="Tải ảnh nghiệm thu" okText="Đã thêm ảnh"><input type="hidden" name="taskId" value={t.id} /><PhotoInput name="photo" label="Ảnh" required camera /></ActionForm>
                   <ActionForm action={taskStatusAction} submit={t.status === "TODO" ? "Bắt đầu" : "Hoàn thành"} className="row">
                     <input type="hidden" name="taskId" value={t.id} /><input type="hidden" name="status" value={t.status === "TODO" ? "IN_PROGRESS" : "DONE"} />
                   </ActionForm>
