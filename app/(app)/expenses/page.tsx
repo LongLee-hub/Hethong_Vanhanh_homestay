@@ -102,7 +102,7 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
             {rows.map((e) => (
               <tr key={e.id}>
                 <td className="num">{D.formatDateVN(e.incurredOn)}{ranged && e.month !== e.incurredOn.slice(0, 7) && <div className="hint">tính T{Number(e.month.slice(5))}/{e.month.slice(0, 4)}</div>}</td>
-                <td>{e.propertyId ? name[e.propertyId] : <span className="muted">Chi phí chung</span>}</td><td>{catName[e.categoryId]}</td>
+                <td>{e.propertyId ? name[e.propertyId] : <span className="muted">Chi phí chung (Unix)</span>}</td><td>{catName[e.categoryId]}</td>
                 <td><Link href={`/expenses/${e.id}`}>{e.description}</Link>{e.bankTransactionId && <span className="hint"> · sao kê</span>}{e.approvalStatus === "REJECTED" && e.rejectReason && <div className="hint">Lý do: {e.rejectReason}</div>}</td>
                 <td className="n"><b>{vnd(e.amount)}</b></td>
                 <td><ApprovalPill status={e.approvalStatus} /></td>

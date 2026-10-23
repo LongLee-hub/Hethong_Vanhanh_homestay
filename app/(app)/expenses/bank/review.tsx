@@ -78,7 +78,7 @@ export function StatementReview({ txns, props, cats, allowCommon }: { txns: Txn[
     <>
       <option value="">— Chọn cơ sở —</option>
       {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-      {allowCommon && <option value={COMMON}>Chi phí chung</option>}
+      {allowCommon && <option value={COMMON}>Chi phí chung (Unix)</option>}
     </>
   );
   const catOptions = (

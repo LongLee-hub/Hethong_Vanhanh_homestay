@@ -44,7 +44,7 @@ export default async function Pending() {
                   <tr key={e.id}>
                     {mode && <td>{(mode === "remind" || mayApprove(e.propertyId)) && <input type="checkbox" name="ids" value={e.id} id={`p-${e.id}`} aria-label="Chọn" defaultChecked={mode === "approve"} />}</td>}
                     <td className="num">{D.formatDateVN(e.incurredOn)}</td>
-                    <td>{e.propertyId ? name[e.propertyId] ?? "—" : "Chi phí chung"}</td>
+                    <td>{e.propertyId ? name[e.propertyId] ?? "—" : "Chi phí chung (Unix)"}</td>
                     <td>{catName[e.categoryId]}</td>
                     <td><Link href={`/expenses/${e.id}`}>{e.description}</Link>{e.bankTransactionId && <span className="hint"> · đã chi theo sao kê</span>}</td>
                     <td className="num">{e.month.slice(5)}/{e.month.slice(0, 4)}</td>

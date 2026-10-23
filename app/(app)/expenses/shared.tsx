@@ -45,7 +45,7 @@ export function ExpenseFields({ props, cats, allowCommon, value, idPrefix }: {
       <label className="field full"><span>Cơ sở</span>
         <select name="propertyId" id={f("propertyId")} defaultValue={value ? value.propertyId ?? "__common" : undefined}>
           {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          {allowCommon && <option value="__common">Chi phí chung (toàn hệ thống)</option>}
+          {allowCommon && <option value="__common">Chi phí chung (Unix)</option>}
         </select>
       </label>
       <label className="field"><span>Loại</span><select name="categoryId" id={f("categoryId")} defaultValue={value?.categoryId}>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
