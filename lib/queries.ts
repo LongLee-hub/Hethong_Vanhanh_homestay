@@ -37,6 +37,15 @@ export async function expensesForMonth(db: DB, user: SessionUser, month: string)
   return { direct, common };
 }
 
+/** Chi phí theo ngày phát sinh (từ – đến, YYYY-MM-DD), cả chi phí cơ sở được xem lẫn chi phí chung. Dùng cho bộ lọc thời gian. */
+export async function expensesInRange(db: DB, user: SessionUser, from: string, to: string) {
+  const ids = await allowedPropertyIds(db, user);
+  const range = and(gte(expenses.incurredOn, from), lte(expenses.incurredOn, to));
+  const direct = ids.length ? await db.select().from(expenses).where(and(range, inArray(expenses.propertyId, ids))).orderBy(asc(expenses.incurredOn)) : [];
+  const common = await db.select().from(expenses).where(and(range, isNull(expenses.propertyId))).orderBy(asc(expenses.incurredOn));
+  return { direct, common };
+}
+
 export const categories = (db: DB) => db.select().from(expenseCategories).where(eq(expenseCategories.active, true)).orderBy(asc(expenseCategories.name));
 
 export async function openAlerts(db: DB, user: SessionUser) {

@@ -4,7 +4,8 @@ import { getDb } from "@/lib/db";
 import { can } from "@/lib/auth/access";
 import { NoAccess } from "@/components/NoAccess";
 import { requireUser } from "@/lib/server";
-import { categories, expensesForMonth, monthParam, visibleProperties } from "@/lib/queries";
+import { categories, expensesForMonth, expensesInRange, monthParam, visibleProperties } from "@/lib/queries";
+import { fold } from "@/lib/bank/statement-parser";
 import { commonCostBasis, isCommonFinalized } from "@/lib/services/settlement";
 import { pendingExpenses } from "@/lib/services/expenses";
 import { MonthNav, vnd } from "@/components/MonthNav";
@@ -17,19 +18,31 @@ import { ApprovalPill, ExpenseFields, ExpenseTabs, Receipts } from "./shared";
 export default async function Expenses({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const user = await requireUser();
   if (!can(user, "viewFinance")) return <NoAccess />;
-  const month = monthParam((await searchParams).month);
+  const sp = await searchParams;
+  const month = monthParam(sp.month);
+  // Bộ lọc: loại, mô tả, khoảng ngày phát sinh (có khoảng ngày thì xem qua nhiều tháng)
+  const isDay = (v?: string) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "");
+  const f = { cat: sp.cat ?? "", q: (sp.q ?? "").trim(), from: isDay(sp.from), to: isDay(sp.to) };
+  const ranged = !!(f.from || f.to);
+  const filtered = ranged || !!f.cat || !!f.q;
   const db = getDb();
   const props = await visibleProperties(db, user);
   const name = Object.fromEntries(props.map((p) => [p.id, p.name]));
   const cats = await categories(db);
   const catName = Object.fromEntries(cats.map((c) => [c.id, c.name]));
   const { direct, common } = await expensesForMonth(db, user, month);
+  const ranges = ranged ? await expensesInRange(db, user, f.from || "2000-01-01", f.to || "2999-12-31") : null;
+  const words = fold(f.q).split(" ").filter(Boolean);
+  const match = (e: { categoryId: string; description: string }) =>
+    (!f.cat || e.categoryId === f.cat) && words.every((w) => fold(e.description).includes(w));
+  // Có lọc: bảng gồm cả chi phí chung để tìm được khoản BHXH, kế toán… trả chung
+  const rows = filtered
+    ? [...(ranges ? [...ranges.direct, ...ranges.common] : [...direct, ...common])].filter(match).sort((a, b) => a.incurredOn.localeCompare(b.incurredOn))
+    : direct;
   const [finalized, basis, pending] = await Promise.all([isCommonFinalized(db, month), commonCostBasis(db, month), pendingExpenses(db, user)]);
   const editable = can(user, "editExpense");
   const roomsByProp = D.activeRoomCountByProperty(props.flatMap((p) => p.rooms.map((r) => ({ ...r, propertyId: p.id }))), month);
   const sum = (rows: { amount: number }[]) => rows.reduce((s, e) => s + e.amount, 0);
-  const approved = direct.filter((e) => e.approvalStatus === "APPROVED");
-  const waiting = direct.filter((e) => e.approvalStatus === "PENDING");
   const commonApproved = common.filter((e) => e.approvalStatus === "APPROVED");
   const myRooms = Object.values(roomsByProp).reduce((s, n) => s + n, 0);
   const mine = user.role === "INVESTOR";
@@ -62,21 +75,43 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
       )}
 
       <section className="panel">
+        <form className="expense-filter" action="/expenses" role="search" aria-label="Lọc chi phí">
+          {!ranged && <input type="hidden" name="month" value={month} />}
+          <label className="field"><span>Loại</span>
+            <select name="cat" defaultValue={f.cat}>
+              <option value="">Tất cả loại</option>
+              {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+          <label className="field grow"><span>Mô tả</span><input type="search" name="q" defaultValue={f.q} placeholder="vd: bhxh, điều hòa, Nguyen Chi Bac" /></label>
+          <label className="field"><span>Từ ngày</span><input type="date" name="from" defaultValue={f.from} /></label>
+          <label className="field"><span>Đến ngày</span><input type="date" name="to" defaultValue={f.to} /></label>
+          <div className="row">
+            <button className="btn primary">Lọc</button>
+            {filtered && <Link className="btn" href={`/expenses?month=${month}`}>Xóa lọc</Link>}
+          </div>
+        </form>
+        {filtered && (
+          <p className="small muted" style={{ margin: "0 0 8px" }}>
+            {rows.length} khoản{ranged ? ` phát sinh ${f.from ? `từ ${D.formatDateVN(f.from)} ` : ""}${f.to ? `đến ${D.formatDateVN(f.to)}` : ""}` : ` trong ${D.formatMonthVN(month).toLowerCase()}`}, gồm cả chi phí chung.
+          </p>
+        )}
         <div className="tbl-wrap"><table>
           <thead><tr><th>Ngày</th><th>Cơ sở</th><th>Loại</th><th>Mô tả</th><th className="n">Số tiền</th><th>Trạng thái</th><th>Hóa đơn</th></tr></thead>
           <tbody>
-            {direct.map((e) => (
+            {rows.map((e) => (
               <tr key={e.id}>
-                <td className="num">{D.formatDateVN(e.incurredOn)}</td><td>{name[e.propertyId!]}</td><td>{catName[e.categoryId]}</td>
+                <td className="num">{D.formatDateVN(e.incurredOn)}{ranged && e.month !== e.incurredOn.slice(0, 7) && <div className="hint">tính T{Number(e.month.slice(5))}/{e.month.slice(0, 4)}</div>}</td>
+                <td>{e.propertyId ? name[e.propertyId] : <span className="muted">Chi phí chung</span>}</td><td>{catName[e.categoryId]}</td>
                 <td><Link href={`/expenses/${e.id}`}>{e.description}</Link>{e.bankTransactionId && <span className="hint"> · sao kê</span>}{e.approvalStatus === "REJECTED" && e.rejectReason && <div className="hint">Lý do: {e.rejectReason}</div>}</td>
                 <td className="n"><b>{vnd(e.amount)}</b></td>
                 <td><ApprovalPill status={e.approvalStatus} /></td>
                 <td><Receipts urls={e.receiptUrls} /></td>
               </tr>
             ))}
-            {!direct.length && <tr><td colSpan={7} className="muted small">Chưa có khoản chi nào trong tháng.</td></tr>}
-            <tr className="total"><td colSpan={4}>Đã ghi nhận (đã duyệt)</td><td className="n">{vnd(sum(approved))}</td><td colSpan={2} /></tr>
-            {waiting.length > 0 && <tr><td colSpan={4} className="muted">Đang chờ duyệt — chưa tính</td><td className="n muted">{vnd(sum(waiting))}</td><td colSpan={2} /></tr>}
+            {!rows.length && <tr><td colSpan={7} className="muted small">{filtered ? "Không có khoản chi nào khớp bộ lọc." : "Chưa có khoản chi nào trong tháng."}</td></tr>}
+            <tr className="total"><td colSpan={4}>Đã ghi nhận (đã duyệt)</td><td className="n">{vnd(sum(rows.filter((e) => e.approvalStatus === "APPROVED")))}</td><td colSpan={2} /></tr>
+            {rows.some((e) => e.approvalStatus === "PENDING") && <tr><td colSpan={4} className="muted">Đang chờ duyệt — chưa tính</td><td className="n muted">{vnd(sum(rows.filter((e) => e.approvalStatus === "PENDING")))}</td><td colSpan={2} /></tr>}
           </tbody>
         </table></div>
       </section>

@@ -400,3 +400,10 @@ table.statement input[type=text] { width: 100%; min-width: 220px; }
 form.backfill { flex-basis: 100%; display: grid; gap: 12px; padding: 16px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
 .backfill-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 form.backfill .row > .field { flex: 1 1 180px; }
+
+/* Bộ lọc trang Chi phí: loại, mô tả, khoảng ngày */
+.expense-filter { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 12px; }
+.expense-filter > .field { flex: 0 1 170px; }
+.expense-filter > .field.grow { flex: 1 1 240px; }
+.expense-filter > .row { flex: 0 0 auto; }
+@media (max-width: 600px) { .expense-filter > .field, .expense-filter > .field.grow { flex: 1 1 100%; } }
