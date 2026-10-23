@@ -9,7 +9,7 @@ import type { DB } from "../lib/db";
 import { allowedPropertyIds, assertPropertyAccess, type SessionUser } from "../lib/auth/access";
 import { saveManualBooking, upsertBooking } from "../lib/services/bookings";
 import { approveExpenses, createExpense, setCommonFinalized } from "../lib/services/expenses";
-import { getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } from "../lib/services/settlement";
+import { commonCostBasis, getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } from "../lib/services/settlement";
 import { SYNC_FULL_MAX_ORDERS, SYNC_MAX_ORDERS, syncBookings } from "../lib/dayladau/sync";
 import { createRoom, listConnections, listingsForProperty, mapListingToRoom, saveDayladauAccount, saveInvestor, setPropertyAccount, testConnection, type InvestorInfo } from "../lib/dayladau/admin";
 import { liveOrdersForMonth } from "../lib/dayladau/live";
@@ -171,6 +171,20 @@ describe("Doanh thu, chi phí, quyết toán (giai đoạn 2)", () => {
     await approveExpenses(db, admin, [nov.id]);
     const m11 = (await buildInvestorReport(db, invA, "inv-a", "2026-11", null)).months[3];
     expect(m11).toMatchObject({ bhxh: 4_000_000, accounting: 0 }); // toàn bộ phần chung tạm tính 4tr là BHXH
+  });
+
+  it("chi phí chung (Unix) chỉ chia cho cơ sở của NĐT chịu chi phí chung", async () => {
+    await saveInvestor(db, admin, { ...emptyInfo, id: "inv-a", name: "NĐT A", sharesCommonCost: true });
+    try {
+      const b = await commonCostBasis(db, "2026-10");
+      expect(b.rooms).toBe(2); // X1, Y1 của NĐT A; Z1, Z2 của NĐT B không chịu
+      const sb = await getSettlement(db, invB, "inv-b", "2026-10");
+      expect(sb.lines.find((l) => l.propertyId === "Z")!.commonCostAlloc).toBe(0);
+      const sa = await getSettlement(db, invA, "inv-a", "2026-10");
+      expect(sa.lines.reduce((t, l) => t + l.commonCostAlloc, 0)).toBe(b.total);
+    } finally {
+      await saveInvestor(db, admin, { ...emptyInfo, id: "inv-a", name: "NĐT A", sharesCommonCost: false });
+    }
   });
 
   it("báo cáo NĐT của CĐT đặc biệt: CP Thuế là GTGT + TNCN tự tính, khớp quyết toán; tháng đã khóa giữ như cũ", async () => {

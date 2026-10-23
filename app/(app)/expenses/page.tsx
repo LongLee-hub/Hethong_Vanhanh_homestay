@@ -134,7 +134,7 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
       </section>
 
       <section className="panel" style={{ marginTop: 16 }}>
-          <header><div><h2>Chi phí chung {D.formatMonthVN(month).toLowerCase()}</h2><p>Chia đều theo phòng toàn hệ thống · Admin duyệt</p></div>{finalized ? <span className="pill ok">Đã hoàn tất kê khai</span> : <span className="pill fc">Đang kê khai</span>}</header>
+          <header><div><h2>Chi phí chung {D.formatMonthVN(month).toLowerCase()}</h2><p>Chia đều theo phòng các cơ sở Unix · Admin duyệt</p></div>{finalized ? <span className="pill ok">Đã hoàn tất kê khai</span> : <span className="pill fc">Đang kê khai</span>}</header>
           <div className="tbl-wrap"><table><tbody>
             {common.map((e) => (
               <tr key={e.id}>
@@ -146,8 +146,8 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
           </tbody></table></div>
           <p className="small muted">
             {basis.provisional
-              ? `Chưa kê khai xong nên đang tạm tính theo ${D.formatMonthVN(basis.basisMonth).toLowerCase()}: ${vnd(basis.total)} ÷ ${basis.rooms} phòng toàn hệ thống = ${vnd(Math.round(basis.perRoom))}/phòng.`
-              : `${vnd(basis.total)} ÷ ${basis.rooms} phòng toàn hệ thống = ${vnd(Math.round(basis.perRoom))}/phòng.`}
+              ? `Chưa kê khai xong nên đang tạm tính theo ${D.formatMonthVN(basis.basisMonth).toLowerCase()}: ${vnd(basis.total)} ÷ ${basis.rooms} phòng Unix = ${vnd(Math.round(basis.perRoom))}/phòng.`
+              : `${vnd(basis.total)} ÷ ${basis.rooms} phòng Unix = ${vnd(Math.round(basis.perRoom))}/phòng.`}
             {" "}{mine ? "Bạn" : "Phạm vi bạn xem"} có {myRooms} phòng, phần được chia khoảng {vnd(Math.round(basis.perRoom * myRooms))}.
           </p>
           {can(user, "declareCommon") && (

@@ -25,7 +25,7 @@ export async function saveInvestorAction(_: State, f: FormData): Promise<State> 
     saveInvestor(getDb(), user, {
       id: s(f, "id") || undefined, name: s(f, "name"), phone: s(f, "phone"), email: s(f, "email"), taxCode: s(f, "taxCode"), address: s(f, "address"),
       bankName: s(f, "bankName"), bankAccountNo: s(f, "bankAccountNo"), bankAccountName: s(f, "bankAccountName"),
-      managementFeePct: numOrNull(f, "managementFeePct"), vatPct: numOrNull(f, "vatPct"), pitPct: numOrNull(f, "pitPct"), contractStartOn: s(f, "contractStartOn") || null, contractEndOn: s(f, "contractEndOn") || null,
+      managementFeePct: numOrNull(f, "managementFeePct"), vatPct: numOrNull(f, "vatPct"), pitPct: numOrNull(f, "pitPct"), sharesCommonCost: s(f, "sharesCommonCost") === "1", contractStartOn: s(f, "contractStartOn") || null, contractEndOn: s(f, "contractEndOn") || null,
       contractUrl: s(f, "contractUrl"), payoutDay: numOrNull(f, "payoutDay"), active: s(f, "active") !== "0", note: s(f, "note"),
       larkWebhookUrl: s(f, "larkWebhookUrl"),
     }),

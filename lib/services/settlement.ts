@@ -14,10 +14,19 @@ export async function isCommonFinalized(db: DB, month: string): Promise<boolean>
   return !!p?.commonCostsFinalized;
 }
 
-/** Mọi phòng toàn hệ thống, để chia chi phí chung. cache: trang tính cho nhiều NĐT chỉ đọc bảng phòng một lần. */
-const allRooms = cache((db: DB) =>
-  db.select({ id: rooms.id, propertyId: rooms.propertyId, openedOn: rooms.openedOn, closedOn: rooms.closedOn }).from(rooms),
-);
+/**
+ * Phòng chịu chi phí chung (Unix): phòng thuộc cơ sở của các NĐT bật "Chịu chi phí chung"; không NĐT nào bật thì mọi phòng.
+ * cache: trang tính cho nhiều NĐT chỉ đọc bảng phòng một lần.
+ */
+const allRooms = cache(async (db: DB) => {
+  const rows = await db
+    .select({ id: rooms.id, propertyId: rooms.propertyId, openedOn: rooms.openedOn, closedOn: rooms.closedOn, shares: investors.sharesCommonCost })
+    .from(rooms)
+    .innerJoin(properties, eq(properties.id, rooms.propertyId))
+    .innerJoin(investors, eq(investors.id, properties.investorId));
+  const pick = rows.some((r) => r.shares) ? rows.filter((r) => r.shares) : rows;
+  return pick.map(({ shares: _, ...r }) => r);
+});
 
 /** Dữ liệu một NĐT cần để tính quyết toán/dự kiến cho các tháng `months`, lấy trong một lượt hỏi DB (các câu chạy song song). */
 interface InvestorData {

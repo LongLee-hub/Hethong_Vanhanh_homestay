@@ -44,6 +44,8 @@ export const investors = pgTable("investors", {
   // CĐT đặc biệt (vd Uxistay) chịu thêm thuế trong quyết toán; null = không áp dụng
   vatPct: numeric("vat_pct", { precision: 5, scale: 2, mode: "number" }), // thuế GTGT, % doanh thu quyết toán
   pitPct: numeric("pit_pct", { precision: 5, scale: 2, mode: "number" }), // thuế TNCN, % lợi nhuận sau phí quản lý
+  /** Cơ sở của NĐT này chịu chi phí chung (Unix), chia đều theo phòng. Không NĐT nào bật = chia cho mọi cơ sở. */
+  sharesCommonCost: boolean("shares_common_cost").notNull().default(false),
   contractStartOn: day("contract_start_on"),
   contractEndOn: day("contract_end_on"),
   contractUrl: text("contract_url"),

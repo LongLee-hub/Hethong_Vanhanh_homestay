@@ -116,7 +116,7 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
           )}
           <p>
             Chi phí chung: {basis.provisional ? `tạm tính theo ${D.formatMonthVN(basis.basisMonth).toLowerCase()}, ` : ""}
-            tổng {vnd(basis.total)} toàn hệ thống ÷ {basis.rooms} phòng = {perRoomTxt}/phòng × {myRooms} phòng của {mine ? "bạn" : "nhà đầu tư"}
+            tổng {vnd(basis.total)} chi phí chung (Unix) ÷ {basis.rooms} phòng Unix = {perRoomTxt}/phòng × {myRooms} phòng của {mine ? "bạn" : "nhà đầu tư"}
             {" "}= <b>{vnd(s.totalCommonCost)}</b>{formulaExact ? "." : " (chênh vài đồng do làm tròn)."}
           </p>
           <p>Doanh thu tính theo đêm khách ở trong tháng, nên sẽ khác số tiền OTA chuyển về tài khoản trong tháng. Mỗi kênh trả tiền theo lịch riêng.</p>

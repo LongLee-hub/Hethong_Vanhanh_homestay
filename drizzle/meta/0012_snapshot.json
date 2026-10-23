@@ -1,5 +1,5 @@
 {
-  "id": "7b246638-c426-4d01-90a9-f371e238f6ee",
+  "id": "a34458b3-23e8-41af-976d-73b809d40d22",
   "prevId": "9673d94c-8a7c-46e5-8806-f7baa6b1d413",
   "version": "7",
   "dialect": "postgresql",
@@ -1986,6 +1986,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
+        },
+        "shares_common_cost": {
+          "name": "shares_common_cost",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         }
       },
       "indexes": {},
@@ -3150,8 +3157,7 @@
       "schema": "public",
       "values": [
         "DAYLADAU",
-        "MANUAL",
-        "AIRBNB_PAYOUT"
+        "MANUAL"
       ]
     },
     "public.booking_status": {

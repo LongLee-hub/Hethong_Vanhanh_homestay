@@ -45,6 +45,8 @@ export interface InvestorInfo {
   /** CĐT đặc biệt: thuế GTGT % doanh thu, thuế TNCN % lợi nhuận sau phí. null = không áp dụng. Không truyền = giữ nguyên. */
   vatPct?: number | null;
   pitPct?: number | null;
+  /** Cơ sở của NĐT chịu chi phí chung (Unix). Không truyền = giữ nguyên. */
+  sharesCommonCost?: boolean;
   contractStartOn: string | null;
   contractEndOn: string | null;
   contractUrl: string | null;
@@ -80,7 +82,7 @@ export async function listConnections(db: DB, user: SessionUser, decrypt = decry
   return invs.map((i) => ({
     id: i.id, name: i.name, phone: i.phone, email: i.email, taxCode: i.taxCode, address: i.address,
     bankName: i.bankName, bankAccountNo: i.bankAccountNo, bankAccountName: i.bankAccountName,
-    managementFeePct: i.managementFeePct, vatPct: i.vatPct, pitPct: i.pitPct, contractStartOn: i.contractStartOn, contractEndOn: i.contractEndOn,
+    managementFeePct: i.managementFeePct, vatPct: i.vatPct, pitPct: i.pitPct, sharesCommonCost: i.sharesCommonCost, contractStartOn: i.contractStartOn, contractEndOn: i.contractEndOn,
     contractUrl: i.contractUrl, payoutDay: i.payoutDay, active: i.active, note: i.note, larkWebhookUrl: i.larkWebhookUrl, hasAccount: !!i.userId,
     accounts: accs
       .filter((a) => a.investorId === i.id)
@@ -118,6 +120,7 @@ export async function saveInvestor(db: DB, user: SessionUser, input: { id?: stri
     // 0% coi như không áp dụng
     ...(input.vatPct !== undefined ? { vatPct: input.vatPct || null } : {}),
     ...(input.pitPct !== undefined ? { pitPct: input.pitPct || null } : {}),
+    ...(input.sharesCommonCost !== undefined ? { sharesCommonCost: input.sharesCommonCost } : {}),
     // Không truyền (form cũ / test) thì giữ nguyên webhook đang lưu
     ...(input.larkWebhookUrl !== undefined ? { larkWebhookUrl: t(input.larkWebhookUrl) } : {}),
   };
