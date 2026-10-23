@@ -165,6 +165,12 @@ describe("Doanh thu, chi phí, quyết toán (giai đoạn 2)", () => {
     expect(cur).toMatchObject({ bhxh: 2_000_000, accounting: 1_000_000 });
     expect(cur.homestayByCategory["Chi phí chung được chia"]).toBe(1_000_000);
     expect(cur.homestay + cur.bhxh + cur.accounting).toBe(4_000_000);
+
+    // Tháng 11 chưa hoàn tất kê khai: chi phí chung tạm tính theo tháng 10, nhưng tỷ trọng theo khoản đã nhập của tháng 11
+    const nov = await createExpense(db, acc, { propertyId: null, categoryId: "bhxh", month: "2026-11", incurredOn: "2026-11-05", amount: 1_000_000, description: "bhxh" });
+    await approveExpenses(db, admin, [nov.id]);
+    const m11 = (await buildInvestorReport(db, invA, "inv-a", "2026-11", null)).months[3];
+    expect(m11).toMatchObject({ bhxh: 4_000_000, accounting: 0 }); // toàn bộ phần chung tạm tính 4tr là BHXH
   });
 
   it("báo cáo NĐT của CĐT đặc biệt: CP Thuế là GTGT + TNCN tự tính, khớp quyết toán; tháng đã khóa giữ như cũ", async () => {

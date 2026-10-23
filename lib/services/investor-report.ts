@@ -68,7 +68,9 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
   // Chi phí chung được chia theo đúng căn cứ của quyết toán (tháng chưa kê khai xong: tạm tính theo tháng trước),
   // để tách phần BHXH / Kế toán / Thuế nằm trong chi phí chung ra khỏi CP Homestay.
   const bases = await Promise.all(list.map((m, i) => commonCostBasis(db, m, scoped[i].s.status === "LOCKED")));
-  const basisMonths = [...new Set(bases.map((b) => b.basisMonth))];
+  // Tỷ trọng từng loại lấy từ chi phí chung của chính tháng đó nếu đã có (kể cả khi còn tạm tính theo tháng trước),
+  // để BHXH / Kế toán đã nhập trong tháng hiện ngay; chưa có khoản nào thì theo tháng làm căn cứ.
+  const basisMonths = [...new Set([...list, ...bases.map((b) => b.basisMonth)])];
   const [catRows, commonRows, roomsReport] = await Promise.all([
     allPids.length
       ? db
@@ -106,7 +108,8 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
     }
     const sumWhere = (f: (n: string) => boolean) => Object.entries(byCat).filter(([n]) => f(n)).reduce((t, [, a]) => t + a, 0);
     // Phần chi phí chung được chia cho các cơ sở này, tách theo tỷ trọng từng loại trong quỹ chi phí chung
-    const pool = commonRows.filter((r) => r.month === bases[i].basisMonth);
+    const own = commonRows.filter((r) => r.month === m);
+    const pool = own.length ? own : commonRows.filter((r) => r.month === bases[i].basisMonth);
     const poolTotal = pool.reduce((t, r) => t + r.amount, 0);
     const commonPart = (f: (n: string) => boolean) =>
       poolTotal ? Math.round((common * pool.filter((r) => f(r.name.normalize("NFC"))).reduce((t, r) => t + r.amount, 0)) / poolTotal) : 0;
