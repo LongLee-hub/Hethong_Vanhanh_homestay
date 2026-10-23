@@ -4,8 +4,8 @@ import { getDb } from "@/lib/db";
 import { can } from "@/lib/auth/access";
 import { NoAccess } from "@/components/NoAccess";
 import { requireUser } from "@/lib/server";
-import { bookingsForMonth, bookingsInRange, monthParam, visibleProperties } from "@/lib/queries";
-import { fold } from "@/lib/bank/statement-parser";
+import { monthParam, visibleProperties } from "@/lib/queries";
+import { filteredBookings, filterQuery, filterScope, parseBookingFilter } from "./filter";
 import { MonthNav, vnd } from "@/components/MonthNav";
 import { ActionForm } from "@/components/ActionForm";
 import { PhotoInput } from "@/components/PhotoInput";
@@ -109,18 +109,14 @@ export default async function Bookings({ searchParams }: { searchParams: Promise
   const db = getDb();
   const props = await visibleProperties(db, user);
   // Bộ lọc: cơ sở, tên khách / mã đơn, khoảng ngày ở (có khoảng ngày thì xem qua nhiều tháng)
-  const isDay = (v?: string) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "");
-  const f = { prop: props.some((p) => p.id === sp.prop) ? sp.prop : "", q: (sp.q ?? "").trim(), from: isDay(sp.from), to: isDay(sp.to) };
-  const ranged = !!(f.from || f.to);
-  const filtered = ranged || !!f.prop || !!f.q;
-  const words = fold(f.q).split(" ").filter(Boolean);
-  const all = ranged ? await bookingsInRange(db, user, f.from || "2000-01-01", f.to || "2999-12-31") : await bookingsForMonth(db, user, month);
-  const rows = all.filter((b) => (!f.prop || b.propertyId === f.prop) && words.every((w) => fold(`${b.guestName ?? ""} ${b.externalId ?? ""}`).includes(w)));
+  const f = parseBookingFilter(sp, month, props.map((p) => p.id));
+  const { ranged, filtered } = f;
+  const rows = await filteredBookings(db, user, f);
   const showAmt = can(user, "viewBookingAmounts");
   const roomName = Object.fromEntries(props.flatMap((p) => p.rooms.map((r) => [r.id, `${p.name} · ${r.name}`])));
   const today = D.todayVN();
   const confirmed = rows.filter((b) => b.status !== "CANCELLED");
-  const scope = ranged ? `Có đêm ở ${f.from ? `từ ${D.formatDateVN(f.from)} ` : ""}${f.to ? `đến ${D.formatDateVN(f.to)}` : ""}`.trim() : "Có đêm ở trong tháng";
+  const scope = filterScope(f);
   return (
     <>
       <div className="topbar"><h1>Đặt phòng</h1><MonthNav month={month} path="/bookings" /><SourceTabs month={month} src="db" live={live} /></div>
@@ -145,6 +141,8 @@ export default async function Bookings({ searchParams }: { searchParams: Promise
           <div className="row">
             <button className="btn primary">Lọc</button>
             {filtered && <Link className="btn" href={`/bookings?month=${month}`}>Xóa lọc</Link>}
+            {/* Thẻ a thường (không phải Link) để trình duyệt tải file thay vì điều hướng phía client */}
+            <a className="btn" href={`/bookings/export?${filterQuery(f)}`} download>Xuất Excel</a>
           </div>
         </form>
         {filtered && (
