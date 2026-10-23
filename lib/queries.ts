@@ -20,13 +20,16 @@ export async function visibleInvestors(db: DB, user: SessionUser) {
   return ids.length ? db.select({ id: investors.id, name: investors.name }).from(investors).where(inArray(investors.id, ids)).orderBy(asc(investors.name)) : [];
 }
 
-export async function bookingsForMonth(db: DB, user: SessionUser, month: string) {
+export const bookingsForMonth = (db: DB, user: SessionUser, month: string) => bookingsInRange(db, user, D.firstDay(month), D.lastDay(month));
+
+/** Đơn có đêm ở trong khoảng (từ – đến, YYYY-MM-DD, tính cả hai đầu). Dùng cho bộ lọc thời gian. */
+export async function bookingsInRange(db: DB, user: SessionUser, from: string, to: string) {
   const ids = await allowedPropertyIds(db, user);
   if (!ids.length) return [];
   return db
     .select()
     .from(bookings)
-    .where(and(inArray(bookings.propertyId, ids), lte(bookings.checkIn, D.lastDay(month)), gt(bookings.checkOut, D.firstDay(month))))
+    .where(and(inArray(bookings.propertyId, ids), lte(bookings.checkIn, to), gt(bookings.checkOut, from)))
     .orderBy(asc(bookings.checkIn));
 }
 

@@ -402,8 +402,8 @@ form.backfill { flex-basis: 100%; display: grid; gap: 12px; padding: 16px; borde
 form.backfill .row > .field { flex: 1 1 180px; }
 
 /* Bộ lọc trang Chi phí: loại, mô tả, khoảng ngày */
-.expense-filter { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 12px; }
-.expense-filter > .field { flex: 0 1 170px; }
-.expense-filter > .field.grow { flex: 1 1 240px; }
-.expense-filter > .row { flex: 0 0 auto; }
-@media (max-width: 600px) { .expense-filter > .field, .expense-filter > .field.grow { flex: 1 1 100%; } }
+.expense-filter, .filter-bar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 12px; }
+.expense-filter > .field, .filter-bar > .field { flex: 0 1 170px; }
+.expense-filter > .field.grow, .filter-bar > .field.grow { flex: 1 1 240px; }
+.expense-filter > .row, .filter-bar > .row { flex: 0 0 auto; }
+@media (max-width: 600px) { .expense-filter > .field, .expense-filter > .field.grow, .filter-bar > .field, .filter-bar > .field.grow { flex: 1 1 100%; } }

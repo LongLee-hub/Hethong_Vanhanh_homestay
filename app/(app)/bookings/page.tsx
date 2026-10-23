@@ -4,7 +4,8 @@ import { getDb } from "@/lib/db";
 import { can } from "@/lib/auth/access";
 import { NoAccess } from "@/components/NoAccess";
 import { requireUser } from "@/lib/server";
-import { bookingsForMonth, monthParam, visibleProperties } from "@/lib/queries";
+import { bookingsForMonth, bookingsInRange, monthParam, visibleProperties } from "@/lib/queries";
+import { fold } from "@/lib/bank/statement-parser";
 import { MonthNav, vnd } from "@/components/MonthNav";
 import { ActionForm } from "@/components/ActionForm";
 import { PhotoInput } from "@/components/PhotoInput";
@@ -107,21 +108,50 @@ export default async function Bookings({ searchParams }: { searchParams: Promise
   }
   const db = getDb();
   const props = await visibleProperties(db, user);
-  const rows = await bookingsForMonth(db, user, month);
+  // Bộ lọc: cơ sở, tên khách / mã đơn, khoảng ngày ở (có khoảng ngày thì xem qua nhiều tháng)
+  const isDay = (v?: string) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "");
+  const f = { prop: props.some((p) => p.id === sp.prop) ? sp.prop : "", q: (sp.q ?? "").trim(), from: isDay(sp.from), to: isDay(sp.to) };
+  const ranged = !!(f.from || f.to);
+  const filtered = ranged || !!f.prop || !!f.q;
+  const words = fold(f.q).split(" ").filter(Boolean);
+  const all = ranged ? await bookingsInRange(db, user, f.from || "2000-01-01", f.to || "2999-12-31") : await bookingsForMonth(db, user, month);
+  const rows = all.filter((b) => (!f.prop || b.propertyId === f.prop) && words.every((w) => fold(`${b.guestName ?? ""} ${b.externalId ?? ""}`).includes(w)));
   const showAmt = can(user, "viewBookingAmounts");
   const roomName = Object.fromEntries(props.flatMap((p) => p.rooms.map((r) => [r.id, `${p.name} · ${r.name}`])));
   const today = D.todayVN();
   const confirmed = rows.filter((b) => b.status !== "CANCELLED");
+  const scope = ranged ? `Có đêm ở ${f.from ? `từ ${D.formatDateVN(f.from)} ` : ""}${f.to ? `đến ${D.formatDateVN(f.to)}` : ""}`.trim() : "Có đêm ở trong tháng";
   return (
     <>
       <div className="topbar"><h1>Đặt phòng</h1><MonthNav month={month} path="/bookings" /><SourceTabs month={month} src="db" live={live} /></div>
       {can(user, "admin") && <SyncMonth month={month} label={D.formatMonthVN(month)} accounts={await syncAccounts()} />}
       <div className="cards">
-        <div className="stat"><span className="lbl">Đơn đã xác nhận</span><span className="v">{confirmed.length}</span><span className="s">Có đêm ở trong tháng</span></div>
+        <div className="stat"><span className="lbl">Đơn đã xác nhận</span><span className="v">{confirmed.length}</span><span className="s">{scope}</span></div>
         <div className="stat"><span className="lbl">Đơn đã hủy</span><span className="v">{rows.length - confirmed.length}</span></div>
         {showAmt && <div className="stat"><span className="lbl">Tổng thực nhận</span><span className="v">{vnd(confirmed.reduce((s, b) => s + b.netAmount, 0))}</span><span className="s">Sau khi trừ phí kênh bán, tính cả đơn kéo sang tháng khác</span></div>}
       </div>
       <section className="panel">
+        <form className="filter-bar" action="/bookings" role="search" aria-label="Lọc đơn đặt phòng">
+          {!ranged && <input type="hidden" name="month" value={month} />}
+          <label className="field"><span>Cơ sở</span>
+            <select name="prop" defaultValue={f.prop}>
+              <option value="">Tất cả cơ sở</option>
+              {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </label>
+          <label className="field grow"><span>Khách / mã đơn</span><input type="search" name="q" defaultValue={f.q} placeholder="vd: Nguyen, HMABC123" /></label>
+          <label className="field"><span>Từ ngày</span><input type="date" name="from" defaultValue={f.from} /></label>
+          <label className="field"><span>Đến ngày</span><input type="date" name="to" defaultValue={f.to} /></label>
+          <div className="row">
+            <button className="btn primary">Lọc</button>
+            {filtered && <Link className="btn" href={`/bookings?month=${month}`}>Xóa lọc</Link>}
+          </div>
+        </form>
+        {filtered && (
+          <p className="small muted" style={{ margin: "0 0 8px" }}>
+            {rows.length} đơn{f.prop ? ` ở ${props.find((p) => p.id === f.prop)?.name}` : ""}{ranged ? `, ${scope.charAt(0).toLowerCase()}${scope.slice(1)}` : ` trong ${D.formatMonthVN(month).toLowerCase()}`}. Đơn tính là trong khoảng khi có ít nhất một đêm ở nằm trong đó.
+          </p>
+        )}
         <div className="tbl-wrap"><table>
           <thead><tr><th>Khách</th><th>Phòng</th><th>Kênh bán</th><th>Nhận – trả phòng</th>{showAmt && <><th className="n">Khách trả</th><th className="n">Phí kênh bán</th><th className="n">Thực nhận</th></>}<th>Trạng thái</th></tr></thead>
           <tbody>
@@ -134,7 +164,7 @@ export default async function Bookings({ searchParams }: { searchParams: Promise
                 <td>{b.status === "CANCELLED" ? <span className="pill bad">Đã hủy</span> : <span className="pill ok">Đã xác nhận</span>}</td>
               </tr>
             ))}
-            {!rows.length && <tr><td colSpan={8} className="muted small">Chưa có đơn nào trong tháng.</td></tr>}
+            {!rows.length && <tr><td colSpan={8} className="muted small">{filtered ? "Không có đơn nào khớp bộ lọc." : "Chưa có đơn nào trong tháng."}</td></tr>}
           </tbody>
         </table></div>
       </section>
