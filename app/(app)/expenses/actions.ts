@@ -6,7 +6,7 @@ import { getDb } from "@/lib/db";
 import { badRequest } from "@/lib/auth/access";
 import { action, appBaseUrl, requireUser } from "@/lib/server";
 import { uploadPhoto } from "@/lib/storage";
-import { approveExpenses, createExpense, deleteExpense, expenseDetail, rejectExpenses, updateExpense } from "@/lib/services/expenses";
+import { approveExpenses, createCategory, createExpense, deleteExpense, expenseDetail, rejectExpenses, updateExpense } from "@/lib/services/expenses";
 import { notifyPendingExpenses } from "@/lib/services/expense-notify";
 import { importStatement, recordTransactions, setTransactionsIgnored, type RecordItem } from "@/lib/services/bank-statements";
 import { readStatementFile } from "@/lib/bank/statement-parser";
@@ -53,6 +53,17 @@ export async function declareExpenseAction(_: State, f: FormData): Promise<State
       receiptUrls: file ? [await uploadPhoto(file, "receipts")] : [], taskId: s(f, "taskId") || null,
     });
     info = e.approvalStatus === "APPROVED" ? "Đã ghi nhận" : `Đã kê khai, ${notifyText(await notify([e.id]))}`;
+  });
+  refresh();
+  return r.ok ? { ...r, info } : r;
+}
+
+export async function addCategoryAction(_: State, f: FormData): Promise<State> {
+  const user = await requireUser();
+  let info = "";
+  const r = await action(async () => {
+    const c = await createCategory(getDb(), user, s(f, "name"));
+    info = `Đã thêm loại "${c.name}"`;
   });
   refresh();
   return r.ok ? { ...r, info } : r;

@@ -12,7 +12,7 @@ import { MonthNav, vnd } from "@/components/MonthNav";
 import { ActionForm } from "@/components/ActionForm";
 import { PhotoInput } from "@/components/PhotoInput";
 import { finalizeCommonAction } from "../actions";
-import { declareExpenseAction } from "./actions";
+import { addCategoryAction, declareExpenseAction } from "./actions";
 import { ApprovalPill, ExpenseFields, ExpenseTabs, Receipts } from "./shared";
 
 export default async function Expenses({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
@@ -74,7 +74,24 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
         </div>
       )}
 
-      <section className="panel">
+      {editable && (
+        <section className="panel">
+          <header><div><h2>Kê khai chi phí</h2><p>Gửi nhóm chat của chủ nhà để duyệt; chỉ ghi nhận sau khi chủ đầu tư duyệt và xác nhận đã chi.</p></div></header>
+          <ActionForm action={declareExpenseAction} submit="Kê khai và gửi duyệt">
+            <ExpenseFields props={props} cats={cats} allowCommon={can(user, "declareCommon")} idPrefix="new" value={{ propertyId: props[0]?.id ?? null, categoryId: cats[0]?.id ?? "", amount: 0, month, incurredOn: D.todayVN(), description: "" }} />
+            <PhotoInput name="receipt" label="Ảnh hóa đơn" />
+          </ActionForm>
+          <details className="fold" style={{ marginTop: 16 }}>
+            <summary>Thêm loại chi phí</summary>
+            <p className="small muted">Loại mới xuất hiện ngay trong ô Loại. Khoản chi thuộc loại này được tính vào quyết toán và báo cáo nhà đầu tư sau khi duyệt.</p>
+            <ActionForm action={addCategoryAction} submit="Thêm loại" submitClass="btn" className="row">
+              <input type="text" name="name" id="new-category" maxLength={60} required placeholder="Ví dụ: Sửa chữa, Marketing" aria-label="Tên loại chi phí" />
+            </ActionForm>
+          </details>
+        </section>
+      )}
+
+      <section className="panel" style={{ marginTop: 16 }}>
         <form className="expense-filter" action="/expenses" role="search" aria-label="Lọc chi phí">
           {!ranged && <input type="hidden" name="month" value={month} />}
           <label className="field"><span>Loại</span>
@@ -116,17 +133,7 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
         </table></div>
       </section>
 
-      <div className="grid g2" style={{ marginTop: 16 }}>
-        {editable && (
-          <section className="panel">
-            <header><div><h2>Kê khai chi phí</h2><p>Gửi nhóm chat của chủ nhà để duyệt; chỉ ghi nhận sau khi chủ đầu tư duyệt và xác nhận đã chi.</p></div></header>
-            <ActionForm action={declareExpenseAction} submit="Kê khai và gửi duyệt">
-              <ExpenseFields props={props} cats={cats} allowCommon={can(user, "declareCommon")} idPrefix="new" value={{ propertyId: props[0]?.id ?? null, categoryId: cats[0]?.id ?? "", amount: 0, month, incurredOn: D.todayVN(), description: "" }} />
-              <PhotoInput name="receipt" label="Ảnh hóa đơn" />
-            </ActionForm>
-          </section>
-        )}
-        <section className="panel">
+      <section className="panel" style={{ marginTop: 16 }}>
           <header><div><h2>Chi phí chung {D.formatMonthVN(month).toLowerCase()}</h2><p>Chia đều theo phòng toàn hệ thống · Admin duyệt</p></div>{finalized ? <span className="pill ok">Đã hoàn tất kê khai</span> : <span className="pill fc">Đang kê khai</span>}</header>
           <div className="tbl-wrap"><table><tbody>
             {common.map((e) => (
@@ -148,8 +155,7 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
               <input type="hidden" name="month" value={month} /><input type="hidden" name="value" value={finalized ? "0" : "1"} />
             </ActionForm>
           )}
-        </section>
-      </div>
+      </section>
     </>
   );
 }

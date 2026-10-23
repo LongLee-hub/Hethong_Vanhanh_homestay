@@ -81,6 +81,26 @@ async function assertCanApprove(db: DB, user: SessionUser, e: ExpenseRow) {
   await assertPropertyAccess(db, user, e.propertyId);
 }
 
+/**
+ * Thêm loại chi phí mới. Khoản chi thuộc loại này được tính vào quyết toán, báo cáo NĐT như mọi loại khác
+ * (báo cáo gom theo tên loại). Trùng tên (không phân biệt hoa thường) thì dùng lại loại cũ, bật lại nếu đã ẩn.
+ */
+export async function createCategory(db: DB, user: SessionUser, rawName: string) {
+  requirePermission(user, "editExpense");
+  const name = rawName.normalize("NFC").replace(/\s+/g, " ").trim();
+  if (!name) throw badRequest("Nhập tên loại chi phí");
+  if (name.length > 60) throw badRequest("Tên loại tối đa 60 ký tự");
+  const all = await db.select().from(expenseCategories);
+  const same = all.find((c) => c.name.normalize("NFC").toLowerCase() === name.toLowerCase());
+  if (same) {
+    if (same.active) throw badRequest(`Loại "${same.name}" đã có`);
+    const [row] = await db.update(expenseCategories).set({ active: true }).where(eq(expenseCategories.id, same.id)).returning();
+    return row;
+  }
+  const [row] = await db.insert(expenseCategories).values({ name, scope: "DIRECT" }).returning();
+  return row;
+}
+
 export async function createExpense(db: DB, user: SessionUser, i: ExpenseInput) {
   requirePermission(user, "editExpense");
   await validate(db, i);

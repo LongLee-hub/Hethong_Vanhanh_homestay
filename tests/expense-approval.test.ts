@@ -8,7 +8,7 @@ import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import type { SessionUser } from "../lib/auth/access";
 import {
-  approveExpenses, createExpense, deleteExpense, expenseDetail, pendingExpenses, rejectExpenses, setCommonFinalized, updateExpense,
+  approveExpenses, createCategory, createExpense, deleteExpense, expenseDetail, pendingExpenses, rejectExpenses, setCommonFinalized, updateExpense,
 } from "../lib/services/expenses";
 import { getSettlement, lockSettlement } from "../lib/services/settlement";
 import { isLarkWebhook, notifyPendingExpenses } from "../lib/services/expense-notify";
@@ -286,5 +286,25 @@ describe("Sao kê ngân hàng", () => {
     await expect(updateProperty(db, admin, "Z", { ...input, bankCodes: ["VP"] })).rejects.toThrow(/đã dùng cho Vạn Phúc/);
     const r = await updateProperty(db, admin, "Z", { ...input, bankCodes: ["KT", " kt2 "] });
     expect(r.bankCodes).toEqual(["kt", "kt2"]);
+  });
+});
+
+describe("Thêm loại chi phí", () => {
+  it("kế toán thêm loại mới; khoản chi loại mới tính vào quyết toán sau khi duyệt", async () => {
+    await expect(createCategory(db, invA, "Marketing")).rejects.toMatchObject({ status: 403 });
+    await expect(createCategory(db, acc, "  ")).rejects.toThrow(/tên loại/);
+    const c = await createCategory(db, acc, "  Marketing  ");
+    expect(c).toMatchObject({ name: "Marketing", active: true });
+    await expect(createCategory(db, acc, "marketing")).rejects.toThrow(/đã có/);
+
+    const e = await createExpense(db, acc, { categoryId: c.id, month: "2026-06", incurredOn: "2026-06-10", propertyId: "X", amount: 700_000, description: "Quảng cáo" });
+    await approveExpenses(db, invA, [e.id]);
+    expect((await getSettlement(db, invA, "inv-a", "2026-06")).lines[0].directCost).toBe(700_000);
+  });
+
+  it("trùng tên loại đã ẩn thì bật lại thay vì tạo mới", async () => {
+    await db.insert(schema.expenseCategories).values({ id: "old", name: "Sửa chữa", scope: "DIRECT", active: false });
+    const c = await createCategory(db, acc, "sửa chữa");
+    expect(c).toMatchObject({ id: "old", active: true });
   });
 });
