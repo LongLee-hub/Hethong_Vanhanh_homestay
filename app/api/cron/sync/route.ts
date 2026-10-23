@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { syncBookings } from "@/lib/dayladau/sync";
 import { computeAlerts } from "@/lib/services/alerts";
-import { syncPayouts } from "@/lib/airbnb/payouts";
 import { currentUser, cronAuthorized } from "@/lib/server";
 
 export const maxDuration = 300;
@@ -12,9 +11,8 @@ async function run() {
   const db = getDb();
   const sync = await syncBookings(db);
   const alerts = await computeAlerts(db);
-  // Payout Airbnb đọc sau đơn Dayladau để khớp được cả đơn vừa đồng bộ
-  const payouts = await syncPayouts(db).catch((e) => ({ error: (e as Error).message }));
-  return NextResponse.json({ sync, alerts, payouts });
+  // Email payout Gmail đọc riêng lúc 15:00 giờ VN (/api/cron/payouts, lib/scheduler.ts)
+  return NextResponse.json({ sync, alerts });
 }
 
 export async function GET(req: Request) {

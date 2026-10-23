@@ -290,7 +290,7 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
       )}
 
       <section className="panel" style={{ marginTop: 24 }}>
-        <header><div><h2>Gmail nhận payout</h2><p>Mỗi nhà đầu tư kết nối Gmail đang nhận email của tài khoản Airbnb. App chỉ có quyền đọc thư, tự đọc email payout mới mỗi lần đồng bộ.</p></div></header>
+        <header><div><h2>Gmail nhận payout</h2><p>Mỗi nhà đầu tư kết nối Gmail đang nhận email của tài khoản Airbnb. App chỉ có quyền đọc thư, tự đọc email payout mới lúc 15:00 hằng ngày.</p></div></header>
         <ul className="gmail-list">
           {invs.map((inv) => {
             const accs = accounts.filter((a) => a.investorId === inv.id);
