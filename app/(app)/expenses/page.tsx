@@ -20,20 +20,22 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
   if (!can(user, "viewFinance")) return <NoAccess />;
   const sp = await searchParams;
   const month = monthParam(sp.month);
-  // Bộ lọc: loại, mô tả, khoảng ngày phát sinh (có khoảng ngày thì xem qua nhiều tháng)
+  // Bộ lọc: cơ sở (hoặc "common" = chi phí chung), loại, mô tả, khoảng ngày phát sinh (có khoảng ngày thì xem qua nhiều tháng)
   const isDay = (v?: string) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : "");
-  const f = { cat: sp.cat ?? "", q: (sp.q ?? "").trim(), from: isDay(sp.from), to: isDay(sp.to) };
+  const f = { prop: sp.prop ?? "", cat: sp.cat ?? "", q: (sp.q ?? "").trim(), from: isDay(sp.from), to: isDay(sp.to) };
   const ranged = !!(f.from || f.to);
-  const filtered = ranged || !!f.cat || !!f.q;
   const db = getDb();
   const props = await visibleProperties(db, user);
+  if (f.prop !== "common" && !props.some((p) => p.id === f.prop)) f.prop = "";
+  const filtered = ranged || !!f.prop || !!f.cat || !!f.q;
   const name = Object.fromEntries(props.map((p) => [p.id, p.name]));
   const cats = await categories(db);
   const catName = Object.fromEntries(cats.map((c) => [c.id, c.name]));
   const { direct, common } = await expensesForMonth(db, user, month);
   const ranges = ranged ? await expensesInRange(db, user, f.from || "2000-01-01", f.to || "2999-12-31") : null;
   const words = fold(f.q).split(" ").filter(Boolean);
-  const match = (e: { categoryId: string; description: string }) =>
+  const match = (e: { propertyId: string | null; categoryId: string; description: string }) =>
+    (!f.prop || (f.prop === "common" ? e.propertyId === null : e.propertyId === f.prop)) &&
     (!f.cat || e.categoryId === f.cat) && words.every((w) => fold(e.description).includes(w));
   // Có lọc: bảng gồm cả chi phí chung để tìm được khoản BHXH, kế toán… trả chung
   const rows = filtered
@@ -50,7 +52,7 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
   const toApprove = can(user, "approveExpense") ? pending.filter((e) => e.propertyId !== null || user.role === "ADMIN") : [];
   // Cơ sở đang hoạt động trong tháng còn thiếu loại chi phí bắt buộc; tháng tương lai chưa phát sinh nên không báo
   const missing = month <= D.monthOf(D.todayVN())
-    ? D.missingExpenseCategories({ propertyIds: props.filter((p) => roomsByProp[p.id]).map((p) => p.id), expenses: [...direct, ...common], categoryName: catName })
+    ? D.missingExpenseCategories({ propertyIds: props.filter((p) => roomsByProp[p.id] && (!f.prop || p.id === f.prop)).map((p) => p.id), expenses: [...direct, ...common], categoryName: catName })
     : [];
   return (
     <>
@@ -95,6 +97,13 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
       <section className="panel" style={{ marginTop: 16 }}>
         <form className="expense-filter" action="/expenses" role="search" aria-label="Lọc chi phí">
           {!ranged && <input type="hidden" name="month" value={month} />}
+          <label className="field"><span>Cơ sở</span>
+            <select name="prop" defaultValue={f.prop}>
+              <option value="">Tất cả cơ sở</option>
+              {props.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              <option value="common">Chi phí chung (Unix)</option>
+            </select>
+          </label>
           <label className="field"><span>Loại</span>
             <select name="cat" defaultValue={f.cat}>
               <option value="">Tất cả loại</option>
@@ -111,7 +120,7 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
         </form>
         {filtered && (
           <p className="small muted" style={{ margin: "0 0 8px" }}>
-            {rows.length} khoản{ranged ? ` phát sinh ${f.from ? `từ ${D.formatDateVN(f.from)} ` : ""}${f.to ? `đến ${D.formatDateVN(f.to)}` : ""}` : ` trong ${D.formatMonthVN(month).toLowerCase()}`}, gồm cả chi phí chung.
+            {rows.length} khoản{f.prop === "common" ? " chi phí chung" : f.prop ? ` của ${name[f.prop]}` : ""}{ranged ? ` phát sinh ${f.from ? `từ ${D.formatDateVN(f.from)} ` : ""}${f.to ? `đến ${D.formatDateVN(f.to)}` : ""}` : ` trong ${D.formatMonthVN(month).toLowerCase()}`}{f.prop ? "." : ", gồm cả chi phí chung."}
           </p>
         )}
         <div className="tbl-wrap"><table>
