@@ -46,6 +46,11 @@ export async function expensesInRange(db: DB, user: SessionUser, from: string, t
   return { direct, common };
 }
 
+/** Id NĐT chịu chi phí chung (Unix); rỗng = chưa bật cho ai, chi phí chung chia cho mọi cơ sở. */
+export async function commonCostInvestorIds(db: DB): Promise<string[]> {
+  return (await db.select({ id: investors.id }).from(investors).where(eq(investors.sharesCommonCost, true))).map((r) => r.id);
+}
+
 export const categories = (db: DB) => db.select().from(expenseCategories).where(eq(expenseCategories.active, true)).orderBy(asc(expenseCategories.name));
 
 export async function openAlerts(db: DB, user: SessionUser) {

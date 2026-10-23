@@ -70,7 +70,7 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
   const bases = await Promise.all(list.map((m, i) => commonCostBasis(db, m, scoped[i].s.status === "LOCKED")));
   // Tỷ trọng từng loại lấy từ chi phí chung của chính tháng đó nếu đã có (kể cả khi còn tạm tính theo tháng trước),
   // để BHXH / Kế toán đã nhập trong tháng hiện ngay; chưa có khoản nào thì theo tháng làm căn cứ.
-  const basisMonths = [...new Set([...list, ...bases.map((b) => b.basisMonth)])];
+  const basisMonths = [...new Set([...list, ...bases.map((b) => b.basisMonth)])]; // tháng báo cáo: khoản đã nhập khi còn tạm tính
   const [catRows, commonRows, roomsReport] = await Promise.all([
     allPids.length
       ? db
@@ -108,16 +108,26 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
     }
     const sumWhere = (f: (n: string) => boolean) => Object.entries(byCat).filter(([n]) => f(n)).reduce((t, [, a]) => t + a, 0);
     // Phần chi phí chung được chia cho các cơ sở này, tách theo tỷ trọng từng loại trong quỹ chi phí chung
-    const own = commonRows.filter((r) => r.month === m);
-    const pool = own.length ? own : commonRows.filter((r) => r.month === bases[i].basisMonth);
+    const catSum = (rows: typeof commonRows, f: (n: string) => boolean) => rows.filter((r) => f(r.name.normalize("NFC"))).reduce((t, r) => t + r.amount, 0);
+    const b = bases[i];
+    // Đã hoàn tất kê khai: tách phần được chia theo tỷ trọng từng loại trong quỹ chi phí chung của tháng.
+    // Còn tạm tính (theo tháng trước): BHXH / Kế toán / Thuế lấy theo khoản đã nhập của chính tháng đó × tỷ lệ phòng của NĐT,
+    // phần tạm tính còn lại để ở chi phí chung; không vượt quá phần chung tạm tính.
+    const provisional = b.basisMonth !== m;
+    const pool = commonRows.filter((r) => r.month === b.basisMonth);
     const poolTotal = pool.reduce((t, r) => t + r.amount, 0);
-    const commonPart = (f: (n: string) => boolean) =>
-      poolTotal ? Math.round((common * pool.filter((r) => f(r.name.normalize("NFC"))).reduce((t, r) => t + r.amount, 0)) / poolTotal) : 0;
+    const own = commonRows.filter((r) => r.month === m);
+    const share = b.total ? Math.min(1, common / b.total) : 0;
+    const raw = (f: (n: string) => boolean) =>
+      provisional ? Math.round(catSum(own, f) * share) : poolTotal ? Math.round((common * catSum(pool, f)) / poolTotal) : 0;
+    const want = { tax: auto ? 0 : raw(isTax), bhxh: raw(isBhxh), acc: raw(isAccounting) };
+    const scale = Math.min(1, common / Math.max(1, want.tax + want.bhxh + want.acc));
+    const parts = { tax: Math.round(want.tax * scale), bhxh: Math.round(want.bhxh * scale), acc: Math.round(want.acc * scale) };
     // CĐT đặc biệt: CP Thuế là thuế tự tính; khoản chi loại "Thuế" nếu có vẫn trừ trong quyết toán nên để ở CP Homestay
-    const declaredTax = auto ? 0 : sumWhere(isTax) + commonPart(isTax);
-    const bhxh = sumWhere(isBhxh) + commonPart(isBhxh);
-    const accounting = sumWhere(isAccounting) + commonPart(isAccounting);
-    const commonRest = common - (auto ? 0 : commonPart(isTax)) - commonPart(isBhxh) - commonPart(isAccounting);
+    const declaredTax = auto ? 0 : sumWhere(isTax) + parts.tax;
+    const bhxh = sumWhere(isBhxh) + parts.bhxh;
+    const accounting = sumWhere(isAccounting) + parts.acc;
+    const commonRest = common - parts.tax - parts.bhxh - parts.acc;
 
     const homestayByCategory = Object.fromEntries(Object.entries(byCat).filter(([n]) => (auto || !isTax(n)) && !isBhxh(n) && !isAccounting(n)));
     if (commonRest) homestayByCategory[COMMON_ROW] = commonRest;

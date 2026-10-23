@@ -170,7 +170,9 @@ describe("Doanh thu, chi phí, quyết toán (giai đoạn 2)", () => {
     const nov = await createExpense(db, acc, { propertyId: null, categoryId: "bhxh", month: "2026-11", incurredOn: "2026-11-05", amount: 1_000_000, description: "bhxh" });
     await approveExpenses(db, admin, [nov.id]);
     const m11 = (await buildInvestorReport(db, invA, "inv-a", "2026-11", null)).months[3];
-    expect(m11).toMatchObject({ bhxh: 4_000_000, accounting: 0 }); // toàn bộ phần chung tạm tính 4tr là BHXH
+    // Tạm tính 4tr (theo tháng 10); BHXH lấy theo khoản đã nhập tháng 11 (1tr) × 2/4 phòng của NĐT A, phần còn lại vẫn là chi phí chung
+    expect(m11).toMatchObject({ bhxh: 500_000, accounting: 0 });
+    expect(m11.homestayByCategory["Chi phí chung được chia"]).toBe(3_500_000);
   });
 
   it("chi phí chung (Unix) chỉ chia cho cơ sở của NĐT chịu chi phí chung", async () => {

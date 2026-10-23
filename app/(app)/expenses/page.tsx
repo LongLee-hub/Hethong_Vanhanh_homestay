@@ -4,7 +4,7 @@ import { getDb } from "@/lib/db";
 import { can } from "@/lib/auth/access";
 import { NoAccess } from "@/components/NoAccess";
 import { requireUser } from "@/lib/server";
-import { categories, expensesForMonth, expensesInRange, monthParam, visibleProperties } from "@/lib/queries";
+import { categories, commonCostInvestorIds, expensesForMonth, expensesInRange, monthParam, visibleProperties } from "@/lib/queries";
 import { fold } from "@/lib/bank/statement-parser";
 import { commonCostBasis, isCommonFinalized } from "@/lib/services/settlement";
 import { pendingExpenses } from "@/lib/services/expenses";
@@ -39,12 +39,13 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
   const rows = filtered
     ? [...(ranges ? [...ranges.direct, ...ranges.common] : [...direct, ...common])].filter(match).sort((a, b) => a.incurredOn.localeCompare(b.incurredOn))
     : direct;
-  const [finalized, basis, pending] = await Promise.all([isCommonFinalized(db, month), commonCostBasis(db, month), pendingExpenses(db, user)]);
+  const [finalized, basis, pending, sharing] = await Promise.all([isCommonFinalized(db, month), commonCostBasis(db, month), pendingExpenses(db, user), commonCostInvestorIds(db)]);
   const editable = can(user, "editExpense");
   const roomsByProp = D.activeRoomCountByProperty(props.flatMap((p) => p.rooms.map((r) => ({ ...r, propertyId: p.id }))), month);
   const sum = (rows: { amount: number }[]) => rows.reduce((s, e) => s + e.amount, 0);
   const commonApproved = common.filter((e) => e.approvalStatus === "APPROVED");
-  const myRooms = Object.values(roomsByProp).reduce((s, n) => s + n, 0);
+  // Chỉ phòng của cơ sở chịu chi phí chung (Unix)
+  const myRooms = props.filter((p) => !sharing.length || sharing.includes(p.investorId)).reduce((s, p) => s + (roomsByProp[p.id] ?? 0), 0);
   const mine = user.role === "INVESTOR";
   const toApprove = can(user, "approveExpense") ? pending.filter((e) => e.propertyId !== null || user.role === "ADMIN") : [];
   // Cơ sở đang hoạt động trong tháng còn thiếu loại chi phí bắt buộc; tháng tương lai chưa phát sinh nên không báo
@@ -148,7 +149,7 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
             {basis.provisional
               ? `Chưa kê khai xong nên đang tạm tính theo ${D.formatMonthVN(basis.basisMonth).toLowerCase()}: ${vnd(basis.total)} ÷ ${basis.rooms} phòng Unix = ${vnd(Math.round(basis.perRoom))}/phòng.`
               : `${vnd(basis.total)} ÷ ${basis.rooms} phòng Unix = ${vnd(Math.round(basis.perRoom))}/phòng.`}
-            {" "}{mine ? "Bạn" : "Phạm vi bạn xem"} có {myRooms} phòng, phần được chia khoảng {vnd(Math.round(basis.perRoom * myRooms))}.
+            {" "}{mine ? "Bạn" : "Phạm vi bạn xem"} có {myRooms} phòng Unix, phần được chia khoảng {vnd(Math.round(basis.perRoom * myRooms))}.
           </p>
           {can(user, "declareCommon") && (
             <ActionForm action={finalizeCommonAction} submit={finalized ? "Mở lại kê khai" : "Hoàn tất kê khai"} submitClass="btn" className="row">
