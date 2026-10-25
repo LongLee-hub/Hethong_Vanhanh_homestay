@@ -42,7 +42,7 @@ export interface InvestorInfo {
   bankAccountNo: string | null;
   bankAccountName: string | null;
   managementFeePct: number | null; // null = dùng mức chung
-  /** CĐT đặc biệt: thuế GTGT % doanh thu, thuế TNCN % lợi nhuận sau phí. null = không áp dụng. Không truyền = giữ nguyên. */
+  /** CĐT đặc biệt: thuế suất GTGT (VAT = DT × % / (100 + %)), thuế TNCN % lợi nhuận sau phí. null = không áp dụng. Không truyền = giữ nguyên. */
   vatPct?: number | null;
   pitPct?: number | null;
   /** Cơ sở của NĐT chịu chi phí chung (Unix). Không truyền = giữ nguyên. */

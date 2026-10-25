@@ -102,7 +102,7 @@ function VatField({ inv, id }: { inv?: Investor; id: string }) {
         <input type="hidden" name="vatMode" value={on ? "1" : "0"} />
         {on && (
           <label className="row" style={{ gap: 8 }}>
-            <span className="small muted">Mức VAT (% doanh thu)</span>
+            <span className="small muted">Thuế suất VAT (%)</span>
             <input type="number" min={0.01} max={100} step="0.01" name="vatPct" id={id} defaultValue={inv?.vatPct || VAT_DEFAULT} style={{ width: 96 }} required />
           </label>
         )}
@@ -135,7 +135,7 @@ function InvestorForm({ inv, defaultFeePct, onDone }: { inv?: Investor; defaultF
         <VatField inv={inv} id={f("vat")} />
         <label className="field"><span>Thuế TNCN (% lợi nhuận sau phí)</span><input type="number" min={0} max={100} step="0.01" name="pitPct" id={f("pit")} defaultValue={inv?.pitPct ?? ""} placeholder="Để trống = không áp dụng" /></label>
         <label className="check-item full"><input type="checkbox" name="sharesCommonCost" value="1" id={f("shares")} defaultChecked={inv?.sharesCommonCost ?? false} /><span>Chịu chi phí chung (Unix): chi phí chung chia đều theo phòng các cơ sở của những NĐT được chọn</span></label>
-        <p className="hint full">Phí Host tính trên lợi nhuận thực tính: chủ nhà phải trả VAT thì lợi nhuận = doanh thu − chi phí − VAT ({VAT_DEFAULT}% doanh thu); không phải trả VAT thì lợi nhuận = doanh thu − chi phí. Thuế TNCN chỉ điền cho CĐT đặc biệt (vd Uxistay 17%), trừ trên phần lợi nhuận còn lại sau phí.</p>
+        <p className="hint full">Phí Host tính trên lợi nhuận thực tính: chủ nhà phải trả VAT thì lợi nhuận = doanh thu − chi phí − VAT đã nằm trong doanh thu (DT × {VAT_DEFAULT}/{100 + VAT_DEFAULT}); không phải trả VAT thì lợi nhuận = doanh thu − chi phí. Thuế TNCN chỉ điền cho CĐT đặc biệt (vd Uxistay 17%), trừ trên phần lợi nhuận còn lại sau phí.</p>
         <label className="field"><span>Bắt đầu hợp đồng</span><input type="date" name="contractStartOn" id={f("cStart")} defaultValue={inv?.contractStartOn ?? ""} /></label>
         <label className="field"><span>Kết thúc hợp đồng</span><input type="date" name="contractEndOn" id={f("cEnd")} defaultValue={inv?.contractEndOn ?? ""} /></label>
         {inv && (
@@ -174,7 +174,7 @@ function InvestorCard({ inv, props, bookingCount, defaultFeePct, onEdit }: { inv
         <div className="kv"><span>Liên hệ</span><b>{[inv.phone, inv.email].filter(Boolean).join(" · ") || "—"}</b></div>
         <div className="kv"><span>MST / CCCD</span><b>{inv.taxCode || "—"}</b></div>
         <div className="kv"><span>Phí quản lý</span><b>{inv.managementFeePct != null ? `${inv.managementFeePct}%` : `${defaultFeePct}% (mức chung)`}</b></div>
-        <div className="kv"><span>Thuế VAT</span><b>{inv.vatPct ? `Chủ nhà trả VAT ${inv.vatPct}% doanh thu` : "Không phải trả VAT"}</b></div>
+        <div className="kv"><span>Thuế VAT</span><b>{inv.vatPct ? `Chủ nhà trả VAT ${inv.vatPct}% (DT × ${inv.vatPct}/${100 + Number(inv.vatPct)})` : "Không phải trả VAT"}</b></div>
         {inv.pitPct ? <div className="kv"><span>Thuế TNCN</span><b>{inv.pitPct}% lợi nhuận sau phí</b></div> : null}
         <div className="kv"><span>Hợp đồng</span><b>{contract}</b></div>
         <div className="kv"><span>Nhận tiền</span><b>{bank || "—"}</b></div>

@@ -42,7 +42,7 @@ export const investors = pgTable("investors", {
   // Hợp đồng
   managementFeePct: numeric("management_fee_pct", { precision: 5, scale: 2, mode: "number" }), // null = dùng mức chung managementFeePct
   // CĐT đặc biệt (vd Uxistay) chịu thêm thuế trong quyết toán; null = không áp dụng
-  vatPct: numeric("vat_pct", { precision: 5, scale: 2, mode: "number" }), // thuế GTGT, % doanh thu quyết toán
+  vatPct: numeric("vat_pct", { precision: 5, scale: 2, mode: "number" }), // thuế suất GTGT; VAT = DT × vat_pct / (100 + vat_pct)
   pitPct: numeric("pit_pct", { precision: 5, scale: 2, mode: "number" }), // thuế TNCN, % lợi nhuận sau phí quản lý
   /** Cơ sở của NĐT này chịu chi phí chung (Unix), chia đều theo phòng. Không NĐT nào bật = chia cho mọi cơ sở. */
   sharesCommonCost: boolean("shares_common_cost").notNull().default(false),

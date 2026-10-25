@@ -417,7 +417,7 @@ export default async function InvestorReportPage({ searchParams }: { searchParam
             DT tham chiếu: {tLabel(t0.month)} = {full(t0.revenue)} ₫ · {tLabel(t1.month)} = {full(t1.revenue)} ₫ · {tLabel(t2.month)} = {full(t2.revenue)} ₫<br />
             <span style={{ color: "#A32D2D" }}>■ Đỏ</span> = tỷ lệ cao hơn tháng báo cáo (bất lợi) · <span style={{ color: "#0F6E56" }}>■ Xanh</span> = tỷ lệ thấp hơn (tốt hơn)<br />
             CP Host = phí quản lý LOCI {prop ? "tính trên lãi của riêng cơ sở này" : "tính trên tổng lãi các cơ sở"}. {at
-              ? `CP Thuế tự tính theo hồ sơ NĐT: GTGT ${at.vatPct}% × DT, TNCN ${at.pitPct}% × lợi nhuận sau phí quản lý. BHXH, Kế toán lấy từ các khoản chi đã nhập đúng loại.`
+              ? `CP Thuế tự tính theo hồ sơ NĐT: GTGT = DT × ${at.vatPct}/${100 + at.vatPct}, TNCN ${at.pitPct}% × lợi nhuận sau phí quản lý. BHXH, Kế toán lấy từ các khoản chi đã nhập đúng loại.`
               : "CP Thuế, BHXH, Kế toán lấy từ các khoản chi đã nhập đúng loại; GTGT = DT × 8/108, phần thuế còn lại tính là TNDN."}
           </div>
         </div>

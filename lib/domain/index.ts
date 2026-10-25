@@ -309,7 +309,7 @@ export function managementFee(profit: number, feePct: number): number {
 
 /**
  * Phí quản lý và thuế của CĐT đặc biệt (vd Uxistay), theo thứ tự:
- * GTGT = vatPct % doanh thu → lợi nhuận trước phí = lợi nhuận − GTGT → phí quản lý trên lợi nhuận đó
+ * GTGT nằm trong doanh thu = DT × vatPct/(100 + vatPct) → lợi nhuận trước phí = lợi nhuận − GTGT → phí quản lý trên lợi nhuận đó
  * → TNCN = pitPct % phần còn lại sau phí. CĐT thường để 0 nên kết quả như cũ.
  */
 export function feeAndTaxes(opts: { revenue: number; profit: number; feePct: number; vatPct?: number; pitPct?: number }): {
@@ -317,7 +317,8 @@ export function feeAndTaxes(opts: { revenue: number; profit: number; feePct: num
 } {
   const { revenue, profit, feePct, vatPct = 0, pitPct = 0 } = opts;
   assertInt(revenue, "Doanh thu");
-  const vat = revenue > 0 ? Math.floor((revenue * vatPct) / 100) : 0;
+  // Doanh thu đã gồm VAT: VAT = DT × vatPct / (100 + vatPct), vd 8% → DT × 8/108
+  const vat = revenue > 0 && vatPct > 0 ? Math.floor((revenue * vatPct) / (100 + vatPct)) : 0;
   const profitBeforeFee = profit - vat;
   const fee = managementFee(profitBeforeFee, feePct);
   const afterFee = profitBeforeFee - fee;

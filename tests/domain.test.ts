@@ -402,7 +402,7 @@ describe("Cảnh báo thiếu chi phí tháng", () => {
 describe("Thuế CĐT đặc biệt (GTGT, TNCN)", () => {
   it("GTGT trừ trước phí quản lý, TNCN trên phần còn lại sau phí (ví dụ đã thống nhất)", () => {
     expect(feeAndTaxes({ revenue: 100_000_000, profit: 60_000_000, feePct: 20, vatPct: 8, pitPct: 17 })).toEqual({
-      vat: 8_000_000, profitBeforeFee: 52_000_000, fee: 10_400_000, pit: 7_072_000, investorNet: 34_528_000,
+      vat: 7_407_407, profitBeforeFee: 52_592_593, fee: 10_518_518, pit: 7_152_592, investorNet: 34_921_483,
     });
   });
 
@@ -411,6 +411,6 @@ describe("Thuế CĐT đặc biệt (GTGT, TNCN)", () => {
   });
 
   it("lỗ sau GTGT: không phí, không TNCN, GTGT vẫn phải nộp", () => {
-    expect(feeAndTaxes({ revenue: 50_000_000, profit: 3_000_000, feePct: 20, vatPct: 8, pitPct: 17 })).toEqual({ vat: 4_000_000, profitBeforeFee: -1_000_000, fee: 0, pit: 0, investorNet: -1_000_000 });
+    expect(feeAndTaxes({ revenue: 50_000_000, profit: 3_000_000, feePct: 20, vatPct: 8, pitPct: 17 })).toEqual({ vat: 3_703_703, profitBeforeFee: -703_703, fee: 0, pit: 0, investorNet: -703_703 });
   });
 });

@@ -64,7 +64,7 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
           <div><dt>Doanh thu (đã trừ hoa hồng OTA)</dt><dd>{vnd(s.totalRevenue)}</dd></div>
           <div><dt>Chi phí của cơ sở</dt><dd>− {vnd(s.totalDirectCost)}</dd></div>
           <div><dt>Chi phí chung được chia</dt><dd>− {vnd(s.totalCommonCost)}</dd></div>
-          {s.vatPct > 0 && <div><dt>Thuế VAT chủ nhà trả ({s.vatPct}% doanh thu)</dt><dd>− {vnd(s.vat)}</dd></div>}
+          {s.vatPct > 0 && <div><dt>Thuế VAT chủ nhà trả (DT × {s.vatPct}/{100 + s.vatPct})</dt><dd>− {vnd(s.vat)}</dd></div>}
           <div><dt>Lợi nhuận thực tính{s.vatPct > 0 ? " (sau VAT)" : " (chủ nhà không trả VAT)"}</dt><dd className={sign(s.totalProfit)}>{vnd(s.totalProfit)}</dd></div>
           <div><dt>Phí Host LOCI ({s.feePct}% lợi nhuận thực tính)</dt><dd>{loss ? "0 ₫" : `− ${vnd(s.managementFee)}`}</dd></div>
           {s.pitPct > 0 && <div><dt>Thuế TNCN ({s.pitPct}% lợi nhuận sau phí)</dt><dd>{s.pit ? `− ${vnd(s.pit)}` : "0 ₫"}</dd></div>}
@@ -111,7 +111,7 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
           {taxed && (
             <p>
               {s.vatPct > 0
-                ? <>Chủ nhà trả VAT: {s.vatPct}% × doanh thu {vnd(s.totalRevenue)} = {vnd(s.vat)}. Lợi nhuận thực tính = {vnd(s.operatingProfit)} − {vnd(s.vat)} = {vnd(s.totalProfit)}, Phí Host = {s.feePct}% × {vnd(s.totalProfit)}.</>
+                ? <>Chủ nhà trả VAT (đã nằm trong doanh thu): {vnd(s.totalRevenue)} × {s.vatPct}/{100 + s.vatPct} = {vnd(s.vat)}. Lợi nhuận thực tính = {vnd(s.operatingProfit)} − {vnd(s.vat)} = {vnd(s.totalProfit)}, Phí Host = {s.feePct}% × {vnd(s.totalProfit)}.</>
                 : <>Chủ nhà không trả VAT: Phí Host = {s.feePct}% × lợi nhuận {vnd(s.totalProfit)}.</>}
               {s.pitPct > 0 && <> TNCN {s.pitPct}% × lợi nhuận sau khi trừ hết chi phí, thuế GTGT và phí quản lý ({vnd(s.totalProfit - s.managementFee)}) = {vnd(s.pit)}.</>}
             </p>
