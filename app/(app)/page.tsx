@@ -8,7 +8,7 @@ import { can } from "@/lib/auth/access";
 import { requireUser } from "@/lib/server";
 import { investorForecast, paybackForInvestor } from "@/lib/services/settlement";
 import { targetsForMonth } from "@/lib/services/targets";
-import { bookingsForMonth, openAlerts, visibleInvestors, visibleProperties } from "@/lib/queries";
+import { visibleInvestors, visibleProperties } from "@/lib/queries";
 import { sign, vnd } from "@/components/MonthNav";
 
 /** Số tiền gọn cho bảng và thanh KPI: 925,3 tr, 1,15 tỷ. */
@@ -47,11 +47,9 @@ export default async function Dashboard() {
   const from = D.firstDay(month);
   const to = D.lastDay(month);
   // Các phần độc lập đọc DB song song để trang mở nhanh
-  const [props, invRows, bks, al, targets] = await Promise.all([
+  const [props, invRows, targets] = await Promise.all([
     visibleProperties(db, user),
     visibleInvestors(db, user),
-    bookingsForMonth(db, user, month),
-    openAlerts(db, user),
     targetsForMonth(db, user, month),
   ]);
   const pids = props.map((p) => p.id);
@@ -101,8 +99,6 @@ export default async function Dashboard() {
   const headline = showFee ? sumA("investorNet") : total.actual.revenue - rows.reduce((s, r) => s + r.l.actualCost, 0);
   const forecastNet = showFee ? forecasts.reduce((s, x) => s + x.f.investorNet, 0) : rows.reduce((s, r) => s + r.l.revenueForecast - r.l.costForecast, 0);
   const who = !showFee ? "" : mine ? " của bạn" : " của nhà đầu tư";
-  const ci = bks.filter((b) => b.status === "CONFIRMED" && b.checkIn === today);
-  const co = bks.filter((b) => b.status === "CONFIRMED" && b.checkOut === today);
   const k = total.k;
   const hasTarget = !!total.target;
   const pctOf = (n: number, t: number) => (t ? Math.min(100, Math.max(0, (n / t) * 100)) : 0);
@@ -188,35 +184,22 @@ export default async function Dashboard() {
         </>
       )}
 
-      <div className="grid g2" style={{ marginTop: 24 }}>
-        {showFee && (
-          <section className="panel">
-            <header><div><h2>Hoàn vốn</h2><p>Tính trên các tháng đã khóa sổ</p></div></header>
-            <div className="stack" style={{ gap: 24 }}>
-              {forecasts.map(({ inv, pb }) => pb && (
-                <div key={inv.id} className="stack" style={{ gap: 8 }}>
-                  <div className="row"><b>{inv.name}</b><span className="spacer" /><span className="pill ok">{Math.round(pctOf(pb.received, pb.investmentTotal))}%</span></div>
-                  <div className="progress"><i style={{ width: `${pctOf(pb.received, pb.investmentTotal)}%` }} /></div>
-                  <div className="kv"><span>Lợi nhuận đã thu về</span><b>{vnd(pb.received)}</b></div>
-                  <div className="kv"><span>Vốn đầu tư</span><b>{vnd(pb.investmentTotal)}</b></div>
-                  <div className="small muted">{pb.monthsLeft === null ? "Chưa đủ dữ liệu để ước tính thời gian hoàn vốn" : pb.monthsLeft === 0 ? "Đã hoàn vốn" : `Dự kiến còn khoảng ${pb.monthsLeft} tháng nữa`}</div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-        <section className="panel">
-          <header><h2>Hôm nay</h2></header>
-          <div className="kv"><span>Khách nhận phòng</span><b>{ci.length}</b></div>
-          {ci.length > 0 && <p className="small muted" style={{ margin: "4px 0 12px" }}>{ci.map((b) => b.guestName ?? "Khách").join(", ")}</p>}
-          <div className="kv" style={{ marginTop: 8 }}><span>Khách trả phòng</span><b>{co.length}</b></div>
-          {co.length > 0 && <p className="small muted" style={{ margin: "4px 0 0" }}>{co.map((b) => b.guestName ?? "Khách").join(", ")}</p>}
+      {showFee && forecasts.some((x) => x.pb) && (
+        <section className="panel" style={{ marginTop: 24 }}>
+          <header><div><h2>Hoàn vốn</h2><p>Tính trên các tháng đã khóa sổ</p></div></header>
+          <div className="prop-list">
+            {forecasts.map(({ inv, pb }) => pb && (
+              <div key={inv.id} className="stack" style={{ gap: 8 }}>
+                <div className="row"><b>{inv.name}</b><span className="spacer" /><span className="pill ok">{Math.round(pctOf(pb.received, pb.investmentTotal))}%</span></div>
+                <div className="progress"><i style={{ width: `${pctOf(pb.received, pb.investmentTotal)}%` }} /></div>
+                <div className="kv"><span>Lợi nhuận đã thu về</span><b>{vnd(pb.received)}</b></div>
+                <div className="kv"><span>Vốn đầu tư</span><b>{vnd(pb.investmentTotal)}</b></div>
+                <div className="small muted">{pb.monthsLeft === null ? "Chưa đủ dữ liệu để ước tính thời gian hoàn vốn" : pb.monthsLeft === 0 ? "Đã hoàn vốn" : `Dự kiến còn khoảng ${pb.monthsLeft} tháng nữa`}</div>
+              </div>
+            ))}
+          </div>
         </section>
-        <section className="panel">
-          <header><h2>Cần lưu ý</h2>{al.length > 0 && <span className="pill warn">{al.length}</span>}</header>
-          {al.length ? al.map((a) => <div key={a.id} className={`banner ${a.type === "TASK_OVERDUE" ? "bad" : ""}`}>{a.message}</div>) : <p className="small muted" style={{ margin: 0 }}>Không có gì cần lưu ý.</p>}
-        </section>
-      </div>
+      )}
     </>
   );
 }
