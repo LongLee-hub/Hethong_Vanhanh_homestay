@@ -26,6 +26,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     ["/settlements", "Quyết toán", can(user, "viewFee")],
     ["/payouts", "Payout Airbnb", can(user, "viewFee")],
     ["/reports", "Báo cáo NĐT", can(user, "viewFee")],
+    ["/targets", "Chỉ tiêu", can(user, "admin")],
     ["/tasks", "Công việc", can(user, "workTask")],
     ["/attendance", "Chấm công", can(user, "clock") || can(user, "viewAllAttendance")],
     ["/dayladau", "Kết nối Dayladau", can(user, "admin")],

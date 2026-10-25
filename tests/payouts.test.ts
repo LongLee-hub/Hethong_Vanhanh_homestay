@@ -14,6 +14,7 @@ import { googleReady, googleSetup, loadGoogleConfig, saveGoogleSetup } from "../
 import { redirectUri } from "../lib/gmail/oauth";
 import { getSettlement } from "../lib/services/settlement";
 import { upsertBooking } from "../lib/services/bookings";
+import * as D from "../lib/domain";
 
 let db: DB;
 const admin: SessionUser = { id: "u-admin", name: "Admin", role: "ADMIN" };
@@ -120,7 +121,8 @@ describe("Đồng bộ và đối soát payout", () => {
     const { client, calls } = fakeGmail([PAYOUT, resent]);
     const sum = await syncPayouts(db, { client, accessToken: token, decrypt: plain, today: "2026-10-22" });
     expect(sum).toMatchObject({ created: 0, duplicates: 1 });
-    expect(calls[0].query).toMatch(/after:2026\/10\/1[45]/);
+    // Lần đồng bộ trước ghi giờ thật, nên mốc đọc lùi 7 ngày tính từ hôm nay chứ không từ ngày giả trong test
+    expect(calls[0].query).toContain(`after:${D.addDays(D.todayVN(), -7).replaceAll("-", "/")}`);
   });
 
   it("liệt kê đơn Airbnb đã nhận phòng quá 3 ngày mà chưa có payout", async () => {

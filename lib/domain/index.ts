@@ -533,3 +533,124 @@ export function formatMonthVN(m: Month): string {
   const [y, mo] = m.split("-");
   return `Tháng ${Number(mo)}/${y}`;
 }
+
+// ---------- 5.9 Chỉ tiêu tháng (KPI) ----------
+
+/**
+ * Chi phí dự kiến không được thấp hơn số đã chi thực tế trong tháng.
+ * Mô hình (chi phí cố định + biến đổi theo đêm + chi phí chung) chỉ là sàn khi chưa nhập đủ chi phí.
+ */
+export function costForecastWithActual(modelCost: number, actualCost: number): number {
+  return Math.max(modelCost, actualCost);
+}
+
+export interface KpiTarget {
+  revenue: number; // VND cả tháng
+  occupancyPct: number; // 0..100, trên đêm mở bán
+  adr: number; // VND/đêm, tính gộp (doanh thu gồm thuê giờ ÷ đêm bán)
+}
+
+export interface KpiActual {
+  revenue: number; // doanh thu đến hôm nay (gồm thuê giờ, phí hủy)
+  soldNights: number; // đêm bán đến hết đêm nay
+  availableNights: number; // đêm mở bán từ đầu tháng đến hết hôm nay
+}
+
+export type KpiStatus = "ok" | "warn" | "bad" | "none";
+
+export interface KpiItem {
+  actual: number;
+  target: number | null;
+  pct: number | null; // % so với mục tiêu cả tháng (0..∞), 1 chữ số thập phân
+  pacePct: number | null; // vạch cần đạt theo tiến độ, % mục tiêu
+  status: KpiStatus;
+}
+
+export interface KpiProgress {
+  daysElapsed: number;
+  daysInMonth: number;
+  revenue: KpiItem & { forecast: number; forecastPct: number | null };
+  occupancy: KpiItem;
+  adr: KpiItem;
+}
+
+const r1 = (n: number) => Math.round(n * 10) / 10;
+
+/** Xanh khi đạt ≥ 100% mức cần, vàng khi thiếu dưới 10%, đỏ khi thiếu từ 10% trở lên. */
+export function kpiStatus(actual: number, required: number | null): KpiStatus {
+  if (required === null || required <= 0) return "none";
+  const ratio = actual / required;
+  return ratio >= 1 ? "ok" : ratio >= 0.9 ? "warn" : "bad";
+}
+
+/** Công suất đến hôm nay (trên đêm mở bán) và giá trung bình gộp (doanh thu gồm thuê giờ ÷ đêm bán). */
+export function kpiActuals(a: KpiActual): { occupancyPct: number; adr: number } {
+  return {
+    occupancyPct: a.availableNights ? r1(Math.min(100, (a.soldNights / a.availableNights) * 100)) : 0,
+    adr: a.soldNights ? Math.floor(a.revenue / a.soldNights) : 0,
+  };
+}
+
+/**
+ * So thực tế đến hôm nay với chỉ tiêu tháng.
+ * Doanh thu cộng dồn nên mức cần đạt chia theo số ngày đã qua; công suất và giá trung bình là tỷ lệ nên so thẳng với mục tiêu.
+ */
+export function kpiProgress(opts: { month: Month; today: ISODate; actual: KpiActual; target: KpiTarget | null }): KpiProgress {
+  const { month, today, actual, target } = opts;
+  const from = firstDay(month);
+  const to = lastDay(month);
+  const daysInMonth = Number(to.slice(8, 10));
+  const daysElapsed = today < from ? 0 : today > to ? daysInMonth : Number(today.slice(8, 10));
+  const pace = daysInMonth ? daysElapsed / daysInMonth : 0;
+  const { occupancyPct, adr } = kpiActuals(actual);
+  const forecast = daysElapsed ? Math.round((actual.revenue / daysElapsed) * daysInMonth) : actual.revenue;
+  const tRev = target && target.revenue > 0 ? target.revenue : null;
+  const tOcc = target && target.occupancyPct > 0 ? target.occupancyPct : null;
+  const tAdr = target && target.adr > 0 ? target.adr : null;
+  return {
+    daysElapsed,
+    daysInMonth,
+    revenue: {
+      actual: actual.revenue,
+      target: tRev,
+      pct: tRev ? r1((actual.revenue / tRev) * 100) : null,
+      pacePct: tRev ? r1(pace * 100) : null,
+      status: kpiStatus(actual.revenue, tRev ? tRev * pace : null),
+      forecast,
+      forecastPct: tRev ? r1((forecast / tRev) * 100) : null,
+    },
+    occupancy: { actual: occupancyPct, target: tOcc, pct: tOcc ? r1((occupancyPct / tOcc) * 100) : null, pacePct: tOcc ? 100 : null, status: kpiStatus(occupancyPct, tOcc) },
+    adr: { actual: adr, target: tAdr, pct: tAdr ? r1((adr / tAdr) * 100) : null, pacePct: tAdr ? 100 : null, status: kpiStatus(adr, tAdr) },
+  };
+}
+
+/**
+ * Chỉ tiêu của NĐT tự cộng từ chỉ tiêu từng cơ sở:
+ * doanh thu = tổng; công suất = bình quân theo đêm mở bán của cả tháng;
+ * giá TB = bình quân giá TB các cơ sở theo số đêm mục tiêu (khi 3 chỉ tiêu khớp nhau thì bằng tổng doanh thu ÷ tổng đêm mục tiêu,
+ * còn khi lệch thì vẫn bám đúng giá đã nhập thay vì suy ngược từ doanh thu).
+ * Cơ sở chưa có chỉ tiêu bị bỏ qua. Không cơ sở nào có chỉ tiêu thì trả null.
+ */
+export function aggregateTargets(items: { target: KpiTarget | null; monthAvailableNights: number }[]): KpiTarget | null {
+  const withT = items.filter((i): i is { target: KpiTarget; monthAvailableNights: number } => !!i.target);
+  if (!withT.length) return null;
+  const revenue = withT.reduce((s, i) => s + i.target.revenue, 0);
+  const avail = withT.reduce((s, i) => s + i.monthAvailableNights, 0);
+  const targetNights = withT.reduce((s, i) => s + (i.target.occupancyPct / 100) * i.monthAvailableNights, 0);
+  const adrWeighted = withT.reduce((s, i) => s + i.target.adr * (i.target.occupancyPct / 100) * i.monthAvailableNights, 0);
+  return {
+    revenue,
+    occupancyPct: avail ? r1((targetNights / avail) * 100) : 0,
+    adr: targetNights ? Math.round(adrWeighted / targetNights) : 0,
+  };
+}
+
+/**
+ * Ba chỉ tiêu ràng buộc nhau: doanh thu ≈ công suất × đêm mở bán × giá TB.
+ * Trả về doanh thu suy ra và cờ lệch khi chênh quá ngưỡng (mặc định 15%). Chỉ để nhắc, không chặn lưu.
+ */
+export function targetConsistency(t: KpiTarget, monthAvailableNights: number, tolerance = 0.15): { implied: number; off: boolean } {
+  const implied = Math.round((t.occupancyPct / 100) * monthAvailableNights * t.adr);
+  if (!t.revenue || !implied) return { implied, off: false };
+  return { implied, off: Math.abs(t.revenue - implied) / t.revenue > tolerance };
+}

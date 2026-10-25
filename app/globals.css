@@ -407,3 +407,45 @@ form.backfill .row > .field { flex: 1 1 180px; }
 .expense-filter > .field.grow, .filter-bar > .field.grow { flex: 1 1 240px; }
 .expense-filter > .row, .filter-bar > .row { flex: 0 0 auto; }
 @media (max-width: 600px) { .expense-filter > .field, .expense-filter > .field.grow, .filter-bar > .field, .filter-bar > .field.grow { flex: 1 1 100%; } }
+
+/* Chỉ tiêu tháng */
+.targets td { vertical-align: middle; }
+.targets td.n input { width: 100%; max-width: 160px; text-align: right; font-variant-numeric: tabular-nums; }
+.targets tr.inv-total td { background: var(--bg); font-variant-numeric: tabular-nums; }
+.targets .prop-name { padding-left: 20px; }
+.targets .prop-name .pill { margin-left: 8px; }
+.targets .hint { display: block; margin-top: 4px; font-size: .82rem; color: var(--warn); }
+.targets tr.off td.n input { border-color: var(--warn); background: var(--warn-soft); }
+
+/* Tổng quan: KPI tháng */
+.hero .forecast { margin: 0 0 12px; color: var(--muted); }
+.hero .forecast b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.kpis { margin-bottom: 24px; }
+.kpi + .kpi { margin-top: 20px; }
+.kpi-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: .95rem; }
+.kpi-head > span:first-child { font-weight: 600; }
+.kpi-head b { font-family: var(--f-display); font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+.kpi-head > span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
+.kbar { position: relative; height: 10px; border-radius: 999px; background: var(--surface-2); margin: 10px 0 8px; }
+.kbar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: var(--muted); }
+.kbar .fill.ok { background: var(--pos); }
+.kbar .fill.warn { background: var(--warn); }
+.kbar .fill.bad { background: var(--neg); }
+.kbar .mark { position: absolute; top: -5px; width: 3px; height: 20px; margin-left: -1.5px; border-radius: 2px; background: var(--ink); }
+.kpi-note { margin: 0; font-size: .88rem; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.kpi-table td { vertical-align: middle; font-variant-numeric: tabular-nums; }
+.kpi-table td .s { display: block; font-size: .78rem; color: var(--muted); font-weight: 400; }
+.kpi-table td.st-ok { color: var(--pos); font-weight: 600; }
+.kpi-table td.st-warn { color: var(--warn); font-weight: 600; }
+.kpi-table td.st-bad { color: var(--neg); font-weight: 600; }
+.kpi-table tr.grp td { background: var(--bg); font-weight: 600; }
+.kpi-table tr.sub td:first-child { padding-left: 24px; }
+@media (max-width: 640px) {
+  .kpi-table th:nth-child(5), .kpi-table td:nth-child(5) { display: none; }
+}
+@media (max-width: 640px) {
+  .kpi-table { font-size: .82rem; }
+  .kpi-table th, .kpi-table td { padding: 10px 4px; }
+  .kpi-table td .s { font-size: .7rem; }
+  .kpi-table tr.sub td:first-child { padding-left: 12px; }
+}

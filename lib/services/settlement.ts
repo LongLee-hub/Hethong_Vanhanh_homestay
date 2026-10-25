@@ -267,15 +267,22 @@ export async function investorForecast(db: DB, investorId: string, month: string
     });
     const adj = adjs.filter((a) => a.propertyId === p.id).reduce((s, a) => s + a.amount, 0);
     const actualCost = exps.filter((e) => e.propertyId === p.id && e.month === month).reduce((s, e) => s + e.amount, 0) + (common.perProperty[p.id] ?? 0);
-    return { propertyId: p.id, name: p.name, ...f, revenueForecast: f.revenueForecast + adj, actualCost };
+    // Chi phí dự kiến không thấp hơn số đã chi: mô hình chi phí cố định/biến đổi chỉ là mức sàn
+    return { propertyId: p.id, name: p.name, ...f, revenueForecast: f.revenueForecast + adj, costForecast: D.costForecastWithActual(f.costForecast, actualCost), actualCost };
   });
   const revenue = lines.reduce((s, l) => s + l.revenueForecast, 0);
   const cost = lines.reduce((s, l) => s + l.costForecast, 0);
   const profit = revenue - cost;
   const t = D.feeAndTaxes({ revenue, profit, feePct: pct, vatPct, pitPct });
+  // Số thực tế đến hôm nay: doanh thu đã thực hiện (gồm điều chỉnh của tháng) trừ chi phí đã ghi nhận, phí và thuế tính riêng NĐT này
+  const adjTotal = adjs.reduce((s, a) => s + a.amount, 0);
+  const revenuePast = lines.reduce((s, l) => s + l.revenuePast, 0) + adjTotal;
+  const actualCost = lines.reduce((s, l) => s + l.actualCost, 0);
+  const a = D.feeAndTaxes({ revenue: revenuePast, profit: revenuePast - actualCost, feePct: pct, vatPct, pitPct });
   return {
-    lines, revenueForecast: revenue, costForecast: cost, actualCost: lines.reduce((s, l) => s + l.actualCost, 0), profitForecast: profit,
+    lines, revenueForecast: revenue, costForecast: cost, actualCost, profitForecast: profit,
     managementFee: t.fee, vat: t.vat, pit: t.pit, investorNet: t.investorNet, commonProvisional: common.provisional,
+    actual: { revenue: revenuePast, cost: actualCost, vat: a.vat, fee: a.fee, pit: a.pit, investorNet: a.investorNet },
   };
 }
 

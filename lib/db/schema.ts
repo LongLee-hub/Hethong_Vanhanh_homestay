@@ -285,6 +285,22 @@ export const monthPeriods = pgTable("month_periods", {
   commonCostsFinalized: boolean("common_costs_finalized").notNull().default(false),
 });
 
+/** Chỉ tiêu tháng của từng cơ sở do admin nhập. Chỉ tiêu của NĐT tự cộng từ các cơ sở. */
+export const propertyTargets = pgTable(
+  "property_targets",
+  {
+    id: id(),
+    propertyId: text("property_id").notNull().references(() => properties.id),
+    month: text("month").notNull(), // YYYY-MM
+    revenue: money("revenue"), // VND cả tháng
+    occupancyPct: numeric("occupancy_pct", { precision: 5, scale: 2, mode: "number" }).notNull().default(0), // trên đêm mở bán
+    adr: money("adr"), // VND/đêm, tính gộp cả doanh thu thuê giờ
+    updatedBy: text("updated_by").references(() => users.id),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("property_targets_property_month").on(t.propertyId, t.month)],
+);
+
 // ---------- 4.4 Quyết toán ----------
 export const settlementStatusEnum = pgEnum("settlement_status", ["DRAFT", "LOCKED"]);
 
