@@ -19,13 +19,21 @@ type State = { ok: boolean; error?: string } | null;
 const s = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 const numOrNull = (f: FormData, k: string) => (s(f, k) ? Number(s(f, k).replace(",", ".")) : null);
 
+/** "Không trả VAT" → null; "Có trả VAT" → mức đã nhập (mặc định 8%). Form cũ không có vatMode thì đọc thẳng vatPct. */
+const vatPctOf = (f: FormData) => {
+  const mode = s(f, "vatMode");
+  if (mode === "0") return null;
+  if (mode === "1") return numOrNull(f, "vatPct") ?? 8;
+  return numOrNull(f, "vatPct");
+};
+
 export async function saveInvestorAction(_: State, f: FormData): Promise<State> {
   const user = await requireUser();
   const r = await action(() =>
     saveInvestor(getDb(), user, {
       id: s(f, "id") || undefined, name: s(f, "name"), phone: s(f, "phone"), email: s(f, "email"), taxCode: s(f, "taxCode"), address: s(f, "address"),
       bankName: s(f, "bankName"), bankAccountNo: s(f, "bankAccountNo"), bankAccountName: s(f, "bankAccountName"),
-      managementFeePct: numOrNull(f, "managementFeePct"), vatPct: numOrNull(f, "vatPct"), pitPct: numOrNull(f, "pitPct"), sharesCommonCost: s(f, "sharesCommonCost") === "1", contractStartOn: s(f, "contractStartOn") || null, contractEndOn: s(f, "contractEndOn") || null,
+      managementFeePct: numOrNull(f, "managementFeePct"), vatPct: vatPctOf(f), pitPct: numOrNull(f, "pitPct"), sharesCommonCost: s(f, "sharesCommonCost") === "1", contractStartOn: s(f, "contractStartOn") || null, contractEndOn: s(f, "contractEndOn") || null,
       contractUrl: s(f, "contractUrl"), payoutDay: numOrNull(f, "payoutDay"), active: s(f, "active") !== "0", note: s(f, "note"),
       larkWebhookUrl: s(f, "larkWebhookUrl"),
     }),

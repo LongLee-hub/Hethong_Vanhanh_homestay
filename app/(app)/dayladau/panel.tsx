@@ -86,6 +86,31 @@ function AlertRow({ a }: { a: Alert }) {
   );
 }
 
+const VAT_DEFAULT = 8;
+
+/** Chủ nhà có phải trả thuế VAT không: có thì VAT trừ khỏi lợi nhuận trước khi tính Phí Host. */
+function VatField({ inv, id }: { inv?: Investor; id: string }) {
+  const [on, setOn] = useState(!!inv?.vatPct);
+  return (
+    <div className="field full">
+      <span>Chủ nhà phải trả thuế VAT?</span>
+      <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+        <div className="seg" role="group" aria-label="Chủ nhà phải trả thuế VAT">
+          <button type="button" aria-pressed={on} onClick={() => setOn(true)}>Có trả VAT</button>
+          <button type="button" aria-pressed={!on} onClick={() => setOn(false)}>Không trả VAT</button>
+        </div>
+        <input type="hidden" name="vatMode" value={on ? "1" : "0"} />
+        {on && (
+          <label className="row" style={{ gap: 8 }}>
+            <span className="small muted">Mức VAT (% doanh thu)</span>
+            <input type="number" min={0.01} max={100} step="0.01" name="vatPct" id={id} defaultValue={inv?.vatPct || VAT_DEFAULT} style={{ width: 96 }} required />
+          </label>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function InvestorForm({ inv, defaultFeePct, onDone }: { inv?: Investor; defaultFeePct: number; onDone: () => void }) {
   const f = (k: string) => `inv-${k}-${inv?.id ?? "new"}`;
   return (
@@ -107,10 +132,10 @@ function InvestorForm({ inv, defaultFeePct, onDone }: { inv?: Investor; defaultF
 
         <h3 className="full sub-title">Hợp đồng</h3>
         <label className="field"><span>Phí quản lý LOCI (%)</span><input type="number" min={0} max={100} step="0.01" name="managementFeePct" id={f("fee")} defaultValue={inv?.managementFeePct ?? ""} placeholder={`Để trống = mức chung ${defaultFeePct}%`} /></label>
-        <label className="field"><span>Thuế GTGT (% doanh thu)</span><input type="number" min={0} max={100} step="0.01" name="vatPct" id={f("vat")} defaultValue={inv?.vatPct ?? ""} placeholder="Để trống = không áp dụng" /></label>
+        <VatField inv={inv} id={f("vat")} />
         <label className="field"><span>Thuế TNCN (% lợi nhuận sau phí)</span><input type="number" min={0} max={100} step="0.01" name="pitPct" id={f("pit")} defaultValue={inv?.pitPct ?? ""} placeholder="Để trống = không áp dụng" /></label>
         <label className="check-item full"><input type="checkbox" name="sharesCommonCost" value="1" id={f("shares")} defaultChecked={inv?.sharesCommonCost ?? false} /><span>Chịu chi phí chung (Unix): chi phí chung chia đều theo phòng các cơ sở của những NĐT được chọn</span></label>
-        <p className="hint full">Chỉ điền cho CĐT đặc biệt (vd Uxistay: GTGT 8%, TNCN 17%). Quyết toán trừ GTGT trên doanh thu trước khi tính phí quản lý, rồi trừ TNCN trên phần lợi nhuận còn lại sau phí.</p>
+        <p className="hint full">Phí Host tính trên lợi nhuận thực tính: chủ nhà phải trả VAT thì lợi nhuận = doanh thu − chi phí − VAT ({VAT_DEFAULT}% doanh thu); không phải trả VAT thì lợi nhuận = doanh thu − chi phí. Thuế TNCN chỉ điền cho CĐT đặc biệt (vd Uxistay 17%), trừ trên phần lợi nhuận còn lại sau phí.</p>
         <label className="field"><span>Bắt đầu hợp đồng</span><input type="date" name="contractStartOn" id={f("cStart")} defaultValue={inv?.contractStartOn ?? ""} /></label>
         <label className="field"><span>Kết thúc hợp đồng</span><input type="date" name="contractEndOn" id={f("cEnd")} defaultValue={inv?.contractEndOn ?? ""} /></label>
         {inv && (
@@ -149,7 +174,8 @@ function InvestorCard({ inv, props, bookingCount, defaultFeePct, onEdit }: { inv
         <div className="kv"><span>Liên hệ</span><b>{[inv.phone, inv.email].filter(Boolean).join(" · ") || "—"}</b></div>
         <div className="kv"><span>MST / CCCD</span><b>{inv.taxCode || "—"}</b></div>
         <div className="kv"><span>Phí quản lý</span><b>{inv.managementFeePct != null ? `${inv.managementFeePct}%` : `${defaultFeePct}% (mức chung)`}</b></div>
-        {(inv.vatPct || inv.pitPct) ? <div className="kv"><span>Thuế CĐT</span><b>{[inv.vatPct ? `GTGT ${inv.vatPct}%` : "", inv.pitPct ? `TNCN ${inv.pitPct}%` : ""].filter(Boolean).join(" · ")}</b></div> : null}
+        <div className="kv"><span>Thuế VAT</span><b>{inv.vatPct ? `Chủ nhà trả VAT ${inv.vatPct}% doanh thu` : "Không phải trả VAT"}</b></div>
+        {inv.pitPct ? <div className="kv"><span>Thuế TNCN</span><b>{inv.pitPct}% lợi nhuận sau phí</b></div> : null}
         <div className="kv"><span>Hợp đồng</span><b>{contract}</b></div>
         <div className="kv"><span>Nhận tiền</span><b>{bank || "—"}</b></div>
         <div className="kv"><span>Ngày chuyển tiền</span><b>{inv.payoutDay ? `Ngày ${inv.payoutDay} hằng tháng` : "—"}</b></div>

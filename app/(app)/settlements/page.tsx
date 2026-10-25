@@ -64,9 +64,9 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
           <div><dt>Doanh thu (đã trừ hoa hồng OTA)</dt><dd>{vnd(s.totalRevenue)}</dd></div>
           <div><dt>Chi phí của cơ sở</dt><dd>− {vnd(s.totalDirectCost)}</dd></div>
           <div><dt>Chi phí chung được chia</dt><dd>− {vnd(s.totalCommonCost)}</dd></div>
-          {taxed && <div><dt>Thuế GTGT ({s.vatPct}% doanh thu)</dt><dd>− {vnd(s.vat)}</dd></div>}
-          <div><dt>Lợi nhuận trước phí</dt><dd className={sign(s.totalProfit)}>{vnd(s.totalProfit)}</dd></div>
-          <div><dt>Phí quản lý LOCI ({s.feePct}% lợi nhuận)</dt><dd>{loss ? "0 ₫" : `− ${vnd(s.managementFee)}`}</dd></div>
+          {s.vatPct > 0 && <div><dt>Thuế VAT chủ nhà trả ({s.vatPct}% doanh thu)</dt><dd>− {vnd(s.vat)}</dd></div>}
+          <div><dt>Lợi nhuận thực tính{s.vatPct > 0 ? " (sau VAT)" : " (chủ nhà không trả VAT)"}</dt><dd className={sign(s.totalProfit)}>{vnd(s.totalProfit)}</dd></div>
+          <div><dt>Phí Host LOCI ({s.feePct}% lợi nhuận thực tính)</dt><dd>{loss ? "0 ₫" : `− ${vnd(s.managementFee)}`}</dd></div>
           {s.pitPct > 0 && <div><dt>Thuế TNCN ({s.pitPct}% lợi nhuận sau phí)</dt><dd>{s.pit ? `− ${vnd(s.pit)}` : "0 ₫"}</dd></div>}
           <div className="sum"><dt>{who}</dt><dd className={sign(s.investorNet)}>{vnd(s.investorNet)}</dd></div>
         </dl>
@@ -107,10 +107,12 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
               Phí quản lý tính trên tổng lợi nhuận {vnd(s.totalProfit)}, không tính riêng trên cơ sở có lãi.
             </p>
           )}
-          {loss && <p>{taxed ? "Lợi nhuận sau thuế GTGT" : "Tổng các cơ sở"} {s.totalProfit < 0 ? "lỗ" : "hòa vốn"} trong tháng, nên LOCI không thu phí quản lý tháng này.</p>}
+          {loss && <p>{s.vatPct > 0 ? "Lợi nhuận sau thuế VAT" : "Tổng các cơ sở"} {s.totalProfit < 0 ? "lỗ" : "hòa vốn"} trong tháng, nên LOCI không thu phí quản lý tháng này.</p>}
           {taxed && (
             <p>
-              Thuế: GTGT {s.vatPct}% × doanh thu {vnd(s.totalRevenue)} = {vnd(s.vat)}, trừ trước khi tính phí quản lý.
+              {s.vatPct > 0
+                ? <>Chủ nhà trả VAT: {s.vatPct}% × doanh thu {vnd(s.totalRevenue)} = {vnd(s.vat)}. Lợi nhuận thực tính = {vnd(s.operatingProfit)} − {vnd(s.vat)} = {vnd(s.totalProfit)}, Phí Host = {s.feePct}% × {vnd(s.totalProfit)}.</>
+                : <>Chủ nhà không trả VAT: Phí Host = {s.feePct}% × lợi nhuận {vnd(s.totalProfit)}.</>}
               {s.pitPct > 0 && <> TNCN {s.pitPct}% × lợi nhuận sau khi trừ hết chi phí, thuế GTGT và phí quản lý ({vnd(s.totalProfit - s.managementFee)}) = {vnd(s.pit)}.</>}
             </p>
           )}
