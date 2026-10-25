@@ -144,8 +144,8 @@ export default async function Dashboard() {
 
             <div className="kpi">
               <div className="kpi-head"><span>Doanh thu</span><span><b>{short(k.revenue.actual)}</b>{k.revenue.target ? <> / {short(k.revenue.target)} ({pctTxt(k.revenue.pct!)})</> : null}</span></div>
-              <KpiBar fill={k.revenue.target ? pctOf(k.revenue.actual, k.revenue.target) : 0} mark={k.revenue.pacePct} status={k.revenue.status}
-                label={k.revenue.target ? `Doanh thu ${pctTxt(k.revenue.pct!)} mục tiêu, cần ${pctTxt(k.revenue.pacePct!)} theo số ngày` : "Chưa có chỉ tiêu doanh thu"} />
+              <KpiBar fill={k.revenue.target ? pctOf(k.revenue.actual, k.revenue.target) : pctOf(k.revenue.actual, k.revenue.forecast)} mark={k.revenue.pacePct} status={k.revenue.status}
+                label={k.revenue.target ? `Doanh thu ${pctTxt(k.revenue.pct!)} mục tiêu, cần ${pctTxt(k.revenue.pacePct!)} theo số ngày` : `Doanh thu đã đạt ${Math.round(pctOf(k.revenue.actual, k.revenue.forecast))}% số dự kiến cuối tháng`} />
               <p className="kpi-note">Dự kiến cuối tháng {short(k.revenue.forecast)}{k.revenue.forecastPct !== null ? ` (${pctTxt(k.revenue.forecastPct)} mục tiêu)` : ""}{k.revenue.status !== "none" && <span className={`pill ${k.revenue.status}`}>{STATUS_TXT[k.revenue.status]}</span>}</p>
             </div>
 
@@ -165,7 +165,7 @@ export default async function Dashboard() {
           </section>
 
           <section className="panel">
-            <header><div><h2>{isAdmin ? "KPI theo nhà đầu tư" : "Từng cơ sở"}</h2><p>Phần trăm so với mục tiêu. Xanh: kịp tiến độ, vàng: chậm dưới 10%, đỏ: chậm từ 10% trở lên.</p></div></header>
+            <header><div><h2>{isAdmin ? "KPI theo nhà đầu tư" : "Từng cơ sở"}</h2><p>{hasTarget ? "Phần trăm so với mục tiêu. Xanh: kịp tiến độ, vàng: chậm dưới 10%, đỏ: chậm từ 10% trở lên." : "Số thực tế đến hôm nay. Khi có chỉ tiêu, bảng sẽ hiện phần trăm so với mục tiêu và tô màu theo tiến độ."}</p></div></header>
             <div className="tbl-wrap">
               <table className="kpi-table">
                 <thead>
@@ -205,18 +205,18 @@ export default async function Dashboard() {
 }
 
 function KpiRow({ name, sub, k, profit, group, indent }: { name: string; sub?: string; k: D.KpiProgress; profit: number; group?: boolean; indent?: boolean }) {
-  const cell = (it: D.KpiItem, actualTxt: string) => (
+  // Có chỉ tiêu: số chính là % mục tiêu (tô màu), dòng nhỏ là thực tế / mục tiêu. Chưa có: số chính là thực tế.
+  const cell = (it: D.KpiItem, actualTxt: string, targetTxt: string) => (
     <td className={`n st-${it.status}`}>
-      {it.pct !== null ? pctTxt(it.pct) : "—"}
-      <span className="s">{actualTxt}</span>
+      {it.pct !== null ? <>{pctTxt(it.pct)}<span className="s">{actualTxt} / {targetTxt}</span></> : actualTxt}
     </td>
   );
   return (
     <tr className={group ? "grp" : indent ? "sub" : ""}>
       <td>{name}{sub && <span className="s">{sub}</span>}</td>
-      {cell(k.revenue, `${short(k.revenue.actual)}${k.revenue.target ? ` / ${short(k.revenue.target)}` : ""}`)}
-      {cell(k.occupancy, `${pctTxt(k.occupancy.actual)}${k.occupancy.target ? ` / ${pctTxt(k.occupancy.target)}` : ""}`)}
-      {cell(k.adr, `${short(k.adr.actual)}${k.adr.target ? ` / ${short(k.adr.target)}` : ""}`)}
+      {cell(k.revenue, short(k.revenue.actual), short(k.revenue.target ?? 0))}
+      {cell(k.occupancy, pctTxt(k.occupancy.actual), pctTxt(k.occupancy.target ?? 0))}
+      {cell(k.adr, short(k.adr.actual), short(k.adr.target ?? 0))}
       <td className={`n ${sign(profit)}`}>{short(profit)}</td>
     </tr>
   );

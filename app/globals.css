@@ -427,7 +427,7 @@ form.backfill .row > .field { flex: 1 1 180px; }
 .kpi-head b { font-family: var(--f-display); font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
 .kpi-head > span:last-child { color: var(--muted); font-variant-numeric: tabular-nums; }
 .kbar { position: relative; height: 10px; border-radius: 999px; background: var(--surface-2); margin: 10px 0 8px; }
-.kbar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: var(--muted); }
+.kbar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: var(--accent); } /* chưa có chỉ tiêu: màu thương hiệu */
 .kbar .fill.ok { background: var(--pos); }
 .kbar .fill.warn { background: var(--warn); }
 .kbar .fill.bad { background: var(--neg); }
@@ -435,6 +435,7 @@ form.backfill .row > .field { flex: 1 1 180px; }
 .kpi-note { margin: 0; font-size: .88rem; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .kpi-table td { vertical-align: middle; font-variant-numeric: tabular-nums; }
 .kpi-table td .s { display: block; font-size: .78rem; color: var(--muted); font-weight: 400; }
+.kpi-table td.st-none { font-weight: 600; }
 .kpi-table td.st-ok { color: var(--pos); font-weight: 600; }
 .kpi-table td.st-warn { color: var(--warn); font-weight: 600; }
 .kpi-table td.st-bad { color: var(--neg); font-weight: 600; }
