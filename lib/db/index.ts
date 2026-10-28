@@ -17,7 +17,11 @@ export function getDb(): DB {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error("Thiếu DATABASE_URL");
     const max = Number(process.env.DB_POOL_MAX ?? 10);
-    const client = globalForDb._client ?? postgres(url, { max, prepare: false });
+    // Kết nối nằm im lâu (máy chủ Vercel giữ ấm giữa các lần gọi, hoặc trong lúc đồng bộ chờ API Dayladau) bị pooler Supabase
+    // cắt ngầm, câu kế tiếp ghi vào socket đã đóng: "write CONNECTION_CLOSED" / "read ECONNRESET". Tự đóng kết nối rảnh trước khi
+    // bị cắt và thay kết nối định kỳ.
+    const client =
+      globalForDb._client ?? postgres(url, { max, prepare: false, idle_timeout: 20, max_lifetime: 60 * 5, connect_timeout: 15 });
     globalForDb._client = client;
     globalForDb._db = drizzle(limitConcurrency(client, max), { schema }) as unknown as DB;
   }
@@ -29,6 +33,13 @@ export function getDb(): DB {
  * Cổng pooler 6543 của Supabase (transaction mode) bị treo khi postgres-js xếp câu thứ hai vào kết nối đang bận,
  * điều này xảy ra khi trang đọc nhiều câu song song (Promise.all).
  */
+/** Lỗi do socket tới pooler đã bị đóng (không phải lỗi SQL): an toàn để thử lại câu ngoài transaction. */
+export function isDeadConnection(e: unknown): boolean {
+  const err = e as { code?: string; errno?: string; message?: string };
+  const code = err?.code ?? err?.errno ?? "";
+  return ["CONNECTION_CLOSED", "CONNECTION_ENDED", "CONNECTION_DESTROYED", "ECONNRESET", "EPIPE"].includes(code) || /CONNECTION_CLOSED|ECONNRESET/.test(err?.message ?? "");
+}
+
 function limitConcurrency(client: postgres.Sql, max: number): postgres.Sql {
   let active = 0;
   const waiting: (() => void)[] = [];
@@ -38,10 +49,16 @@ function limitConcurrency(client: postgres.Sql, max: number): postgres.Sql {
     if (next) next();
     else active--;
   };
-  const run = async <T>(f: () => PromiseLike<T>): Promise<T> => {
+  const run = async <T>(f: () => PromiseLike<T>, retry = false): Promise<T> => {
     await acquire();
     try {
-      return await f();
+      try {
+        return await f();
+      } catch (e) {
+        // Kết nối chết trước khi câu được gửi đi: thử lại một lần trên kết nối mới
+        if (retry && isDeadConnection(e)) return await f();
+        throw e;
+      }
     } finally {
       release();
     }
@@ -53,8 +70,8 @@ function limitConcurrency(client: postgres.Sql, max: number): postgres.Sql {
         return (...args: Parameters<postgres.Sql["unsafe"]>) => {
           const pending = () => target.unsafe(...args);
           return {
-            values: () => run(() => pending().values()),
-            then: <A, B>(ok?: (v: unknown) => A, fail?: (e: unknown) => B) => run(() => pending()).then(ok, fail),
+            values: () => run(() => pending().values(), true),
+            then: <A, B>(ok?: (v: unknown) => A, fail?: (e: unknown) => B) => run(() => pending(), true).then(ok, fail),
           };
         };
       }
