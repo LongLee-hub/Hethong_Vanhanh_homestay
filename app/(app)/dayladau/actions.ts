@@ -97,9 +97,13 @@ export async function syncNowAction(accountId: string, full = false): Promise<{ 
   try {
     requirePermission(user, "admin");
     const db = getDb();
+    const t0 = Date.now();
     const summary = await syncBookings(db, { accountIds: [accountId], full });
+    const t1 = Date.now();
     await reconcilePayouts(db);
+    const t2 = Date.now();
     await computeAlerts(db);
+    console.log(`[sync-now] ${accountId}: đồng bộ ${t1 - t0}ms, đối soát payout ${t2 - t1}ms, cảnh báo ${Date.now() - t2}ms`);
     revalidatePath("/dayladau");
     return { ok: summary.errors.length === 0, summary, error: summary.errors[0]?.message };
   } catch (e) {

@@ -2,6 +2,7 @@
 import { and, eq, gt, gte, inArray, notInArray, sql } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
+import { rowsOf } from "../db/rows";
 import { alerts, bookings, dayladauAccounts, investors, properties, rooms, syncRuns } from "../db/schema";
 import { decryptSecret, getAllSettings, notifyLark } from "../services/settings";
 import { sameTracked, upsertBooking, type BookingInput } from "../services/bookings";
@@ -46,18 +47,17 @@ const chunks = <T>(xs: T[]) => Array.from({ length: Math.ceil(xs.length / CHUNK)
  */
 export async function backfillRoomOpenedOn(db: DB, propertyIds: string[]): Promise<number> {
   if (!propertyIds.length) return 0;
-  const firsts = await db
-    .select({ roomId: bookings.roomId, first: sql<string>`MIN(${bookings.checkIn})` })
-    .from(bookings)
-    .where(and(inArray(bookings.propertyId, propertyIds), eq(bookings.status, "CONFIRMED")))
-    .groupBy(bookings.roomId);
-  let fixed = 0;
-  for (const { roomId, first } of firsts) {
-    const day = String(first).slice(0, 10);
-    const r = await db.update(rooms).set({ openedOn: day }).where(and(eq(rooms.id, roomId), gt(rooms.openedOn, day))).returning({ id: rooms.id });
-    fixed += r.length;
-  }
-  return fixed;
+  // Một câu UPDATE cho mọi phòng (trước đây một câu cho mỗi phòng)
+  const fixed = await db.execute(sql`
+    update ${rooms} set opened_on = f.first
+    from (
+      select ${bookings.roomId} as room_id, min(${bookings.checkIn}) as first from ${bookings}
+      where ${and(inArray(bookings.propertyId, propertyIds), eq(bookings.status, "CONFIRMED"))}
+      group by ${bookings.roomId}
+    ) f
+    where ${rooms.id} = f.room_id and ${rooms.openedOn} > f.first
+    returning ${rooms.id}`);
+  return rowsOf(fixed).length;
 }
 
 async function raiseAlert(db: DB, type: string, key: string, message: string, propertyId?: string) {

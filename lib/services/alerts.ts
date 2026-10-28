@@ -1,5 +1,5 @@
 // Tính cảnh báo sau mỗi lần đồng bộ (Đặc tả 8.2). Cảnh báo đang mở không tạo trùng; tự đóng khi hết điều kiện.
-import { and, eq, inArray, isNull, lt, notInArray } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lt, lte, notInArray } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
 import { alerts, bookingNights, properties, rooms, tasks } from "../db/schema";
@@ -27,7 +27,11 @@ export async function computeAlerts(db: DB, today = D.todayVN()) {
   const allRooms = await db.select().from(rooms);
   for (const p of props) {
     const pr = allRooms.filter((r) => r.propertyId === p.id).map((r) => ({ id: r.id, propertyId: r.propertyId, openedOn: r.openedOn, closedOn: r.closedOn }));
-    const nights = await db.select().from(bookingNights).where(eq(bookingNights.propertyId, p.id));
+    // Chỉ đọc đêm của tháng đang xét (trước đây đọc toàn bộ lịch sử của cơ sở)
+    const nights = await db
+      .select()
+      .from(bookingNights)
+      .where(and(eq(bookingNights.propertyId, p.id), gte(bookingNights.nightDate, D.firstDay(month)), lte(bookingNights.nightDate, D.lastDay(month))));
     const k = D.computeKpis(nights, pr, D.firstDay(month), D.lastDay(month));
     if (k.availableNights && k.occupancyPct < p.occupancyKpiPct) {
       await open("LOW_OCCUPANCY", `LOW_OCCUPANCY:${p.id}:${month}`, `${p.name}: công suất ${D.formatMonthVN(month).toLowerCase()} ${k.occupancyPct}% (gồm đêm đã đặt), dưới mức ${p.occupancyKpiPct}%`, p.id);

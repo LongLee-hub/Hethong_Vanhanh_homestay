@@ -4,6 +4,7 @@
 import { and, desc, eq, gt, gte, ilike, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
+import { rowsOf } from "../db/rows";
 import { airbnbListingRooms, airbnbPayoutItems, airbnbPayouts, bookings, gmailAccounts, investors, properties, rooms } from "../db/schema";
 import { allowedInvestorIds, badRequest, notFound, type SessionUser } from "../auth/access";
 import { decryptSecret, encryptSecret } from "../services/settings";
@@ -310,24 +311,50 @@ export const toleranceFor = (net: number) => Math.max(PAYOUT_TOLERANCE, Math.rou
 
 type BookingRow = { id: string; netAmount: number };
 
-/** Tìm đơn của NĐT theo mã đặt phòng: mã có thể là external_id hoặc nằm đâu đó trong dữ liệu gốc Dayladau. */
-async function findByCode(db: DB, propIds: string[], code: string): Promise<BookingRow | null> {
-  const rows = await db
-    .select({ id: bookings.id, netAmount: bookings.netAmount })
-    .from(bookings)
-    .where(and(inArray(bookings.propertyId, propIds), ne(bookings.source, PAYOUT_SOURCE), sql`(${bookings.externalId} = ${code} or ${bookings.rawPayload}::text like ${`%${code}%`})`))
-    .limit(2);
-  return rows.length === 1 ? rows[0] : null; // hai đơn cùng mã: không đoán, để người dùng xem
+/**
+ * Tìm đơn của NĐT theo nhiều mã đặt phòng trong MỘT câu truy vấn: mã có thể là external_id hoặc nằm đâu đó trong dữ liệu gốc
+ * Dayladau. Dữ liệu gốc chỉ đổi ra text một lần cho mỗi đơn (trước đây mỗi mã quét lại cả bảng, hàng trăm lần mỗi lượt đối soát).
+ * Mã khớp đúng một đơn mới nhận; hai đơn cùng mã: không đoán, để người dùng xem.
+ */
+async function findByCodes(db: DB, propIds: string[], codes: string[]): Promise<Map<string, BookingRow | null>> {
+  const res = new Map<string, BookingRow | null>(codes.map((c) => [c, null]));
+  if (!propIds.length || !codes.length) return res;
+  const rows = rowsOf<{ code: string; id: string; net: number | string }>(await db.execute(sql`
+    with b as materialized (
+      select ${bookings.id} as id, ${bookings.netAmount} as net, ${bookings.externalId} as ext, ${bookings.rawPayload}::text as t
+      from ${bookings}
+      where ${and(inArray(bookings.propertyId, propIds), ne(bookings.source, PAYOUT_SOURCE))}
+    )
+    select c.code, b.id, b.net from (values ${sql.join(codes.map((c) => sql`(${c}::text)`), sql`, `)}) as c(code)
+    join b on b.ext = c.code or strpos(b.t, c.code) > 0`));
+  const hits = new Map<string, BookingRow[]>();
+  for (const r of rows) {
+    const list = hits.get(r.code) ?? [];
+    if (!list.some((x) => x.id === r.id)) list.push({ id: r.id, netAmount: Number(r.net) });
+    hits.set(r.code, list);
+  }
+  for (const [code, list] of hits) res.set(code, list.length === 1 ? list[0] : null);
+  return res;
 }
 
-/** Dự phòng khi dữ liệu Dayladau không chứa mã đặt phòng Airbnb: cùng tên khách và ngày nhận phòng, kênh Airbnb. */
-async function findByGuest(db: DB, propIds: string[], guest: string, checkIn: string): Promise<BookingRow | null> {
+/** Dự phòng khi dữ liệu Dayladau không chứa mã đặt phòng Airbnb: cùng tên khách và ngày nhận phòng, kênh Airbnb. Một câu cho mọi dòng. */
+async function findByGuests(db: DB, propIds: string[], wanted: { guest: string; checkIn: string }[]): Promise<Map<string, BookingRow | null>> {
+  const key = (guest: string, checkIn: string) => `${guest.toLowerCase()}|${checkIn}`;
+  const res = new Map<string, BookingRow | null>(wanted.map((w) => [key(w.guest, w.checkIn), null]));
+  if (!propIds.length || !wanted.length) return res;
   const rows = await db
-    .select({ id: bookings.id, netAmount: bookings.netAmount })
+    .select({ id: bookings.id, netAmount: bookings.netAmount, guestName: bookings.guestName, checkIn: bookings.checkIn })
     .from(bookings)
-    .where(and(inArray(bookings.propertyId, propIds), ne(bookings.source, PAYOUT_SOURCE), eq(bookings.checkIn, checkIn), ilike(bookings.channel, "%airbnb%"), sql`lower(${bookings.guestName}) = lower(${guest})`))
-    .limit(2);
-  return rows.length === 1 ? rows[0] : null;
+    .where(and(inArray(bookings.propertyId, propIds), ne(bookings.source, PAYOUT_SOURCE), inArray(bookings.checkIn, [...new Set(wanted.map((w) => w.checkIn))]), ilike(bookings.channel, "%airbnb%")));
+  const hits = new Map<string, BookingRow[]>();
+  for (const r of rows) {
+    if (!r.guestName) continue;
+    const k = key(r.guestName, String(r.checkIn).slice(0, 10));
+    if (!res.has(k)) continue;
+    hits.set(k, [...(hits.get(k) ?? []), { id: r.id, netAmount: r.netAmount }]);
+  }
+  for (const [k, list] of hits) res.set(k, list.length === 1 ? list[0] : null);
+  return res;
 }
 
 /** Trạng thái của cả đơn: paidVnd = VNĐ sau thuế Airbnb đã chuyển cho đơn (mọi email), null khi chưa quy được ra VNĐ. */
@@ -351,21 +378,30 @@ export async function matchPayouts(db: DB, opts: { investorIds?: string[]; payou
     .innerJoin(airbnbPayouts, eq(airbnbPayouts.id, airbnbPayoutItems.payoutId))
     .where(and(...conds));
 
-  // 1. Gắn đơn: theo mã (mỗi mã tìm một lần), dòng không có mã thì theo tên khách + ngày nhận phòng
+  // 1. Gắn đơn: theo mã, dòng không có mã (hoặc mã không có trong dữ liệu Dayladau) thì theo tên khách + ngày nhận phòng.
+  // Tra theo lô cho từng NĐT thay vì một câu truy vấn mỗi dòng.
   const propsOf = new Map<string, string[]>();
-  const byCode = new Map<string, BookingRow | null>();
+  const invIds = [...new Set(rows.map((r) => r.investorId))];
+  if (invIds.length) {
+    const ps = await db.select({ id: properties.id, investorId: properties.investorId }).from(properties).where(inArray(properties.investorId, invIds));
+    for (const id of invIds) propsOf.set(id, ps.filter((p) => p.investorId === id).map((p) => p.id));
+  }
+  const byCode = new Map<string, BookingRow | null>(); // khóa investorId|mã
+  const byGuest = new Map<string, BookingRow | null>(); // khóa investorId|tên thường|ngày nhận phòng
+  for (const inv of invIds) {
+    const mine = rows.filter((r) => r.investorId === inv);
+    const codes = [...new Set(mine.map((r) => r.item.confirmationCode).filter((c): c is string => !!c))];
+    for (const [c, b] of await findByCodes(db, propsOf.get(inv)!, codes)) byCode.set(`${inv}|${c}`, b);
+    const guests = mine
+      .filter((r) => r.item.guestName && r.item.checkIn && !(r.item.confirmationCode && byCode.get(`${inv}|${r.item.confirmationCode}`)))
+      .map((r) => ({ guest: r.item.guestName!, checkIn: r.item.checkIn! }));
+    for (const [k, b] of await findByGuests(db, propsOf.get(inv)!, guests)) byGuest.set(`${inv}|${k}`, b);
+  }
   const touched = new Set<string>(); // đơn cần tính lại số lệch (cả đơn cũ của dòng vừa đổi gắn)
   for (const { item, investorId } of rows) {
-    if (!propsOf.has(investorId)) propsOf.set(investorId, (await db.select({ id: properties.id }).from(properties).where(eq(properties.investorId, investorId))).map((p) => p.id));
-    const propIds = propsOf.get(investorId)!;
     let b: BookingRow | null = null;
-    if (propIds.length && item.confirmationCode) {
-      const k = `${investorId}|${item.confirmationCode}`;
-      if (!byCode.has(k)) byCode.set(k, await findByCode(db, propIds, item.confirmationCode));
-      b = byCode.get(k)!;
-    }
-    // Mã không có trong dữ liệu Dayladau (hoặc dòng không có mã): thử tên khách + ngày nhận phòng
-    if (!b && propIds.length && item.guestName && item.checkIn) b = await findByGuest(db, propIds, item.guestName, item.checkIn);
+    if (item.confirmationCode) b = byCode.get(`${investorId}|${item.confirmationCode}`) ?? null;
+    if (!b && item.guestName && item.checkIn) b = byGuest.get(`${investorId}|${item.guestName.toLowerCase()}|${item.checkIn}`) ?? null;
     if (item.bookingId) touched.add(item.bookingId);
     if (b) {
       touched.add(b.id);
