@@ -53,7 +53,7 @@ npm run dev                   # http://localhost:3000
 
 ## Triển khai server riêng (VPS)
 
-App chạy trên VPS Ubuntu bằng PM2, Caddy đứng trước lo HTTPS. Cơ sở dữ liệu và ảnh vẫn ở Supabase như cũ. Lịch đồng bộ không cần `vercel.json`: `lib/scheduler.ts` tự chạy đồng bộ Dayladau + cảnh báo + sinh việc dọn phòng mỗi 30 phút (đổi bằng `AUTO_SYNC_MINUTES`).
+App chạy trên VPS Ubuntu bằng PM2, Caddy đứng trước lo HTTPS. Cơ sở dữ liệu và ảnh vẫn ở Supabase như cũ. Lịch đồng bộ không cần `vercel.json`: `lib/scheduler.ts` tự chạy đồng bộ Dayladau + cảnh báo + sinh việc dọn phòng mỗi 30 phút khi đặt `AUTO_SYNC_MINUTES` (PM2 trong `deploy/ecosystem.config.cjs` đặt sẵn 30; mặc định tắt để máy chạy thử không đồng bộ vào DB thật).
 
 **Chuẩn bị**
 

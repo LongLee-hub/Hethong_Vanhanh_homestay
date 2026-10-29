@@ -15,7 +15,7 @@ const FAILED_DAYS = 3;
 /** Lịch tự đồng bộ đang chạy, khớp với lib/scheduler.ts và vercel.json. */
 function scheduleText() {
   if (process.env.VERCEL) return "lúc 06:00 hằng ngày";
-  const minutes = Number(process.env.AUTO_SYNC_MINUTES ?? 30);
+  const minutes = Number(process.env.AUTO_SYNC_MINUTES ?? 0);
   return minutes > 0 ? `${minutes} phút một lần` : "đang tắt, chỉ đồng bộ khi bấm nút";
 }
 

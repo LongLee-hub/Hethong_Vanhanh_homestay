@@ -1,5 +1,7 @@
 // Hẹn giờ ngay trong app, dùng khi chạy trên server riêng (không có Vercel Cron).
-// Mặc định 30 phút/lần; đổi bằng AUTO_SYNC_MINUTES trong .env (0 = tắt). Trên Vercel không chạy, dùng vercel.json.
+// Chỉ bật khi đặt AUTO_SYNC_MINUTES > 0 (bản PM2 trên VPS đặt sẵn 30). Mặc định TẮT: một máy khác (máy tính chạy `npm run dev`
+// hay `next start` với .env trỏ vào DB thật) mà tự đồng bộ thì khi máy ngủ, kết nối DB treo ~15 phút rồi đứt, ghi lỗi
+// "CONNECTION_CLOSED / ECONNRESET" vào hệ thống thật. Trên Vercel không chạy, dùng vercel.json.
 // Riêng email payout Gmail chỉ đọc một lần mỗi ngày lúc PAYOUT_HOUR_VN.
 import * as D from "./domain";
 import { getDb } from "./db";
@@ -56,11 +58,15 @@ function schedulePayouts() {
 
 export function startScheduler() {
   if (process.env.VERCEL) return; // serverless: không giữ được hẹn giờ, đã có Vercel Cron
+  if (!(Number(process.env.AUTO_SYNC_MINUTES ?? 0) > 0)) {
+    console.log("[auto-sync] tắt (AUTO_SYNC_MINUTES chưa đặt): máy này không tự đồng bộ");
+    return;
+  }
   if (!g._payoutSync) {
     schedulePayouts();
     console.log(`[payout-sync] bật: ${PAYOUT_HOUR_VN}:00 hằng ngày`);
   }
-  const minutes = Number(process.env.AUTO_SYNC_MINUTES ?? 30);
+  const minutes = Number(process.env.AUTO_SYNC_MINUTES ?? 0);
   if (!(minutes > 0) || g._autoSync) return;
   g._autoSync = { timer: setInterval(tick, minutes * 60_000), running: false };
   console.log(`[auto-sync] bật: ${minutes} phút/lần`);

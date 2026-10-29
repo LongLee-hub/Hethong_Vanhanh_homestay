@@ -9,7 +9,7 @@ module.exports = {
       args: "start -p 3000 -H 127.0.0.1", // chỉ nghe nội bộ, Caddy đứng trước nhận HTTPS
       instances: 1,
       exec_mode: "fork",
-      env: { NODE_ENV: "production", TZ: "Asia/Ho_Chi_Minh" },
+      env: { NODE_ENV: "production", TZ: "Asia/Ho_Chi_Minh", AUTO_SYNC_MINUTES: "30" },
       max_memory_restart: "800M",
       time: true,
     },
