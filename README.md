@@ -21,6 +21,35 @@ Cả hai dùng chung một bộ công thức tính tiền: `lib/domain/`.
 
 **Chưa làm:** xuất PDF/Excel ở bản chính thức (bản chạy thử có CSV), lịch phòng dạng lưới và Kanban ở bản chính thức (đã có ở bản chạy thử — dùng làm mẫu giao diện), trang Quản trị (tạo NĐT/cơ sở/phòng/người dùng hiện làm qua SQL hoặc seed), báo cáo tuần/đặt phòng, nhập điểm đánh giá.
 
+## Quy tắc tính doanh thu
+
+Áp dụng từ 15/10/2026 cho trang Tổng quan, Quyết toán và Báo cáo NĐT. Mã: `splitNights`, `computeKpis`, `forecastProperty` trong `lib/domain/index.ts`; `netOf` trong `lib/dayladau/mapping.ts`.
+
+**Số tiền của một đơn** là phần chủ nhà nhận (*host_amount* của Dayladau = tổng các khoản × tỷ lệ của host), đã trừ hoa hồng kênh. Đơn ngoài OTA lấy đúng số tiền nhập tay.
+
+**Đơn được ghi theo ba loại:**
+
+| Loại | Đơn nào | Ghi vào ngày nào | Tính là đêm bán? |
+| --- | --- | --- | --- |
+| Đêm bán | Thuê qua đêm, thuê theo ngày, *qua đêm ngắn* (`nightly_rental`, `daily_rental`, `night_short_rental`) | Chia đều cho từng đêm từ ngày nhận phòng đến trước ngày trả phòng; phần lẻ cộng vào đêm cuối | Có |
+| Lượt thuê giờ | `hourly_rental`, `special_offer_time_rental` | Cả số tiền vào ngày nhận phòng | Không |
+| Phí hủy | Đơn đã hủy mà chủ nhà vẫn được nhận tiền (host_amount > 0) | Cả số tiền vào ngày nhận phòng | Không |
+
+Đơn hủy không có tiền thì không ghi gì. Đơn đang ở trạng thái *open* trên Dayladau vẫn được tính như đơn đã xác nhận.
+
+**Doanh thu đến hôm nay** gồm mọi đêm bán, lượt thuê giờ và phí hủy từ đầu tháng đến hết **đêm hôm nay**. Đêm hôm nay được tính ngay khi đến ngày nhận phòng theo lịch đặt, không chờ nhân viên bấm Check-in.
+
+**Doanh thu cả tháng** (Quyết toán, Báo cáo NĐT) gồm mọi khoản có ngày trong tháng, kể cả các đêm khách đã đặt nhưng chưa ở tới. Tháng đã khóa sổ thì đọc số đã lưu, không tính lại.
+
+**Doanh thu dự kiến** = doanh thu đến hôm nay + tiền các đơn đã đặt từ ngày mai đến cuối tháng + ước tính cho đêm còn trống. Ước tính = số đêm còn trống × công suất tháng trước × giá trung bình một đêm của tháng này.
+
+**Chỉ số vận hành:**
+- *Công suất* = số đêm bán ÷ số đêm có thể bán (số phòng đang mở × số ngày).
+- *Giá trung bình/đêm* = tiền đêm bán ÷ số đêm bán.
+- Lượt thuê giờ và phí hủy có tính vào doanh thu, nhưng không tính vào công suất và giá trung bình. Lượt thuê giờ được đếm riêng.
+
+**Chưa chốt:** cách tính thuế GTGT. Báo cáo NĐT đang tạm lấy GTGT = doanh thu × 8/108, không vượt quá CP Thuế đã nhập.
+
 ## Kiểm thử
 
 ```bash
@@ -167,10 +196,10 @@ Chỉ đọc file `.xlsx`; file `.xls` cũ mở bằng Excel lưu lại dạng `
 
 Tất cả được đánh dấu `TODO(CONFIRM)` trong mã.
 
-1. **Dayladau** — đã map theo script Apps Script (xem `lib/dayladau/mapping.md`). Cần xác nhận qua màn hình Kiểm tra kết nối: trạng thái nào là hủy, "Amount host" có khớp sheet, đơn thuê theo giờ ghi nhận thế nào.
+1. **Dayladau** — đã map theo script Apps Script (xem `lib/dayladau/mapping.md`). Cần xác nhận qua màn hình Kiểm tra kết nối: trạng thái nào là hủy, "Amount host" có khớp sheet. Đơn thuê theo giờ đã chốt, xem *Quy tắc tính doanh thu*.
 2. **Tỷ lệ hoa hồng từng kênh** (chỉ dùng khi API không trả số tiền hoa hồng): đang để Airbnb 15%, Booking 15%, Agoda 18%.
 3. **Phòng mở/đóng giữa tháng** chia chi phí chung cả tháng hay theo số ngày: đang tính cả tháng.
-4. **Phí hủy** ghi vào đêm check-in: đang làm vậy.
+4. **Phí hủy**: đã chốt, tính theo host_amount và ghi vào ngày nhận phòng.
 5. **Hạn dọn phòng**: đang để 14:00 ngày check-out.
 
 ## Cấu trúc
