@@ -1,0 +1,505 @@
+[
+ {
+  "prop": "Citisnug",
+  "name": "Citisnug 101",
+  "listingKey": "lss1h3cmns",
+  "openedOn": "2025-06-03",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Citisnug",
+  "name": "Citisnug 201",
+  "listingKey": "lscktvn1qb",
+  "openedOn": "2025-05-31",
+  "existing": null,
+  "others": [],
+  "openedGuess": true
+ },
+ {
+  "prop": "Citisnug",
+  "name": "Citisnug 202",
+  "listingKey": "lsoc2w6h4v",
+  "openedOn": "2025-05-31",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Citisnug",
+  "name": "Citisnug 301",
+  "listingKey": "lswm8a5s4a",
+  "openedOn": "2025-05-31",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Citisnug",
+  "name": "Citisnug 302",
+  "listingKey": "lsndrktgmr",
+  "openedOn": "2025-05-31",
+  "existing": null,
+  "others": [],
+  "openedGuess": true
+ },
+ {
+  "prop": "Citisnug",
+  "name": "Citisnug 401",
+  "listingKey": "ls62aktz3e",
+  "openedOn": "2025-05-31",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Citisnug",
+  "name": "Citisnug 402",
+  "listingKey": "lssmuncu5p",
+  "openedOn": "2025-05-31",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Citisnug",
+  "name": "Citisnug 501",
+  "listingKey": "lsz5x2srg2",
+  "openedOn": "2025-06-03",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Citisnug",
+  "name": "Citisnug 502",
+  "listingKey": "lsmye8bhd0",
+  "openedOn": "2025-05-31",
+  "existing": null,
+  "others": [],
+  "openedGuess": true
+ },
+ {
+  "prop": "LT",
+  "name": "Unix LT-101",
+  "listingKey": "lsb0weki6w",
+  "openedOn": "2026-07-11",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "LT",
+  "name": "Unix LT-201",
+  "listingKey": "lsp7vk0sq5",
+  "openedOn": "2026-07-15",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "LT",
+  "name": "Unix LT-202",
+  "listingKey": "lseudh16ct",
+  "openedOn": "2026-07-11",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "LT",
+  "name": "Unix LT-301",
+  "listingKey": "lslkp7b6el",
+  "openedOn": "2026-07-12",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "LT",
+  "name": "Unix LT-302",
+  "listingKey": "lsmuh9t483",
+  "openedOn": "2026-07-11",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "LT",
+  "name": "Unix LT-401",
+  "listingKey": "lsutx41fgs",
+  "openedOn": "2026-07-16",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "LT",
+  "name": "Unix LT-402",
+  "listingKey": "ls4ay87ane",
+  "openedOn": "2026-07-11",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "LT",
+  "name": "Unix LT-501",
+  "listingKey": "lslqhytbac",
+  "openedOn": "2026-07-16",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "LT",
+  "name": "Unix LT-502",
+  "listingKey": "ls9h1sw2ry",
+  "openedOn": "2026-07-11",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 201",
+  "listingKey": "lsv3ix6oij",
+  "openedOn": "2025-08-04",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 202",
+  "listingKey": "ls4x7jf51c",
+  "openedOn": "2025-08-01",
+  "existing": null,
+  "others": [],
+  "openedGuess": true
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 301",
+  "listingKey": "ls8uwjksnm",
+  "openedOn": "2025-08-02",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 302",
+  "listingKey": "lsuqu7f7z4",
+  "openedOn": "2025-08-01",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 303",
+  "listingKey": "ls37tc98c6",
+  "openedOn": "2025-08-07",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 401",
+  "listingKey": "ls4oml67vc",
+  "openedOn": "2025-08-04",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 402",
+  "listingKey": "lso72srk2w",
+  "openedOn": "2025-08-01",
+  "existing": null,
+  "others": [],
+  "openedGuess": true
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 403",
+  "listingKey": "ls9b5k6jzk",
+  "openedOn": "2025-08-08",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 501",
+  "listingKey": "lss5wnncbl",
+  "openedOn": "2025-08-04",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 502",
+  "listingKey": "lsxn7rq9j1",
+  "openedOn": "2025-08-01",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 503",
+  "listingKey": "lszvs1ihez",
+  "openedOn": "2025-08-04",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 601",
+  "listingKey": "lsbsy2fhph",
+  "openedOn": "2025-08-02",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 602",
+  "listingKey": "lsvswsucgb",
+  "openedOn": "2025-08-02",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "Myslay",
+  "name": "Myslay 603",
+  "listingKey": "lshkbxkk0m",
+  "openedOn": "2025-08-02",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "NTG",
+  "name": "NTG 102",
+  "listingKey": "lsxhc64f1w",
+  "openedOn": "2025-11-21",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "NTG",
+  "name": "NTG 201",
+  "listingKey": "lsf0x3u9ax",
+  "openedOn": "2025-11-18",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "NTG",
+  "name": "NTG 202",
+  "listingKey": "ls0pe6mbn2",
+  "openedOn": "2025-11-19",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "NTG",
+  "name": "NTG 301",
+  "listingKey": "lsypixgb54",
+  "openedOn": "2025-11-19",
+  "existing": null,
+  "others": [
+   {
+    "key": "lsg3kn1w0l",
+    "orders": 99,
+    "to": "2026-06-06"
+   }
+  ]
+ },
+ {
+  "prop": "NTG",
+  "name": "NTG 302",
+  "listingKey": "lsqm866h0f",
+  "openedOn": "2025-11-18",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "NTG",
+  "name": "NTG 401",
+  "listingKey": "lsiao0h3j3",
+  "openedOn": "2025-11-18",
+  "existing": null,
+  "others": [
+   {
+    "key": "lsg44nhtif",
+    "orders": 63,
+    "to": "2026-04-19"
+   }
+  ]
+ },
+ {
+  "prop": "NTG",
+  "name": "NTG 402",
+  "listingKey": "lstdk4p4wr",
+  "openedOn": "2025-11-18",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "NTG",
+  "name": "NTG 501",
+  "listingKey": "ls38wtisxi",
+  "openedOn": "2025-11-18",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "NTG",
+  "name": "NTG 502",
+  "listingKey": "lsxn4yvzeg",
+  "openedOn": "2025-11-21",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "PKB",
+  "name": "Unix PKB101",
+  "listingKey": "lsgbgy6s7g",
+  "openedOn": "2025-03-12",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "PKB",
+  "name": "Unix PKB201",
+  "listingKey": "lsd5d8a7xh",
+  "openedOn": "2025-03-12",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "PKB",
+  "name": "Unix PKB202",
+  "listingKey": "ls774b6r8b",
+  "openedOn": "2025-03-08",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "PKB",
+  "name": "Unix PKB203",
+  "listingKey": "lszsbo150f",
+  "openedOn": "2025-03-12",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "PKB",
+  "name": "Unix PKB204",
+  "listingKey": "ls9x8qe8f9",
+  "openedOn": "2025-03-08",
+  "existing": null,
+  "others": []
+ },
+ {
+  "prop": "PKB",
+  "name": "Unix PKB205",
+  "listingKey": "ls6vbnz2cb",
+  "openedOn": "2025-03-08",
+  "existing": null,
+  "others": [
+   {
+    "key": "lsd7sw19zo",
+    "orders": 69,
+    "to": "2025-05-14"
+   }
+  ]
+ },
+ {
+  "prop": "PKB",
+  "name": "Unix PKB206",
+  "listingKey": "lsriv9g36u",
+  "openedOn": "2025-03-08",
+  "existing": null,
+  "others": [
+   {
+    "key": "ls638paron",
+    "orders": 14,
+    "to": "2025-03-17"
+   }
+  ]
+ },
+ {
+  "prop": "Vạn Phúc",
+  "name": "Unix VP101",
+  "listingKey": "lsp3w9kqi8",
+  "openedOn": "2024-11-08",
+  "existing": "Vạn Phúc · Unix VP101",
+  "others": [
+   {
+    "key": "lsnx6nsmpb",
+    "orders": 615,
+    "to": "2025-09-01"
+   }
+  ]
+ },
+ {
+  "prop": "Vạn Phúc",
+  "name": "Unix VP201",
+  "listingKey": "lscjjx4qmz",
+  "openedOn": "2024-11-08",
+  "existing": "Vạn Phúc · Unix VP201",
+  "others": [
+   {
+    "key": "lsnx202tre",
+    "orders": 434,
+    "to": "2025-08-29"
+   }
+  ]
+ },
+ {
+  "prop": "Vạn Phúc",
+  "name": "Unix VP202",
+  "listingKey": "lstrl6q7ik",
+  "openedOn": "2024-11-08",
+  "existing": "Vạn Phúc · Unix VP202",
+  "others": [
+   {
+    "key": "lsju42wxhs",
+    "orders": 949,
+    "to": "2026-09-01"
+   },
+   {
+    "key": "lsig74ie18",
+    "orders": 158,
+    "to": "2025-04-15"
+   },
+   {
+    "key": "lsn31xmc3p",
+    "orders": 101,
+    "to": "2025-02-17"
+   }
+  ]
+ },
+ {
+  "prop": "Vạn Phúc",
+  "name": "Unix VP301",
+  "listingKey": "lsl8yatigy",
+  "openedOn": "2025-06-02",
+  "existing": "Vạn Phúc · Unix VP301",
+  "others": [
+   {
+    "key": "ls0yr62pcl",
+    "orders": 8,
+    "to": "2026-08-31"
+   },
+   {
+    "key": "ls1qghzarv",
+    "orders": 887,
+    "to": "2026-08-30"
+   }
+  ]
+ },
+ {
+  "prop": "Vạn Phúc",
+  "name": "Unix VP302",
+  "listingKey": "lsgokeyoun",
+  "openedOn": "2024-11-08",
+  "existing": null,
+  "others": [
+   {
+    "key": "lsm13uybw5",
+    "orders": 32,
+    "to": "2025-10-06"
+   },
+   {
+    "key": "lsfpsr4shf",
+    "orders": 510,
+    "to": "2025-08-29"
+   }
+  ]
+ }
+]
