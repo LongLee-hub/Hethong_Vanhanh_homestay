@@ -22,7 +22,7 @@ export function ordersUrl(hostId: string, token: string, offset: number, limit =
   return u.toString();
 }
 
-async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
+export async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
     try {
@@ -37,7 +37,7 @@ async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
 }
 
 /** Không bao giờ để token lọt vào thông báo lỗi hay log. */
-const redact = (s: string, token: string) => (token ? s.split(token).join("***") : s);
+export const redact = (s: string, token: string) => (token ? s.split(token).join("***") : s);
 
 export async function fetchOrdersPage(hostId: string, token: string, offset: number, limit = PAGE_SIZE): Promise<DayladauRawBooking[]> {
   return withRetry(async () => {

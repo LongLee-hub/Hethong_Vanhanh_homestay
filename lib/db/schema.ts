@@ -187,15 +187,38 @@ export const bookingChangeLogs = pgTable("booking_change_logs", {
   after: jsonb("after").notNull(),
 });
 
-export const reviews = pgTable("reviews", {
-  id: id(),
-  propertyId: text("property_id").notNull().references(() => properties.id),
-  bookingId: text("booking_id"),
-  channel: text("channel").notNull(),
-  score: numeric("score", { precision: 4, scale: 2 }).notNull(), // thang 10
-  reviewDate: day("review_date").notNull(),
-  content: text("content"),
-});
+/**
+ * Đánh giá của khách. Nguồn chính: API review của Dayladau (lib/dayladau/reviews.ts), đồng bộ cùng job đơn đặt phòng.
+ * Điểm theo thang của Dayladau (1–5). review_date = ngày trả phòng: đánh giá tính vào tháng khách trả phòng.
+ */
+export const reviews = pgTable(
+  "reviews",
+  {
+    id: id(),
+    propertyId: text("property_id").notNull().references(() => properties.id),
+    roomId: text("room_id"),
+    bookingId: text("booking_id"),
+    channel: text("channel").notNull(),
+    score: numeric("score", { precision: 4, scale: 2 }).notNull(), // = overall
+    reviewDate: day("review_date").notNull(),
+    content: text("content"),
+    // Dữ liệu từ Dayladau
+    dayladauAccountId: text("dayladau_account_id").references(() => dayladauAccounts.id),
+    externalId: text("external_id").unique(), // id review trên Dayladau
+    guestName: text("guest_name"),
+    listingName: text("listing_name"),
+    location: numeric("location", { precision: 4, scale: 2, mode: "number" }),
+    accuracy: numeric("accuracy", { precision: 4, scale: 2, mode: "number" }),
+    checkin: numeric("checkin", { precision: 4, scale: 2, mode: "number" }),
+    cleanliness: numeric("cleanliness", { precision: 4, scale: 2, mode: "number" }),
+    communication: numeric("communication", { precision: 4, scale: 2, mode: "number" }),
+    checkIn: day("check_in"),
+    checkOut: day("check_out"),
+    rawPayload: jsonb("raw_payload"),
+    lastSyncedAt: ts("last_synced_at"),
+  },
+  (t) => [index("reviews_prop_date").on(t.propertyId, t.reviewDate)],
+);
 
 // ---------- 4.3 Chi phí ----------
 export const costScopeEnum = pgEnum("cost_scope", ["DIRECT", "COMMON"]);

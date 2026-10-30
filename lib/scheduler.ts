@@ -6,6 +6,8 @@
 import * as D from "./domain";
 import { getDb } from "./db";
 import { syncBookings } from "./dayladau/sync";
+import { syncReviews } from "./dayladau/reviews";
+import { sendMonthlyReviewDigest } from "./services/reviews";
 import { computeAlerts } from "./services/alerts";
 import { generateCleaningTasks } from "./services/tasks";
 import { syncPayouts } from "./airbnb/payouts";
@@ -22,10 +24,12 @@ async function tick() {
   try {
     const db = getDb();
     const sync = await syncBookings(db);
+    const reviews = await syncReviews(db).catch((e: Error) => ({ error: e.message }));
+    await sendMonthlyReviewDigest(db).catch(() => false);
     const alerts = await computeAlerts(db);
     const today = D.todayVN();
     const cleaning = await generateCleaningTasks(db, today, D.addDays(today, 1));
-    console.log(`[auto-sync] ${new Date().toISOString()}`, { sync, alerts, cleaning });
+    console.log(`[auto-sync] ${new Date().toISOString()}`, { sync, reviews, alerts, cleaning });
   } catch (e) {
     console.error("[auto-sync] lỗi:", (e as Error).message);
   } finally {

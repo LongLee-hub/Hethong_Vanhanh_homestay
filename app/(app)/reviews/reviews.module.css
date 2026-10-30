@@ -1,0 +1,42 @@
+/* Trang Đánh giá khách. Dùng token màu và chữ của app/globals.css, chỉ thêm phần riêng của trang. */
+
+.syncForm { display: flex; align-items: center; gap: 8px; }
+
+.bigScore { display: flex; align-items: baseline; gap: 4px; }
+.of { font-size: 1.1rem; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+
+.bars { display: grid; gap: 14px; }
+.bar { display: grid; gap: 6px; }
+
+.list { display: grid; gap: 12px; }
+
+.review {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+/* Đánh giá thấp: viền trái đỏ thay vì tô cả thẻ, để vẫn đọc dễ khi có nhiều thẻ */
+.low { border-left: 4px solid var(--neg); padding-left: 15px; }
+
+.reviewHead { display: flex; gap: 14px; align-items: flex-start; }
+.score {
+  flex: none;
+  min-width: 64px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.low .score { background: var(--neg-soft); color: var(--neg); }
+.who { display: grid; gap: 2px; min-width: 0; }
+
+.text { margin: 0; line-height: 1.6; max-width: 72ch; white-space: pre-line; overflow-wrap: anywhere; }
+
+.sub { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: .84rem; color: var(--muted); font-variant-numeric: tabular-nums; }

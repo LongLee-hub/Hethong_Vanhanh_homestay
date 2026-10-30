@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { syncBookings } from "@/lib/dayladau/sync";
+import { syncReviews } from "@/lib/dayladau/reviews";
+import { sendMonthlyReviewDigest } from "@/lib/services/reviews";
 import { computeAlerts } from "@/lib/services/alerts";
 import { currentUser, cronAuthorized } from "@/lib/server";
 
@@ -10,9 +12,12 @@ export const maxDuration = 300;
 async function run() {
   const db = getDb();
   const sync = await syncBookings(db);
+  // Đánh giá đồng bộ sau đơn; lỗi ở đây không làm hỏng phần đồng bộ đơn đã xong
+  const reviews = await syncReviews(db).catch((e: Error) => ({ error: e.message }));
+  const reviewDigest = await sendMonthlyReviewDigest(db).catch((e: Error) => ({ error: e.message }));
   const alerts = await computeAlerts(db);
   // Email payout Gmail đọc riêng lúc 15:00 giờ VN (/api/cron/payouts, lib/scheduler.ts)
-  return NextResponse.json({ sync, alerts });
+  return NextResponse.json({ sync, reviews, reviewDigest, alerts });
 }
 
 export async function GET(req: Request) {
