@@ -38,6 +38,7 @@ beforeAll(async () => {
   await db.insert(s.users).values([
     { id: admin.id, name: admin.name, role: "ADMIN", passwordHash: "x" },
     { id: invA.id, name: invA.name, role: "INVESTOR", passwordHash: "x" },
+    { id: "u-mgr", name: "Quản lý PKB", role: "MANAGER", passwordHash: "x" },
   ]);
   await db.insert(s.investors).values([{ id: "inv-a", name: "NĐT A", userId: invA.id }, { id: "inv-b", name: "NĐT B" }]);
   await db.insert(s.dayladauAccounts).values([
@@ -53,6 +54,8 @@ beforeAll(async () => {
     { id: "x1", propertyId: "X", name: "101", dayladauAccountId: "acc-a", dayladauRoomId: "L1", openedOn: "2026-01-01" },
     { id: "y1", propertyId: "Y", name: "201", dayladauAccountId: "acc-a", dayladauRoomId: "L2", openedOn: "2026-01-01" },
   ]);
+  await db.insert(s.userPropertyAccess).values({ userId: "u-mgr", propertyId: "Y" });
+  await db.insert(s.bookings).values({ id: "bk-2", source: "MANUAL", propertyId: "Y", roomId: "y1", channel: "Direct", checkIn: "2026-10-18", checkOut: "2026-10-20", status: "CONFIRMED" });
 });
 
 describe("map review Dayladau", () => {
@@ -75,7 +78,7 @@ describe("đồng bộ đánh giá", () => {
       "HOST-B": [rv(4, "L7", 4.8, "2026-10-05"), rv(5, "L7", 5, "2026-09-28")],
     };
     const r = await syncReviews(db, { fetch: fakeFetch, decrypt: (x) => x, today: "2026-10-30" });
-    expect(r).toMatchObject({ created: 4, updated: 0, skipped: 1, lowAlerts: 1 });
+    expect(r).toMatchObject({ created: 4, updated: 0, skipped: 1, lowAlerts: 1, tasksCreated: 1 });
     expect(r.unmapped).toEqual([{ account: "NĐT A · TK A", listing: "Listing L9", count: 1 }]);
     const [two] = await db.select().from(schema.reviews).where(eq(schema.reviews.externalId, "2"));
     expect(two).toMatchObject({ propertyId: "Y", roomId: "y1", score: "3.00", cleanliness: 3 });
@@ -83,10 +86,18 @@ describe("đồng bộ đánh giá", () => {
     expect(bad.map((a) => a.key)).toEqual(["BAD_REVIEW:2"]);
   });
 
+  it("đánh giá thấp mới tạo việc Xử lý đánh giá cho quản lý cơ sở, gắn đúng đơn", async () => {
+    const ts = await db.select().from(schema.tasks).where(eq(schema.tasks.type, "BAD_REVIEW"));
+    expect(ts).toHaveLength(1);
+    expect(ts[0]).toMatchObject({ propertyId: "Y", roomId: "y1", bookingId: "bk-2", assigneeId: "u-mgr", priority: "HIGH", status: "TODO", title: "Xử lý đánh giá 3★ – Khách 2 (phòng 201)" });
+    expect(ts[0].description).toContain('Nhận xét: "review 2"');
+    expect(ts[0].dueAt.toISOString()).toBe("2026-11-01T11:00:00.000Z"); // 18:00 giờ VN, sau 2 ngày
+  });
+
   it("chạy lại không tạo trùng, cập nhật nội dung, không báo lại", async () => {
     api["HOST-A"][0] = rv(1, "L1", 5, "2026-10-10", { comment: "đã sửa" });
     const r = await syncReviews(db, { fetch: fakeFetch, decrypt: (x) => x, today: "2026-10-30" });
-    expect(r).toMatchObject({ created: 0, updated: 4, lowAlerts: 0 });
+    expect(r).toMatchObject({ created: 0, updated: 4, lowAlerts: 0, tasksCreated: 0 });
     expect(await db.select().from(schema.reviews)).toHaveLength(4);
     const [one] = await db.select().from(schema.reviews).where(eq(schema.reviews.externalId, "1"));
     expect(one.content).toBe("đã sửa");
@@ -95,7 +106,7 @@ describe("đồng bộ đánh giá", () => {
   it("đánh giá thấp cũ (trả phòng quá 30 ngày) không báo", async () => {
     api["HOST-B"].push(rv(6, "L7", 2, "2026-08-01"));
     const r = await syncReviews(db, { fetch: fakeFetch, decrypt: (x) => x, today: "2026-10-30" });
-    expect(r).toMatchObject({ created: 1, lowAlerts: 0 });
+    expect(r).toMatchObject({ created: 1, lowAlerts: 0, tasksCreated: 0 });
   });
 
   it("lỗi API của một tài khoản không chặn tài khoản khác", async () => {

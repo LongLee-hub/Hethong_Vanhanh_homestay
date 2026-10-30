@@ -34,6 +34,7 @@ function ReviewCard({ r }: { r: ReviewItem }) {
           <span className="small muted">{r.propertyName}{r.roomName ? `, phòng ${r.roomName}` : r.listingName ? `, ${r.listingName}` : ""}. Trả phòng {D.formatDateVN(r.reviewDate)}</span>
         </div>
       </header>
+      {r.low && <Link className={`small ${css.taskLink}`} href="/tasks">Xem việc xử lý</Link>}
       {r.content ? <p className={css.text}>{r.content}</p> : <p className={`${css.text} muted`}>Khách chỉ chấm điểm, không viết nhận xét.</p>}
       <div className={css.sub}>
         {CRITERIA.slice(1).map((c) => {
@@ -67,9 +68,10 @@ export default async function Reviews({ searchParams }: { searchParams: Promise<
           Đánh giá lấy từ Dayladau mỗi sáng lúc 6:00 và tính vào tháng khách trả phòng.{" "}
           {s.inProgress ? `Số liệu ${monthLow} tính đến hết ngày ${D.formatDateVN(s.asOf)}, còn cập nhật đến cuối tháng.` : `Đã hết ${monthLow}, đánh giá viết muộn vẫn được cộng thêm khi về.`}
         </p>
-        {isAdmin && (
-          <ActionForm action={syncReviewsAction} submit="Lấy đánh giá mới" submitClass="btn sm" className={css.syncForm} />
-        )}
+        <div className={css.actions}>
+          {s.total.count > 0 && <a className="btn sm" href={`/reviews/export?month=${month}`} download>Xuất Excel</a>}
+          {isAdmin && <ActionForm action={syncReviewsAction} submit="Lấy đánh giá mới" submitClass="btn sm" className={css.syncForm} />}
+        </div>
       </div>
 
       {s.total.count === 0 ? (
@@ -107,7 +109,7 @@ export default async function Reviews({ searchParams }: { searchParams: Promise<
 
           {low.length > 0 && (
             <section className="panel" style={{ marginBottom: 24 }}>
-              <header><div><h2>Cần xử lý</h2><p>Đánh giá dưới {LOW_REVIEW_SCORE}★ trong {monthLow}. Admin nhận tin Lark ngay khi đánh giá thấp về.</p></div></header>
+              <header><div><h2>Cần xử lý</h2><p>Đánh giá dưới {LOW_REVIEW_SCORE}★ trong {monthLow}. Mỗi đánh giá thấp mới tự tạo việc "Xử lý đánh giá" cho quản lý cơ sở, hạn 2 ngày, và báo Lark.</p></div></header>
               <div className={css.list}>{low.map((r) => <ReviewCard key={r.id} r={r} />)}</div>
             </section>
           )}

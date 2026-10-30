@@ -40,3 +40,6 @@
 .text { margin: 0; line-height: 1.6; max-width: 72ch; white-space: pre-line; overflow-wrap: anywhere; }
 
 .sub { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: .84rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.taskLink { justify-self: start; }

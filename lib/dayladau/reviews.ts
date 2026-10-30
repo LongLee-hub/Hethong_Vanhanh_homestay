@@ -8,6 +8,7 @@ import * as D from "../domain";
 import type { DB } from "../db";
 import { alerts, dayladauAccounts, investors, properties, reviews } from "../db/schema";
 import { decryptSecret, notifyLark } from "../services/settings";
+import { createBadReviewTask } from "../services/tasks";
 import { DAYLADAU_BASE, PAGE_SIZE, redact, withRetry } from "./client";
 import { toVNDate, type RawOrder } from "./mapping";
 import { listingRef, roomsByListing } from "./room-listings";
@@ -23,6 +24,7 @@ export type ReviewFetcher = (hostId: string, token: string, max: number) => Prom
 
 export const SCORE_FIELDS = ["location", "accuracy", "checkin", "cleanliness", "communication"] as const;
 export type ScoreField = (typeof SCORE_FIELDS)[number];
+const SCORE_LABEL: Record<ScoreField, string> = { location: "vị trí", accuracy: "đúng mô tả", checkin: "nhận phòng", cleanliness: "sạch sẽ", communication: "giao tiếp" };
 
 export interface MappedReview {
   externalId: string;
@@ -113,6 +115,8 @@ export interface ReviewSyncSummary {
   updated: number;
   skipped: number;
   lowAlerts: number;
+  /** Việc "Xử lý đánh giá" đã tạo cho đánh giá thấp mới. */
+  tasksCreated: number;
   unmapped: { account: string; listing: string; count: number }[];
   errors: { accountId: string; message: string }[];
 }
@@ -124,7 +128,7 @@ export async function syncReviews(
   const fetchAll = opts.fetch ?? httpReviewFetcher;
   const decrypt = opts.decrypt ?? decryptSecret;
   const today = opts.today ?? D.todayVN();
-  const sum: ReviewSyncSummary = { created: 0, updated: 0, skipped: 0, lowAlerts: 0, unmapped: [], errors: [] };
+  const sum: ReviewSyncSummary = { created: 0, updated: 0, skipped: 0, lowAlerts: 0, tasksCreated: 0, unmapped: [], errors: [] };
 
   const conds = [eq(dayladauAccounts.active, true)];
   if (opts.accountIds?.length) conds.push(inArray(dayladauAccounts.id, opts.accountIds));
@@ -143,6 +147,7 @@ export async function syncReviews(
       if (!props.length) continue; // tài khoản chưa gắn cơ sở nào: không có chỗ ghi đánh giá
       const pids = props.map((p) => p.id);
       const propName = Object.fromEntries(props.map((p) => [p.id, p.name]));
+      const roomNameOf = new Map([...byListing.values()].map((r) => [r.id, r.name]));
       const roomOf = (key: string) => {
         const r = byListing.get(listingRef(acc.id, key));
         return r && pids.includes(r.propertyId) ? r : undefined;
@@ -204,6 +209,22 @@ export async function syncReviews(
           if (inserted) {
             sum.lowAlerts++;
             lowLines.push(msg);
+            const roomLabel = roomId ? roomNameOf.get(roomId) : null;
+            await createBadReviewTask(
+              db,
+              {
+                propertyId, roomId, checkOut: m.checkOut,
+                title: `Xử lý đánh giá ${m.overall}★ – ${m.guestName ?? "khách"}${roomLabel ? ` (phòng ${roomLabel})` : ""}`,
+                description: [
+                  `Khách ${m.guestName ?? "không rõ tên"} trả phòng ${D.formatDateVN(m.reviewDate)}, listing ${m.listingName}.`,
+                  `Điểm: tổng thể ${m.overall}, ${SCORE_FIELDS.map((f) => `${SCORE_LABEL[f]} ${m.scores[f] ?? "–"}`).join(", ")}.`,
+                  m.comment ? `Nhận xét: "${m.comment}"` : "Khách không viết nhận xét.",
+                  "Việc cần làm: trả lời đánh giá trên kênh bán, tìm nguyên nhân, ghi lại cách khắc phục.",
+                ].join("\n"),
+              },
+              today,
+            );
+            sum.tasksCreated++;
           }
         }
       }

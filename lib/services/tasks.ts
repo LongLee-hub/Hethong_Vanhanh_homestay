@@ -144,3 +144,44 @@ export async function attendanceForMonth(db: DB, user: SessionUser, month: strin
   else conds.push(inArray(attendance.propertyId, (await allowedPropertyIds(db, user)).concat("__none")));
   return db.select().from(attendance).where(and(...conds));
 }
+
+// ---- Xử lý đánh giá xấu ----
+/** Hạn xử lý đánh giá xấu: trả lời khách và tìm nguyên nhân trong chừng này ngày. */
+export const BAD_REVIEW_DUE_DAYS = 2;
+
+/**
+ * Việc "Xử lý đánh giá" cho đánh giá thấp mới về (gọi từ đồng bộ review, mỗi review một lần).
+ * Giao cho quản lý cơ sở đang hoạt động; chưa có quản lý thì để trống người làm cho Admin giao.
+ * Gắn với đơn đặt phòng nếu tìm được đúng một đơn cùng phòng (hoặc cơ sở) và ngày trả phòng.
+ */
+export async function createBadReviewTask(
+  db: DB,
+  r: { propertyId: string; roomId: string | null; checkOut: string | null; title: string; description: string },
+  today = D.todayVN(),
+  createdBy = "SYSTEM",
+) {
+  const [mgr] = await db
+    .select({ id: users.id })
+    .from(users)
+    .innerJoin(userPropertyAccess, eq(userPropertyAccess.userId, users.id))
+    .where(and(eq(users.role, "MANAGER"), eq(users.active, true), eq(userPropertyAccess.propertyId, r.propertyId)))
+    .orderBy(asc(users.name))
+    .limit(1);
+  let bookingId: string | null = null;
+  if (r.checkOut) {
+    const cands = await db
+      .select({ id: bookings.id })
+      .from(bookings)
+      .where(and(eq(bookings.propertyId, r.propertyId), eq(bookings.checkOut, r.checkOut), eq(bookings.status, "CONFIRMED"), r.roomId ? eq(bookings.roomId, r.roomId) : undefined));
+    if (cands.length === 1) bookingId = cands[0].id;
+  }
+  const [t] = await db
+    .insert(tasks)
+    .values({
+      propertyId: r.propertyId, roomId: r.roomId, bookingId, type: "BAD_REVIEW", title: r.title, description: r.description,
+      assignedById: createdBy, assigneeId: mgr?.id ?? null, dueAt: new Date(`${D.addDays(today, BAD_REVIEW_DUE_DAYS)}T18:00:00+07:00`),
+      priority: "HIGH", status: "TODO",
+    })
+    .returning({ id: tasks.id });
+  return t.id;
+}
