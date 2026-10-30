@@ -1,4 +1,5 @@
 // Job đồng bộ Dayladau (Đặc tả mục 6). Chạy 06:00 hằng ngày và khi Admin bấm "Đồng bộ ngay".
+import { hostname } from "node:os";
 import { and, eq, gt, gte, inArray, notInArray, sql } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
@@ -35,6 +36,16 @@ function stableJson(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(stableJson).sort().join(",")}]`;
   if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stableJson((v as Record<string, unknown>)[k])}`).join(",")}}`;
   return JSON.stringify(v ?? null);
+}
+
+/** Nơi chạy đồng bộ, ghi kèm cảnh báo lỗi: biết ngay lỗi do Vercel hay do một máy khác (máy tính, VPS cũ) đang trỏ vào DB thật. */
+function runOrigin(): string {
+  if (process.env.VERCEL) return "Vercel";
+  try {
+    return `máy ${hostname()}`;
+  } catch {
+    return "máy không rõ";
+  }
 }
 
 const CHUNK = 500;
@@ -182,8 +193,9 @@ export async function syncBookings(
       const message = (e as Error).message;
       sum.errors.push({ accountId: acc.id, investorId: acc.investorId, message });
       await db.update(dayladauAccounts).set({ lastSyncedAt: new Date(), lastSyncStatus: "FAILED", lastSyncError: message }).where(eq(dayladauAccounts.id, acc.id));
-      await raiseAlert(db, "SYNC_FAILED", `SYNC_FAILED:${acc.id}:${today}`, `Đồng bộ Dayladau lỗi cho ${who}: ${message}`);
-      await notifyLark(db, `Đồng bộ Dayladau lỗi cho ${who}: ${message}`);
+      const where = runOrigin();
+      await raiseAlert(db, "SYNC_FAILED", `SYNC_FAILED:${acc.id}:${today}`, `Đồng bộ Dayladau lỗi cho ${who} (chạy trên ${where}): ${message}`);
+      await notifyLark(db, `Đồng bộ Dayladau lỗi cho ${who} (chạy trên ${where}): ${message}`);
       // Lỗi của một tài khoản không dừng các tài khoản khác
     }
   }
