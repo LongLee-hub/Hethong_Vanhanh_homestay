@@ -10,6 +10,7 @@ import * as D from "@/lib/domain";
 import { assignListingRoom, canManageGmail, deletePastedPayout, disconnectGmail, importPastedPayout, previewPastedPayout, reparsePayout, syncPayouts, validateBackfill, type BackfillOptions } from "@/lib/airbnb/payouts";
 import type { ParsedPayout } from "@/lib/airbnb/payout-parser";
 import { saveGoogleSetup } from "@/lib/gmail/config";
+import { syncableAccountIds, syncDayladauPayouts } from "@/lib/dayladau/payouts";
 
 type State = { ok: boolean; error?: string; message?: string } | null;
 
@@ -111,4 +112,27 @@ export async function deletePastedAction(payoutId: string): Promise<State> {
   const r = await action(() => deletePastedPayout(getDb(), user, payoutId));
   revalidatePath("/payouts");
   return r;
+}
+
+/** Đồng bộ phiếu thanh toán Dayladau của tháng (một tài khoản, hoặc mọi tài khoản người dùng được xem). */
+export async function syncDayladauPayoutsAction(input: { month: string; accountId?: string }): Promise<State> {
+  const user = await requireUser();
+  let message = "";
+  const r = await action(async () => {
+    if (!can(user, "viewFee")) throw badRequest("Bạn không có quyền thực hiện thao tác này");
+    if (!/^\d{4}-\d{2}$/.test(input.month)) throw badRequest("Tháng không hợp lệ");
+    const db = getDb();
+    const accountIds = await syncableAccountIds(db, user, input.accountId);
+    if (!accountIds.length) throw badRequest("Chưa có tài khoản Dayladau nào đang bật");
+    const today = D.todayVN();
+    const last = D.lastDay(input.month);
+    const sum = await syncDayladauPayouts(db, { accountIds, from: D.firstDay(input.month), to: last < today ? last : today });
+    if (sum.errors.length && !sum.payouts) throw badRequest(`Lấy phiếu Dayladau lỗi: ${sum.errors[0].message}`);
+    message = sum.payouts
+      ? `Lấy ${sum.payouts} phiếu, ${sum.orders} đơn: ${sum.matched} khớp, ${sum.amountDiff} lệch tiền, ${sum.notFound} chưa có trong hệ thống. ${sum.pending} đơn đang chờ trả`
+      : `Không có phiếu nào trong ${D.formatMonthVN(input.month).toLowerCase()}. ${sum.pending} đơn đang chờ trả`;
+    if (sum.errors.length) message += `. Lỗi ${sum.errors.length} tài khoản: ${sum.errors[0].message}`;
+  });
+  revalidatePath("/payouts/dayladau");
+  return r.ok ? { ok: true, message } : r;
 }

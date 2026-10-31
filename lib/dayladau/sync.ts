@@ -10,6 +10,7 @@ import { sameTracked, upsertBooking, type BookingInput } from "../services/booki
 import { httpDayladauClient, type DayladauClient } from "./client";
 import { mapDayladauOrder, netOf } from "./mapping";
 import { listingRef, roomsByListing } from "./room-listings";
+import { rematchDayladauPayoutItems } from "./payouts";
 
 export interface SyncSummary {
   created: number;
@@ -199,6 +200,9 @@ export async function syncBookings(
       // Lỗi của một tài khoản không dừng các tài khoản khác
     }
   }
+
+  // Đơn mới về hoặc tiền đơn đổi: đối chiếu lại phiếu thanh toán Dayladau đã lưu (không gọi API)
+  if (sum.created || sum.updated) await rematchDayladauPayoutItems(db, accs.map((a) => a.acc.id)).catch(() => 0);
 
   await db
     .update(syncRuns)

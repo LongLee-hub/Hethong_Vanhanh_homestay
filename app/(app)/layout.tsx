@@ -24,7 +24,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     ["/bookings", "Đặt phòng", can(user, "viewBookings")],
     ["/expenses", "Chi phí", can(user, "viewFinance")],
     ["/settlements", "Quyết toán", can(user, "viewFee")],
-    ["/payouts", "Payout Airbnb", can(user, "viewFee")],
+    ["/payouts", "Payout", can(user, "viewFee")],
     ["/reports", "Báo cáo NĐT", can(user, "viewFee")],
     ["/reviews", "Đánh giá", can(user, "viewFinance")],
     ["/targets", "Chỉ tiêu", can(user, "admin")],

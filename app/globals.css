@@ -363,6 +363,16 @@ tr.payout-head td:last-child { border-radius: 0 10px 10px 0; }
 .recon i.ok { background: var(--accent); }
 .recon i.warn { background: var(--warn); }
 .recon i.bad { background: var(--neg); }
+/* Phiếu Dayladau có vài trăm đơn: một thanh tỷ lệ thay vì một ô mỗi đơn */
+.dl-recon { display: inline-flex; width: 96px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--line); vertical-align: middle; }
+.dl-recon i { height: 100%; }
+.dl-recon i.ok { background: var(--accent); }
+.dl-recon i.warn { background: var(--warn); }
+.dl-recon i.bad { background: var(--neg); }
+td.dl-more { padding-block: 8px; }
+td.dl-more summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
+td.dl-more summary:hover { color: var(--ink); }
+td.dl-more details[open] summary { margin-bottom: 8px; }
 .gmail-list { list-style: none; margin: 0; padding: 0; }
 .gmail-list > li { padding: 16px 0; display: grid; gap: 8px; }
 .gmail-list > li + li { border-top: 1px solid var(--line); }

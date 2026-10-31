@@ -551,3 +551,65 @@ export const airbnbListingRooms = pgTable(
   },
   (t) => [primaryKey({ columns: [t.investorId, t.listingKey] })],
 );
+
+// ---------- 4.8 Phiếu thanh toán Dayladau ----------
+// Dayladau gom tiền các đơn đặt trên Dayladau (app, web, CTV…) và chuyển cho host theo phiếu, thường mỗi tuần một phiếu.
+// Nguồn: GET /v1/payouts?host_id=&start_time=&end_time= và GET /v1/orders?host_id=&version=2&payout_status=paid|unpaid
+// (lib/dayladau/payouts.ts). Đơn Airbnb/Booking đồng bộ qua Dayladau không nằm trong phiếu này.
+
+/** Một phiếu thanh toán Dayladau = một lần Dayladau chuyển tiền cho host. */
+export const dayladauPayouts = pgTable(
+  "dayladau_payouts",
+  {
+    id: id(),
+    dayladauAccountId: text("dayladau_account_id").notNull().references(() => dayladauAccounts.id),
+    investorId: text("investor_id").notNull().references(() => investors.id),
+    externalId: text("external_id").notNull().unique(), // id phiếu trên Dayladau
+    createdOnDayladauAt: ts("created_on_dayladau_at").notNull(),
+    payoutDate: day("payout_date").notNull(), // ngày tạo phiếu, giờ VN
+    amount: money("amount"), // số tiền phiếu
+    status: text("status").notNull(), // confirmed | cancelled | …
+    confirmedAt: ts("confirmed_at"),
+    orderCount: integer("order_count").notNull().default(0),
+    /** Tổng tiền từng đơn trong phiếu; khác amount = phiếu có đơn chưa lấy được hoặc Dayladau cộng sai. */
+    itemsTotal: money("items_total"),
+    pictureUrl: text("picture_url"), // ảnh chứng từ chuyển khoản
+    transferRef: text("transfer_ref"),
+    note: text("note"),
+    lastSyncedAt: ts("last_synced_at"),
+  },
+  (t) => [index("dl_payouts_acc_date").on(t.dayladauAccountId, t.payoutDate)],
+);
+
+/**
+ * Từng đơn trong phiếu thanh toán, kèm kết quả đối chiếu với đơn trong hệ thống (bookings.external_id).
+ * payout_id null = đơn Dayladau đang chờ thanh toán (payout_status=unpaid), thay mới mỗi lần đồng bộ.
+ */
+export const dayladauPayoutItems = pgTable(
+  "dayladau_payout_items",
+  {
+    id: id(),
+    payoutId: text("payout_id").references(() => dayladauPayouts.id, { onDelete: "cascade" }),
+    dayladauAccountId: text("dayladau_account_id").notNull().references(() => dayladauAccounts.id),
+    orderId: text("order_id").notNull(),
+    listingKey: text("listing_key"),
+    listingName: text("listing_name"), // nickname listing (VP202…), không có thì tên listing
+    guestName: text("guest_name"),
+    checkIn: day("check_in"),
+    checkOut: day("check_out"),
+    orderStatus: text("order_status"), // reservation.status: completed, cancelled…
+    source: text("source"), // app_ios, web, ctv…
+    grossAmount: money("gross_amount"), // khách trả
+    amount: money("amount"), // tiền Dayladau trả host cho đơn (payout_amount, không có thì Σ items.host_amount)
+    bookingId: text("booking_id").references(() => bookings.id, { onDelete: "set null" }),
+    bookingNet: bigint("booking_net", { mode: "number" }), // thực nhận đang ghi trong hệ thống lúc đối chiếu
+    matchStatus: payoutMatchEnum("match_status").notNull().default("NOT_FOUND"),
+    diffAmount: bigint("diff_amount", { mode: "number" }), // amount − bookingNet
+  },
+  (t) => [
+    uniqueIndex("dl_payout_items_payout_order").on(t.payoutId, t.orderId),
+    index("dl_payout_items_acc").on(t.dayladauAccountId),
+    index("dl_payout_items_order").on(t.orderId),
+    index("dl_payout_items_booking").on(t.bookingId),
+  ],
+);

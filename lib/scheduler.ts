@@ -11,6 +11,7 @@ import { sendMonthlyReviewDigest } from "./services/reviews";
 import { computeAlerts } from "./services/alerts";
 import { generateCleaningTasks } from "./services/tasks";
 import { syncPayouts } from "./airbnb/payouts";
+import { syncDayladauPayouts } from "./dayladau/payouts";
 
 export const PAYOUT_HOUR_VN = 15;
 const VN_OFFSET_MS = 7 * 3600_000;
@@ -50,7 +51,8 @@ function schedulePayouts() {
     timer: setTimeout(async () => {
       try {
         const payouts = await syncPayouts(getDb());
-        console.log(`[payout-sync] ${new Date().toISOString()}`, payouts);
+        const dayladau = await syncDayladauPayouts(getDb()).catch((e: Error) => ({ error: e.message }));
+        console.log(`[payout-sync] ${new Date().toISOString()}`, { payouts, dayladau });
       } catch (e) {
         console.error("[payout-sync] lỗi:", (e as Error).message);
       } finally {

@@ -19,6 +19,7 @@ import { BackfillGmail, CopyField, PastePayout } from "./setup";
 import { usd } from "@/lib/airbnb/format";
 import { RunButton } from "./run-button";
 import { AssignRoom, type RoomOption } from "./assign-room";
+import { ChannelTabs } from "./channel-tabs";
 
 export const maxDuration = 300;
 
@@ -242,6 +243,7 @@ export default async function Payouts({ searchParams }: { searchParams: Promise<
         <h1>Payout Airbnb</h1>
         <MonthNav month={month} path="/payouts" extra={view === "month" ? "&view=month" : ""} />
         <p className="sub">Tiền Airbnb đã chuyển, đọc từ email payout trong Gmail của nhà đầu tư, đối chiếu với từng đơn trong hệ thống.</p>
+        <ChannelTabs month={month} channel="airbnb" />
         <ViewTabs month={month} view={view} />
       </div>
       {sp.connected && <div className="banner info" role="status">{sp.connected}</div>}
