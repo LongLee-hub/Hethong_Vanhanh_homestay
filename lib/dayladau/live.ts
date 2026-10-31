@@ -33,7 +33,7 @@ export function canViewLiveOrders(user: SessionUser) {
 export async function liveOrdersForMonth(db: DB, user: SessionUser, month: string, client: DayladauClient = httpDayladauClient): Promise<LiveResult> {
   const res: LiveResult = { orders: [], errors: [], unreadable: 0 };
   if (!canViewLiveOrders(user)) return res;
-  const conds = [eq(dayladauAccounts.active, true)];
+  const conds = [eq(dayladauAccounts.active, true), eq(dayladauAccounts.payoutOnly, false)];
   if (user.role === "INVESTOR") conds.push(eq(investors.userId, user.id));
   const accs = await db
     .select({ acc: dayladauAccounts, investorName: investors.name })

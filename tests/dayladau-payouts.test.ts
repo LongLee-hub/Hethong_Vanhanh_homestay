@@ -9,6 +9,9 @@ import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import type { SessionUser } from "../lib/auth/access";
 import { asBookingOrder, refreshBookingsFromOrders } from "../lib/dayladau/order-refresh";
+import { saveDayladauAccount, setPropertyAccount } from "../lib/dayladau/admin";
+import { syncBookings } from "../lib/dayladau/sync";
+import type { DayladauClient } from "../lib/dayladau/client";
 import { dayladauPayoutsForMonth, mapPayoutOrder, matchLine, payoutAmountOf, payoutsUrl, rematchDayladauPayoutItems, syncDayladauPayouts, type DayladauPayoutApi } from "../lib/dayladau/payouts";
 
 let db: DB;
@@ -238,5 +241,45 @@ describe("cập nhật đơn trong hệ thống theo đơn trong phiếu", () =>
     expect(b).toMatchObject({ roomId: "LT101", status: "CANCELLED", netAmount: 159200 });
     // Tài khoản khác không ghi được vào phòng của tài khoản này
     expect(await refreshBookingsFromOrders(db, "acc-b", [{ ...PAID[3], id: 999 }])).toMatchObject({ created: 0, skipped: 1 });
+  });
+});
+
+// Unixstay: Myslay (VTP…) và Citisnug (KT…) hiện trong tài khoản Unixstay nên đơn về qua tài khoản đó,
+// nhưng Dayladau trả tiền theo chủ listing (host khác). Tài khoản "chỉ lấy phiếu" của host chủ listing lấy được phiếu
+// và khớp với đơn đã về qua tài khoản Unixstay.
+describe("tài khoản chỉ lấy phiếu thanh toán", () => {
+  it("không cấp đơn cho cơ sở, không đồng bộ đơn, nhưng lấy phiếu và khớp đơn của tài khoản khác", async () => {
+    const saved = await saveDayladauAccount(db, admin, { investorId: "inv-a", label: "Myslay", hostId: "host-myslay", token: "myslaytoken0123456789abcdefghijklmnopqrstuvwxyz0123456789abcd", payoutOnly: true, propertyIds: ["VP"] }, (t) => t);
+    expect(saved.payoutOnly).toBe(true);
+    // Chọn cơ sở bị bỏ qua: VP vẫn lấy đơn từ tài khoản Unixstay
+    const [vp] = await db.select().from(schema.properties).where(eq(schema.properties.id, "VP"));
+    expect(vp.dayladauAccountId).toBe("acc-a");
+    await expect(setPropertyAccount(db, admin, "VP", saved.id)).rejects.toThrow(/chỉ dùng lấy phiếu/);
+
+    // Đồng bộ đơn không gọi tài khoản chỉ lấy phiếu (không báo listing chưa gắn phòng)
+    const hosts: string[] = [];
+    const client: DayladauClient = { async listBookings({ hostId }) { hosts.push(hostId); return []; } };
+    await syncBookings(db, { client, decrypt: (x) => x, today: "2026-10-31" });
+    expect(hosts).not.toContain("host-myslay");
+    expect(hosts).toContain("host-a");
+
+    // Đơn Myslay đã về qua tài khoản Unixstay
+    await db.insert(schema.bookings).values({ source: "DAYLADAU", externalId: "320001", propertyId: "VP", roomId: "VP202", channel: "Dayladau", checkIn: "2026-10-20", checkOut: "2026-10-21", grossAmount: 400000, netAmount: 320000, status: "CONFIRMED" });
+    const api: DayladauPayoutApi = {
+      async listPayouts(hostId) {
+        return hostId === "host-myslay" ? [{ id: 17001, order_ids: "320001", amount: 320000, status: "confirmed", created_at: T("2026-10-26T10:00:00+07:00") }] : [];
+      },
+      async listOrders(hostId, _t, status, offset) {
+        return hostId === "host-myslay" && status === "paid" && offset === 0 ? [order(320001, { amount: 320000, total: 400000, nickname: "VTP303", payout: 17001 })] : [];
+      },
+    };
+    const sum = await syncDayladauPayouts(db, { api, decrypt: (x) => x, today: "2026-10-31", accountIds: [saved.id] });
+    expect(sum).toMatchObject({ payouts: 1, matched: 1, notFound: 0, errors: [] });
+
+    const v = await dayladauPayoutsForMonth(db, invA, "2026-10", "host-myslay");
+    expect(v.payouts).toHaveLength(1);
+    expect(v.payouts[0]).toMatchObject({ hostId: "host-myslay", accountLabel: "Myslay" });
+    expect(v.payouts[0].lines[0]).toMatchObject({ orderId: "320001", listingName: "VTP303", matchStatus: "MATCHED", roomId: "VP202" });
+    expect(v.accounts.map((a) => a.hostId)).toContain("host-myslay");
   });
 });

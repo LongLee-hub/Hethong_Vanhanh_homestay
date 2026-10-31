@@ -47,7 +47,7 @@ export async function saveAccountAction(_: State, f: FormData): Promise<State> {
   const r = await action(() =>
     saveDayladauAccount(getDb(), user, {
       id: s(f, "id") || undefined, investorId: s(f, "investorId"), label: s(f, "label"), hostId: s(f, "hostId"), token: s(f, "token") || undefined,
-      active: f.get("active") === "1", propertyIds: f.getAll("propertyIds").map(String),
+      active: f.get("active") === "1", payoutOnly: f.get("payoutOnly") === "1", propertyIds: f.getAll("propertyIds").map(String),
     }),
   );
   revalidatePath("/dayladau");

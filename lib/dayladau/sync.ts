@@ -71,7 +71,7 @@ export async function syncBookings(
   const sum: SyncSummary = { created: 0, updated: 0, unchanged: 0, skipped: 0, adjustments: 0, unmapped: [], errors: [] };
 
   // Gọi riêng từng tài khoản Dayladau đang bật; tài khoản chỉ đổ đơn vào các cơ sở đang dùng nó
-  const conds = [eq(dayladauAccounts.active, true)];
+  const conds = [eq(dayladauAccounts.active, true), eq(dayladauAccounts.payoutOnly, false)];
   if (opts.investorIds?.length) conds.push(inArray(dayladauAccounts.investorId, opts.investorIds));
   if (opts.accountIds?.length) conds.push(inArray(dayladauAccounts.id, opts.accountIds));
   const accs = await db

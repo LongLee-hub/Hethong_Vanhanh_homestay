@@ -26,6 +26,8 @@ export interface AccountConnection {
   hasToken: boolean;
   tokenHint: string | null; // 4 ký tự cuối
   active: boolean;
+  /** Chỉ lấy phiếu thanh toán (không đồng bộ đơn). */
+  payoutOnly: boolean;
   lastSyncedAt: Date | null;
   lastSyncStatus: string | null;
   lastSyncError: string | null;
@@ -88,7 +90,7 @@ export async function listConnections(db: DB, user: SessionUser, decrypt = decry
       .filter((a) => a.investorId === i.id)
       .map((a) => ({
         id: a.id, investorId: a.investorId, label: a.label, hostId: a.hostId, hasToken: !!a.tokenEncrypted, tokenHint: hint(a, decrypt),
-        active: a.active, lastSyncedAt: a.lastSyncedAt, lastSyncStatus: a.lastSyncStatus, lastSyncError: a.lastSyncError,
+        active: a.active, payoutOnly: a.payoutOnly, lastSyncedAt: a.lastSyncedAt, lastSyncStatus: a.lastSyncStatus, lastSyncError: a.lastSyncError,
         propertyIds: props.filter((p) => p.accountId === a.id).map((p) => p.id),
       })),
   }));
@@ -140,7 +142,7 @@ export async function saveInvestor(db: DB, user: SessionUser, input: { id?: stri
 export async function saveDayladauAccount(
   db: DB,
   user: SessionUser,
-  input: { id?: string; investorId: string; label: string; hostId: string; token?: string; active?: boolean; propertyIds?: string[] },
+  input: { id?: string; investorId: string; label: string; hostId: string; token?: string; active?: boolean; payoutOnly?: boolean; propertyIds?: string[] },
   encrypt = encryptSecret,
 ): Promise<Omit<AccountRow, "tokenEncrypted">> {
   requirePermission(user, "admin");
@@ -154,6 +156,8 @@ export async function saveDayladauAccount(
   const dup = await db.select({ id: dayladauAccounts.id }).from(dayladauAccounts).where(eq(dayladauAccounts.hostId, hostId));
   if (dup.some((d) => d.id !== input.id)) throw badRequest("Host ID này đã có tài khoản khác dùng");
 
+  // Tài khoản chỉ lấy phiếu không cấp đơn cho cơ sở nào
+  if (input.payoutOnly) input = { ...input, propertyIds: [] };
   const tokenPatch = token ? { tokenEncrypted: encrypt(token), tokenLast4: token.slice(-4), tokenUpdatedAt: new Date() } : {};
   const saved = await db.transaction(async (tx) => {
     let row: AccountRow;
@@ -164,14 +168,14 @@ export async function saveDayladauAccount(
       if (prev.hostId !== hostId) await clearRoomListings(tx as unknown as DB, { accountId: prev.id });
       [row] = await tx
         .update(dayladauAccounts)
-        .set({ label, hostId, active: input.active ?? prev.active, ...tokenPatch })
+        .set({ label, hostId, active: input.active ?? prev.active, payoutOnly: input.payoutOnly ?? prev.payoutOnly, ...tokenPatch })
         .where(eq(dayladauAccounts.id, input.id))
         .returning();
     } else {
       if (!token) throw badRequest("Nhập access token Dayladau");
       const [inv] = await tx.select({ id: investors.id }).from(investors).where(eq(investors.id, input.investorId)).limit(1);
       if (!inv) throw notFound("Không tìm thấy nhà đầu tư");
-      [row] = await tx.insert(dayladauAccounts).values({ investorId: input.investorId, label, hostId, active: input.active ?? true, ...tokenPatch } as typeof dayladauAccounts.$inferInsert).returning();
+      [row] = await tx.insert(dayladauAccounts).values({ investorId: input.investorId, label, hostId, active: input.active ?? true, payoutOnly: input.payoutOnly ?? false, ...tokenPatch } as typeof dayladauAccounts.$inferInsert).returning();
     }
     if (input.propertyIds) {
       const want = new Set(input.propertyIds);
@@ -202,8 +206,9 @@ export async function setPropertyAccount(db: DB, user: SessionUser, propertyId: 
   if (!prop) throw notFound("Không tìm thấy cơ sở");
   if (prop.dayladauAccountId === accountId) return;
   if (accountId) {
-    const [acc] = await db.select({ investorId: dayladauAccounts.investorId }).from(dayladauAccounts).where(eq(dayladauAccounts.id, accountId)).limit(1);
+    const [acc] = await db.select({ investorId: dayladauAccounts.investorId, payoutOnly: dayladauAccounts.payoutOnly }).from(dayladauAccounts).where(eq(dayladauAccounts.id, accountId)).limit(1);
     if (!acc) throw notFound("Không tìm thấy tài khoản Dayladau");
+    if (acc.payoutOnly) throw badRequest("Tài khoản này chỉ dùng lấy phiếu thanh toán, không cấp đơn cho cơ sở");
     if (acc.investorId !== prop.investorId) throw badRequest("Tài khoản Dayladau thuộc nhà đầu tư khác");
   }
   await db.transaction((tx) => assignAccount(tx as unknown as DB, propertyId, accountId));

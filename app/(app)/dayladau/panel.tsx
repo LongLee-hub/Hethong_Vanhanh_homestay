@@ -206,6 +206,7 @@ function InvestorCard({ inv, props, bookingCount, defaultFeePct, onEdit }: { inv
 function AccountForm({ investorId, acc, props, accounts, onDone }: { investorId: string; acc?: Account; props: Prop[]; accounts: Account[]; onDone: () => void }) {
   const id = acc?.id ?? `new-${investorId}`;
   const labelOf = Object.fromEntries(accounts.map((a) => [a.id, a.label]));
+  const [payoutOnly, setPayoutOnly] = useState(acc?.payoutOnly ?? false);
   return (
     <div className={s.account}>
       <div className={s.accHead}><h3>{acc ? `Sửa ${acc.label}` : "Thêm tài khoản Dayladau"}</h3><button className="btn sm" onClick={onDone}>Đóng</button></div>
@@ -218,7 +219,11 @@ function AccountForm({ investorId, acc, props, accounts, onDone }: { investorId:
           <input type="password" name="token" id={`acc-token-${id}`} required={!acc?.hasToken} autoComplete="new-password" placeholder="Dán x_access_token của tài khoản" />
         </label>
         <label className="check-item full"><input type="checkbox" name="active" value="1" id={`acc-active-${id}`} defaultChecked={acc?.active ?? true} /><span>Tự đồng bộ tài khoản này</span></label>
-        <div className="field full">
+        <label className="check-item full">
+          <input type="checkbox" name="payoutOnly" value="1" id={`acc-payout-${id}`} checked={payoutOnly} onChange={(e) => setPayoutOnly(e.target.checked)} />
+          <span className="listing-name"><span>Chỉ lấy phiếu thanh toán</span><span className="small muted">Cho host sở hữu listing nhưng đơn đã về qua tài khoản khác (vd Myslay, Citisnug trong tài khoản Unixstay). Không đồng bộ đơn, không cần gắn cơ sở.</span></span>
+        </label>
+        {!payoutOnly && <div className="field full">
           <span>Cơ sở lấy đơn từ tài khoản này</span>
           {props.length ? (
             <div className="check-grid">
@@ -230,7 +235,7 @@ function AccountForm({ investorId, acc, props, accounts, onDone }: { investorId:
               ))}
             </div>
           ) : <span className="small muted">Nhà đầu tư chưa có cơ sở. Lưu tài khoản rồi bấm Kiểm tra kết nối để tạo cơ sở.</span>}
-        </div>
+        </div>}
         <p className="hint full">Lấy host ID và access token trong tài khoản Dayladau (giống HOST_ID và ACCESS_TOKEN trong script Apps Script). Mỗi cơ sở lấy đơn từ đúng một tài khoản; đổi tài khoản của cơ sở sẽ bỏ gắn listing ở các phòng của cơ sở đó.</p>
       </ActionForm>
     </div>
@@ -261,6 +266,24 @@ function AccountCard({ acc, investorId, props, bookings, onEdit }: { acc: Accoun
     <>Bấm <b>Đồng bộ ngay</b> để lấy đơn về, hoặc chờ lần tự đồng bộ kế tiếp. Lần đầu lấy toàn bộ đơn cũ, các lần sau chỉ lấy đơn mới nhất.</>,
   ][now];
   const lastSync = acc.lastSyncedAt ? `Đồng bộ lần cuối ${dt(acc.lastSyncedAt)}${acc.lastSyncStatus === "FAILED" ? " (lỗi)" : ""}` : "Chưa đồng bộ";
+  if (acc.payoutOnly) {
+    // Không đồng bộ đơn nên không có các bước gắn listing; phiếu xem ở trang Payout → Dayladau
+    return (
+      <div className={s.account}>
+        <div className={s.accHead}>
+          <div>
+            <h3>{acc.label}</h3>
+            <p className="small muted">Host ID {acc.hostId} · token {acc.hasToken ? acc.tokenHint : "chưa có"} · chỉ lấy phiếu thanh toán, đơn về qua tài khoản khác</p>
+          </div>
+          <div className="row">
+            {!acc.active ? <span className="pill">Tạm dừng</span> : acc.hasToken ? <span className="pill ok">Lấy phiếu thanh toán</span> : <span className="pill warn">Thiếu token</span>}
+            <button className="btn sm" onClick={onEdit}>Sửa</button>
+            <a className="btn sm" href={`/payouts/dayladau?host=${encodeURIComponent(acc.hostId)}`}>Xem phiếu</a>
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={s.account}>
       <div className={s.accHead}>

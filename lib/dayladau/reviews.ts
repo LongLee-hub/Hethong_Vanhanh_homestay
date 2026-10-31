@@ -130,7 +130,7 @@ export async function syncReviews(
   const today = opts.today ?? D.todayVN();
   const sum: ReviewSyncSummary = { created: 0, updated: 0, skipped: 0, lowAlerts: 0, tasksCreated: 0, unmapped: [], errors: [] };
 
-  const conds = [eq(dayladauAccounts.active, true)];
+  const conds = [eq(dayladauAccounts.active, true), eq(dayladauAccounts.payoutOnly, false)];
   if (opts.accountIds?.length) conds.push(inArray(dayladauAccounts.id, opts.accountIds));
   const accs = await db
     .select({ acc: dayladauAccounts, investorName: investors.name })

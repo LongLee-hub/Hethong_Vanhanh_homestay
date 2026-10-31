@@ -1,0 +1,1 @@
+ALTER TABLE "dayladau_accounts" ADD COLUMN "payout_only" boolean DEFAULT false NOT NULL;

@@ -13,7 +13,7 @@ import { manualBookingAction } from "../actions";
 import { canViewLiveOrders, liveOrdersForMonth, type LiveSyncState } from "@/lib/dayladau/live";
 import { BookingChanges } from "./changes";
 import { SyncMonth, type SyncAccount } from "./sync-month";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { dayladauAccounts } from "@/lib/db/schema";
 
 // Nút "Lấy tất cả đơn tháng X" đọc toàn bộ lịch sử đơn của host (có host hơn 36.000 đơn), cần thời gian như job đồng bộ
@@ -30,7 +30,7 @@ type Src = "db" | "changes" | "api";
 
 /** Tài khoản Dayladau đang bật, để chọn host ID khi lấy đơn theo tháng. */
 async function syncAccounts(): Promise<SyncAccount[]> {
-  return getDb().select({ id: dayladauAccounts.id, label: dayladauAccounts.label, hostId: dayladauAccounts.hostId }).from(dayladauAccounts).where(eq(dayladauAccounts.active, true)).orderBy(dayladauAccounts.label);
+  return getDb().select({ id: dayladauAccounts.id, label: dayladauAccounts.label, hostId: dayladauAccounts.hostId }).from(dayladauAccounts).where(and(eq(dayladauAccounts.active, true), eq(dayladauAccounts.payoutOnly, false))).orderBy(dayladauAccounts.label);
 }
 
 /** Các cách xem đơn: đơn đã lưu trong hệ thống, đơn vừa cập nhật, hoặc đọc trực tiếp từ API Dayladau. */

@@ -71,6 +71,11 @@ export const dayladauAccounts = pgTable("dayladau_accounts", {
   tokenLast4: text("token_last4"), // để hiện "…abcd" mà không cần giải mã
   tokenUpdatedAt: ts("token_updated_at"),
   active: boolean("active").notNull().default(true), // false = tạm dừng đồng bộ
+  /**
+   * Chỉ dùng lấy phiếu thanh toán, không đồng bộ đơn/đánh giá. Dùng cho host sở hữu listing nhưng đơn đã về qua tài khoản khác
+   * (vd Myslay, Citisnug hiện trong tài khoản Unixstay): Dayladau trả tiền theo chủ listing, token Unixstay không đọc được phiếu của họ.
+   */
+  payoutOnly: boolean("payout_only").notNull().default(false),
   lastSyncedAt: ts("last_synced_at"),
   lastSyncStatus: text("last_sync_status"), // OK | FAILED
   lastSyncError: text("last_sync_error"),

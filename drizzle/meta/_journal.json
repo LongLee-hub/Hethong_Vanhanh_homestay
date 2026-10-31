@@ -120,6 +120,13 @@
       "when": 1793412379822,
       "tag": "0015_dayladau_payouts",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793414328555,
+      "tag": "0016_dayladau_payout_only",
+      "breakpoints": true
     }
   ]
 }
