@@ -52,7 +52,10 @@ export async function action(fn: () => Promise<unknown>): Promise<{ ok: boolean;
     if (e instanceof HttpError) return { ok: false, error: e.message };
     if (e instanceof ZodError) return { ok: false, error: e.issues.map((i) => i.message).join("; ") };
     console.error(e);
-    return { ok: false, error: "Lỗi máy chủ, thử lại sau" };
+    // Kèm nguyên nhân ngắn gọn (lỗi DB, thiếu cấu hình…) để dễ tìm lỗi thay vì câu chung chung
+    const err = e as { message?: string; code?: string; cause?: { message?: string; code?: string } };
+    const detail = [err.code ?? err.cause?.code, err.cause?.message ?? err.message].filter(Boolean).join(" ").slice(0, 300);
+    return { ok: false, error: detail ? `Lỗi máy chủ: ${detail}` : "Lỗi máy chủ, thử lại sau" };
   }
 }
 
