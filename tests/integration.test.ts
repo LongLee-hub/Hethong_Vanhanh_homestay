@@ -112,10 +112,6 @@ describe("Doanh thu, chi phí, quyết toán (giai đoạn 2)", () => {
     expect(s.status).toBe("DRAFT");
   });
 
-  it("chặn đơn trùng phòng", async () => {
-    await expect(saveManualBooking(db, mgr, { propertyId: "X", roomId: "X1", guestName: "Trùng", checkIn: "2026-08-05", checkOut: "2026-08-06", amount: 1, status: "CONFIRMED", transferProofUrl: "x" })).rejects.toThrow(/đã có khách/);
-  });
-
   it("chỉ Admin khóa sổ; sau khi khóa không sửa được chi phí tháng đó", async () => {
     await expect(lockSettlement(db, acc, "inv-a", "2026-08")).rejects.toMatchObject({ status: 403 });
     await lockSettlement(db, admin, "inv-a", "2026-08");

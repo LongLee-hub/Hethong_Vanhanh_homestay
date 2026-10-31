@@ -1,5 +1,5 @@
 // Ghi đơn đặt phòng: tạo lại đêm, ghi log, sinh điều chỉnh cho tháng đã khóa (Đặc tả 5.1, 5.6, 6).
-import { and, eq, gt, inArray, lt, ne } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
 import { adjustments, alerts, bookingChangeLogs, bookingNights, bookings, properties, rooms, settlements } from "../db/schema";
@@ -132,14 +132,7 @@ export async function saveManualBooking(
   const draft = { id: input.id ?? "new", propertyId: input.propertyId, roomId: input.roomId, checkIn: input.checkIn, checkOut: input.checkOut, netAmount: input.amount, status: input.status, rentalType: null };
   if (await touchesLockedMonth(db, draft)) throw badRequest("Đơn có đêm rơi vào tháng đã khóa sổ");
 
-  if (input.status === "CONFIRMED") {
-    const clash = await db
-      .select({ id: bookings.id })
-      .from(bookings)
-      .where(and(eq(bookings.roomId, input.roomId), eq(bookings.status, "CONFIRMED"), lt(bookings.checkIn, input.checkOut), gt(bookings.checkOut, input.checkIn), input.id ? ne(bookings.id, input.id) : undefined))
-      .limit(1);
-    if (clash.length) throw badRequest("Phòng đã có khách trong khoảng ngày này");
-  }
+  // Một phòng có thể có nhiều đơn trong cùng ngày (thuê giờ, khách nối tiếp…) nên không chặn trùng ngày
 
   return upsertBooking(
     db,
