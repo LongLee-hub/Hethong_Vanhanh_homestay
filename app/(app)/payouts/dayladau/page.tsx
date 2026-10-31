@@ -48,7 +48,7 @@ function HostFilter({ accounts, host, month }: { accounts: DlAccountView[]; host
       <Link className="chip" aria-pressed={!host} href={href()}>Tất cả host</Link>
       {accounts.map((a) => (
         <Link key={a.id} className="chip" aria-pressed={host === a.hostId} href={href(a.hostId)} title={`${a.investorName}, ${a.label}`}>
-          <span className="num">{a.hostId}</span> <span className="muted">{a.label}</span>
+          <span className="num">{a.hostId}</span> <span className="muted">{a.label}{a.active ? "" : " (không tự lấy)"}</span>
         </Link>
       ))}
     </nav>
@@ -166,10 +166,10 @@ export default async function DayladauPayouts({ searchParams }: { searchParams: 
       {accounts.length > 0 && (!host || picked) && (
         <div className="row" style={{ marginBottom: 16 }}>
           <RunButton run={syncDayladauPayoutsAction.bind(null, { month, accountId: picked?.id })} label={`Lấy phiếu ${D.formatMonthVN(month).toLowerCase()}${picked ? ` của host ${picked.hostId}` : ""}`} pendingLabel="Đang lấy từ Dayladau…" />
-          <span className="small muted">Tự lấy lúc 15:00 hằng ngày (phiếu 45 ngày gần nhất).</span>
+          <span className="small muted">{picked && !picked.active ? "Host này không tự lấy phiếu hằng ngày; bấm nút để lấy." : "Tự lấy lúc 15:00 hằng ngày (phiếu 45 ngày gần nhất)."}</span>
         </div>
       )}
-      {!accounts.length && <div className="banner">Chưa có tài khoản Dayladau nào đang bật. Admin thêm ở trang Kết nối Dayladau.</div>}
+      {!accounts.length && <div className="banner">Chưa có tài khoản Dayladau nào. Admin thêm ở trang Kết nối Dayladau.</div>}
 
       <div className="cards">
         <div className="stat"><span className="lbl">Dayladau đã chuyển</span><span className="v">{vnd(total)}</span><span className="s">{payouts.length} phiếu trong {D.formatMonthVN(month).toLowerCase()}{picked ? `, host ${picked.hostId}` : ""}</span></div>

@@ -283,3 +283,19 @@ describe("tài khoản chỉ lấy phiếu thanh toán", () => {
     expect(v.accounts.map((a) => a.hostId)).toContain("host-myslay");
   });
 });
+
+describe("tài khoản tạm dừng", () => {
+  it("không tự lấy phiếu, nhưng vẫn hiện trên trang và lấy tay được", async () => {
+    await db.update(schema.dayladauAccounts).set({ active: false }).where(eq(schema.dayladauAccounts.id, "acc-a"));
+    const { api, calls } = fakeApi();
+    await syncDayladauPayouts(db, { api, decrypt: (x) => x, today: "2026-10-31" });
+    expect(calls.some((c) => c.startsWith("payouts:host-a"))).toBe(false);
+
+    const manual = await syncDayladauPayouts(db, { api, decrypt: (x) => x, today: "2026-10-31", accountIds: ["acc-a"] });
+    expect(manual).toMatchObject({ payouts: 1, errors: [] });
+    const view = await dayladauPayoutsForMonth(db, admin, "2026-10", "host-a");
+    expect(view.accounts.find((a) => a.hostId === "host-a")).toMatchObject({ active: false });
+    expect(view.payouts).toHaveLength(1);
+    await db.update(schema.dayladauAccounts).set({ active: true }).where(eq(schema.dayladauAccounts.id, "acc-a"));
+  });
+});

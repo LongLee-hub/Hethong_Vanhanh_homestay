@@ -176,8 +176,9 @@ export async function syncDayladauPayouts(
   const to = opts.to ?? today;
   const sum: DlPayoutSyncSummary = { accounts: 0, payouts: 0, orders: 0, matched: 0, amountDiff: 0, notFound: 0, totalMismatch: 0, pending: 0, bookingsUpdated: 0, bookingsCreated: 0, errors: [] };
 
-  const conds = [eq(dayladauAccounts.active, true)];
-  if (opts.accountIds?.length) conds.push(inArray(dayladauAccounts.id, opts.accountIds));
+  // Tự chạy (không chỉ định tài khoản): chỉ tài khoản đang bật. Người dùng bấm lấy cho tài khoản cụ thể: lấy cả tài khoản
+  // đang tạm dừng, vì "Tạm dừng" chỉ tắt việc tự lấy hằng ngày.
+  const conds = opts.accountIds?.length ? [inArray(dayladauAccounts.id, opts.accountIds)] : [eq(dayladauAccounts.active, true)];
   if (opts.investorIds?.length) conds.push(inArray(dayladauAccounts.investorId, opts.investorIds));
   const accs = await db.select().from(dayladauAccounts).where(and(...conds));
 
@@ -346,6 +347,9 @@ export interface DlAccountView {
   hostId: string;
   investorId: string;
   investorName: string;
+  /** false = không tự lấy phiếu hằng ngày, vẫn xem và lấy tay được. */
+  active: boolean;
+  payoutOnly: boolean;
 }
 
 /**
@@ -356,10 +360,10 @@ export async function dayladauPayoutsForMonth(db: DB, user: SessionUser, month: 
   const invIds = await allowedInvestorIds(db, user);
   if (!invIds.length) return { payouts: [], pending: [], accounts: [] };
   const accounts = await db
-    .select({ id: dayladauAccounts.id, label: dayladauAccounts.label, hostId: dayladauAccounts.hostId, investorId: dayladauAccounts.investorId, investorName: investors.name })
+    .select({ id: dayladauAccounts.id, label: dayladauAccounts.label, hostId: dayladauAccounts.hostId, investorId: dayladauAccounts.investorId, investorName: investors.name, active: dayladauAccounts.active, payoutOnly: dayladauAccounts.payoutOnly })
     .from(dayladauAccounts)
     .innerJoin(investors, eq(investors.id, dayladauAccounts.investorId))
-    .where(and(inArray(dayladauAccounts.investorId, invIds), eq(dayladauAccounts.active, true)))
+    .where(inArray(dayladauAccounts.investorId, invIds))
     .orderBy(asc(investors.name), asc(dayladauAccounts.label));
   const picked = hostId ? accounts.filter((a) => a.hostId === hostId) : accounts;
   if (!picked.length) return { payouts: [], pending: [], accounts };
@@ -404,7 +408,8 @@ export async function dayladauPayoutsForMonth(db: DB, user: SessionUser, month: 
 export async function syncableAccountIds(db: DB, user: SessionUser, accountId?: string): Promise<string[]> {
   const invIds = await allowedInvestorIds(db, user);
   if (!invIds.length) return [];
-  const rows = await db.select({ id: dayladauAccounts.id }).from(dayladauAccounts).where(and(inArray(dayladauAccounts.investorId, invIds), eq(dayladauAccounts.active, true)));
+  // Gồm cả tài khoản đang tạm dừng: tạm dừng chỉ tắt việc tự lấy hằng ngày
+  const rows = await db.select({ id: dayladauAccounts.id }).from(dayladauAccounts).where(inArray(dayladauAccounts.investorId, invIds));
   const ids = rows.map((r) => r.id);
   if (accountId && !ids.includes(accountId)) throw badRequest("Không tìm thấy tài khoản Dayladau");
   return accountId ? [accountId] : ids;

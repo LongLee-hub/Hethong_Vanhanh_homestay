@@ -8,6 +8,11 @@ import {
   createPropertyAction, createRoomForListingAction, dismissAlertAction, mapListingAction, saveAccountAction, saveInvestorAction, syncNowAction, testConnectionAction,
 } from "./actions";
 import s from "./dayladau.module.css";
+import { RunButton } from "../payouts/run-button";
+import { syncDayladauPayoutsAction } from "../payouts/actions";
+
+/** Tháng hiện tại theo giờ Việt Nam, "YYYY-MM". */
+const thisMonthVN = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Ho_Chi_Minh" }).slice(0, 7);
 
 type Prop = { id: string; name: string; investorId: string; accountId: string | null; rooms: { id: string; name: string; listingKey: string | null }[] };
 type Run = { id: string; startedAt: string; finishedAt: string | null; created: number; updated: number; skipped: number; errors: { message: string }[] };
@@ -218,7 +223,7 @@ function AccountForm({ investorId, acc, props, accounts, onDone }: { investorId:
         <label className="field full"><span>Access token {acc?.hasToken && `(đang lưu ${acc.tokenHint} — để trống nếu không đổi)`}</span>
           <input type="password" name="token" id={`acc-token-${id}`} required={!acc?.hasToken} autoComplete="new-password" placeholder="Dán x_access_token của tài khoản" />
         </label>
-        <label className="check-item full"><input type="checkbox" name="active" value="1" id={`acc-active-${id}`} defaultChecked={acc?.active ?? true} /><span>Tự đồng bộ tài khoản này</span></label>
+        <label className="check-item full"><input type="checkbox" name="active" value="1" id={`acc-active-${id}`} defaultChecked={acc?.active ?? true} /><span>{payoutOnly ? "Tự lấy phiếu lúc 15:00 hằng ngày" : "Tự đồng bộ tài khoản này"}</span></label>
         <label className="check-item full">
           <input type="checkbox" name="payoutOnly" value="1" id={`acc-payout-${id}`} checked={payoutOnly} onChange={(e) => setPayoutOnly(e.target.checked)} />
           <span className="listing-name"><span>Chỉ lấy phiếu thanh toán</span><span className="small muted">Cho host sở hữu listing nhưng đơn đã về qua tài khoản khác (vd Myslay, Citisnug trong tài khoản Unixstay). Không đồng bộ đơn, không cần gắn cơ sở.</span></span>
@@ -276,8 +281,9 @@ function AccountCard({ acc, investorId, props, bookings, onEdit }: { acc: Accoun
             <p className="small muted">Host ID {acc.hostId} · token {acc.hasToken ? acc.tokenHint : "chưa có"} · chỉ lấy phiếu thanh toán, đơn về qua tài khoản khác</p>
           </div>
           <div className="row">
-            {!acc.active ? <span className="pill">Tạm dừng</span> : acc.hasToken ? <span className="pill ok">Lấy phiếu thanh toán</span> : <span className="pill warn">Thiếu token</span>}
+            {!acc.hasToken ? <span className="pill warn">Thiếu token</span> : acc.active ? <span className="pill ok">Tự lấy phiếu 15:00</span> : <span className="pill">Không tự lấy</span>}
             <button className="btn sm" onClick={onEdit}>Sửa</button>
+            {acc.hasToken && <RunButton run={() => syncDayladauPayoutsAction({ month: thisMonthVN(), accountId: acc.id })} label="Lấy phiếu tháng này" pendingLabel="Đang lấy từ Dayladau…" />}
             <a className="btn sm" href={`/payouts/dayladau?host=${encodeURIComponent(acc.hostId)}`}>Xem phiếu</a>
           </div>
         </div>
