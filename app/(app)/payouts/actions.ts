@@ -131,6 +131,7 @@ export async function syncDayladauPayoutsAction(input: { month: string; accountI
     message = sum.payouts
       ? `Lấy ${sum.payouts} phiếu, ${sum.orders} đơn: ${sum.matched} khớp, ${sum.amountDiff} lệch tiền, ${sum.notFound} chưa có trong hệ thống. ${sum.pending} đơn đang chờ trả`
       : `Không có phiếu nào trong ${D.formatMonthVN(input.month).toLowerCase()}. ${sum.pending} đơn đang chờ trả`;
+    if (sum.bookingsUpdated || sum.bookingsCreated) message += `. Đã cập nhật ${sum.bookingsUpdated} đơn và thêm ${sum.bookingsCreated} đơn bị sót theo dữ liệu mới nhất của Dayladau`;
     if (sum.errors.length) message += `. Lỗi ${sum.errors.length} tài khoản: ${sum.errors[0].message}`;
   });
   revalidatePath("/payouts/dayladau");

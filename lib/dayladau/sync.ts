@@ -11,6 +11,7 @@ import { httpDayladauClient, type DayladauClient } from "./client";
 import { mapDayladauOrder, netOf } from "./mapping";
 import { listingRef, roomsByListing } from "./room-listings";
 import { rematchDayladauPayoutItems } from "./payouts";
+import { backfillRoomOpenedOn } from "./room-opened";
 
 export interface SyncSummary {
   created: number;
@@ -52,25 +53,7 @@ function runOrigin(): string {
 const CHUNK = 500;
 const chunks = <T>(xs: T[]) => Array.from({ length: Math.ceil(xs.length / CHUNK) }, (_, i) => xs.slice(i * CHUNK, (i + 1) * CHUNK));
 
-/**
- * Ngày mở bán của phòng không được muộn hơn đơn đầu tiên của phòng. Phòng tạo lại hoặc gắn listing sau khi đã có đơn
- * (ngày mở bán mặc định là hôm tạo) sẽ có đêm đã bán nhiều hơn đêm có thể bán: tỷ lệ kín phòng vượt 100% và doanh thu dự kiến
- * bị nhân lên. Kéo ngày mở bán về ngày nhận phòng sớm nhất của đơn đã xác nhận.
- */
-export async function backfillRoomOpenedOn(db: DB, propertyIds: string[]): Promise<number> {
-  if (!propertyIds.length) return 0;
-  // Một câu UPDATE cho mọi phòng (trước đây một câu cho mỗi phòng)
-  const fixed = await db.execute(sql`
-    update ${rooms} set opened_on = f.first
-    from (
-      select ${bookings.roomId} as room_id, min(${bookings.checkIn}) as first from ${bookings}
-      where ${and(inArray(bookings.propertyId, propertyIds), eq(bookings.status, "CONFIRMED"))}
-      group by ${bookings.roomId}
-    ) f
-    where ${rooms.id} = f.room_id and ${rooms.openedOn} > f.first
-    returning ${rooms.id}`);
-  return rowsOf(fixed).length;
-}
+export { backfillRoomOpenedOn } from "./room-opened";
 
 async function raiseAlert(db: DB, type: string, key: string, message: string, propertyId?: string) {
   await db.insert(alerts).values({ type, key, message, propertyId: propertyId ?? null }).onConflictDoNothing();

@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import type { SessionUser } from "../lib/auth/access";
+import { asBookingOrder, refreshBookingsFromOrders } from "../lib/dayladau/order-refresh";
 import { dayladauPayoutsForMonth, mapPayoutOrder, matchLine, payoutAmountOf, payoutsUrl, rematchDayladauPayoutItems, syncDayladauPayouts, type DayladauPayoutApi } from "../lib/dayladau/payouts";
 
 let db: DB;
@@ -116,7 +117,9 @@ describe("đồng bộ phiếu thanh toán", () => {
     const { api, calls } = fakeApi();
     const sum = await syncDayladauPayouts(db, { api, decrypt: (s) => s, today: "2026-10-31" });
     expect(sum.errors).toEqual([]);
-    expect(sum).toMatchObject({ accounts: 2, payouts: 1, orders: 4, matched: 2, amountDiff: 1, notFound: 1, totalMismatch: 0, pending: 1 });
+    // 309695 lệch tiền trong hệ thống được cập nhật theo bản mới nhất của đơn trước khi đối chiếu
+    expect(sum).toMatchObject({ accounts: 2, payouts: 1, orders: 4, matched: 3, amountDiff: 0, notFound: 1, totalMismatch: 0, pending: 1, bookingsCreated: 0 });
+    expect(sum.bookingsUpdated).toBeGreaterThanOrEqual(1);
     expect(calls).toContain("payouts:host-a:tok-a");
 
     const [p] = await db.select().from(schema.dayladauPayouts);
@@ -124,7 +127,9 @@ describe("đồng bộ phiếu thanh toán", () => {
 
     const items = await db.select().from(schema.dayladauPayoutItems).where(eq(schema.dayladauPayoutItems.payoutId, p.id));
     const by = Object.fromEntries(items.map((i) => [i.orderId, i]));
-    expect(by["309695"]).toMatchObject({ matchStatus: "AMOUNT_DIFF", diffAmount: 3600, bookingNet: 250000 });
+    expect(by["309695"]).toMatchObject({ matchStatus: "MATCHED", diffAmount: 0, bookingNet: 253600 });
+    const [b] = await db.select().from(schema.bookings).where(eq(schema.bookings.externalId, "309695"));
+    expect(b).toMatchObject({ netAmount: 253600, grossAmount: 287000, channel: "Dayladau", status: "CONFIRMED" });
     expect(by["308882"]).toMatchObject({ matchStatus: "NOT_FOUND", bookingId: null });
     expect(by["306922"]).toMatchObject({ matchStatus: "MATCHED", grossAmount: 224910, amount: 257040 });
   });
@@ -137,10 +142,10 @@ describe("đồng bộ phiếu thanh toán", () => {
   });
 
   it("đối chiếu lại khi đơn trong hệ thống thay đổi", async () => {
-    await db.update(schema.bookings).set({ netAmount: 253600 }).where(eq(schema.bookings.externalId, "309695"));
+    await db.update(schema.bookings).set({ netAmount: 250000 }).where(eq(schema.bookings.externalId, "309695"));
     expect(await rematchDayladauPayoutItems(db, ["acc-a"])).toBe(1);
     const [it] = await db.select().from(schema.dayladauPayoutItems).where(eq(schema.dayladauPayoutItems.orderId, "309695"));
-    expect(it).toMatchObject({ matchStatus: "MATCHED", diffAmount: 0 });
+    expect(it).toMatchObject({ matchStatus: "AMOUNT_DIFF", diffAmount: 3600 });
   });
 
   it("lỗi một tài khoản không dừng tài khoản khác, không lộ token", async () => {
@@ -184,5 +189,54 @@ describe("trang đối chiếu", () => {
   it("lọc theo tháng tạo phiếu", async () => {
     expect((await dayladauPayoutsForMonth(db, admin, "2026-09")).payouts).toHaveLength(0);
     expect((await dayladauPayoutsForMonth(db, admin, "2026-10")).payouts).toHaveLength(1);
+  });
+});
+
+describe("cập nhật đơn trong hệ thống theo đơn trong phiếu", () => {
+  // Đơn #302670 thật: đặt 12/10, gia hạn 22/10 làm giá đặt chỗ tăng 898.000 → 1.058.000; mã giảm giá do Dayladau chịu
+  const extended = {
+    id: 302670, total_billed: 1004120, status: "paid",
+    listing: { id: "lst-VP202", name: "Unix VP202/Bồn tắm", nickname: "VP202" },
+    guest: { fullname: "Như Quỳnh" },
+    reservation: { start_time: T("2026-10-20T14:00:00+07:00"), end_time: T("2026-10-22T13:00:00+07:00"), status: "completed", source: "app_ios" },
+    items: [{ id: 1, type: "reservation", amount: 1058000, host_amount: 846400, commission_rates: [{ type: "host", rate: 0.8 }] }],
+    payout_id: 16783, payout_amount: 846400,
+  };
+
+  it("trạng thái đặt phòng lấy từ reservation.status, không phải trạng thái thanh toán", () => {
+    expect(asBookingOrder(PAID[3]).status).toBe("cancelled");
+    expect(asBookingOrder({ id: 1, status: "cancelled" }).status).toBe("cancelled");
+  });
+
+  it("đơn gia hạn sau khi đã đồng bộ: cập nhật tiền và ngày, giữ kênh và loại thuê", async () => {
+    await db.insert(schema.bookings).values({
+      source: "DAYLADAU", externalId: "302670", propertyId: "VP", roomId: "VP202", channel: "Airbnb", rentalType: "overnight",
+      checkIn: "2026-10-20", checkOut: "2026-10-21", grossAmount: 898000, commissionAmount: 179600, netAmount: 718400, status: "CONFIRMED", rawPayload: { v: 1 },
+    });
+    const r = await refreshBookingsFromOrders(db, "acc-a", [extended]);
+    expect(r).toMatchObject({ updated: 1, skipped: 0 });
+    const [b] = await db.select().from(schema.bookings).where(eq(schema.bookings.externalId, "302670"));
+    expect(b).toMatchObject({ netAmount: 846400, grossAmount: 1004120, checkOut: "2026-10-22", channel: "Airbnb", rentalType: "overnight", rawPayload: { v: 1 } });
+    const nights = await db.select().from(schema.bookingNights).where(eq(schema.bookingNights.bookingId, b.id));
+    expect(nights.reduce((s, n) => s + n.netAmount, 0)).toBe(846400);
+    // Chạy lại không đổi gì
+    expect(await refreshBookingsFromOrders(db, "acc-a", [extended])).toMatchObject({ unchanged: 1, updated: 0 });
+  });
+
+  it("tiền tính ra khác tiền Dayladau trả thì không ghi", async () => {
+    const odd = { ...extended, payout_amount: 900000 };
+    expect(await refreshBookingsFromOrders(db, "acc-a", [odd])).toMatchObject({ skipped: 1, updated: 0 });
+    const [b] = await db.select().from(schema.bookings).where(eq(schema.bookings.externalId, "302670"));
+    expect(b.netAmount).toBe(846400);
+  });
+
+  it("đơn bị sót của listing đã gắn phòng được tạo mới; listing chưa gắn thì bỏ qua", async () => {
+    expect(await refreshBookingsFromOrders(db, "acc-a", [PAID[3]])).toMatchObject({ created: 0, skipped: 1 });
+    await db.insert(schema.rooms).values({ id: "LT101", propertyId: "VP", name: "LT-101", openedOn: "2026-10-30", dayladauAccountId: "acc-a", dayladauRoomId: "lst-LT-101" });
+    expect(await refreshBookingsFromOrders(db, "acc-a", [PAID[3]])).toMatchObject({ created: 1 });
+    const [b] = await db.select().from(schema.bookings).where(eq(schema.bookings.externalId, "308882"));
+    expect(b).toMatchObject({ roomId: "LT101", status: "CANCELLED", netAmount: 159200 });
+    // Tài khoản khác không ghi được vào phòng của tài khoản này
+    expect(await refreshBookingsFromOrders(db, "acc-b", [{ ...PAID[3], id: 999 }])).toMatchObject({ created: 0, skipped: 1 });
   });
 });

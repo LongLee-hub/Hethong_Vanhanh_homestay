@@ -15,6 +15,7 @@ import { allowedInvestorIds, badRequest, type SessionUser } from "../auth/access
 import { decryptSecret } from "../services/settings";
 import { DAYLADAU_BASE, PAGE_SIZE, redact, withRetry } from "./client";
 import { hostAmountOf, toVNDate, type RawOrder } from "./mapping";
+import { refreshBookingsFromOrders } from "./order-refresh";
 
 export type RawPayout = Record<string, any>;
 
@@ -158,6 +159,9 @@ export interface DlPayoutSyncSummary {
   /** Phiếu có tổng tiền các đơn khác tiền phiếu (thiếu đơn hoặc Dayladau cộng sai). */
   totalMismatch: number;
   pending: number;
+  /** Đơn trong hệ thống được cập nhật / tạo mới theo bản mới nhất của đơn trong phiếu (gia hạn, giảm giá, đơn bị sót). */
+  bookingsUpdated: number;
+  bookingsCreated: number;
   errors: { accountId: string; investorId: string; message: string }[];
 }
 
@@ -170,7 +174,7 @@ export async function syncDayladauPayouts(
   const today = opts.today ?? D.todayVN();
   const from = opts.from ?? D.addDays(today, -DL_PAYOUT_DAYS);
   const to = opts.to ?? today;
-  const sum: DlPayoutSyncSummary = { accounts: 0, payouts: 0, orders: 0, matched: 0, amountDiff: 0, notFound: 0, totalMismatch: 0, pending: 0, errors: [] };
+  const sum: DlPayoutSyncSummary = { accounts: 0, payouts: 0, orders: 0, matched: 0, amountDiff: 0, notFound: 0, totalMismatch: 0, pending: 0, bookingsUpdated: 0, bookingsCreated: 0, errors: [] };
 
   const conds = [eq(dayladauAccounts.active, true)];
   if (opts.accountIds?.length) conds.push(inArray(dayladauAccounts.id, opts.accountIds));
@@ -204,6 +208,12 @@ export async function syncDayladauPayouts(
         unpaid.push(...page);
         if (page.length < PAGE_SIZE) break;
       }
+
+      // Đơn đặt từ lâu rồi mới sửa trên Dayladau nằm ngoài vùng đồng bộ đơn hằng đêm: cập nhật đơn trong hệ thống
+      // theo bản mới nhất vừa tải về, trước khi đối chiếu.
+      const refreshed = await refreshBookingsFromOrders(db, acc.id, [...orders.values(), ...unpaid]);
+      sum.bookingsUpdated += refreshed.updated;
+      sum.bookingsCreated += refreshed.created;
 
       // Đơn tương ứng trong hệ thống, theo mã đơn Dayladau
       const allIds = [...new Set([...payouts.flatMap(idsOf), ...unpaid.map((o) => String(o?.id ?? ""))])].filter(Boolean);
