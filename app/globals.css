@@ -370,6 +370,9 @@ tr.payout-head td:last-child { border-radius: 0 10px 10px 0; }
 .dl-recon i.warn { background: var(--warn); }
 .dl-recon i.bad { background: var(--neg); }
 td.dl-more { padding-block: 8px; }
+.host-filter { margin-bottom: 16px; }
+.host-filter .chip .muted { margin-left: 4px; }
+.host-filter .chip[aria-pressed="true"] .muted { color: inherit; opacity: .7; }
 td.dl-more summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 td.dl-more summary:hover { color: var(--ink); }
 td.dl-more details[open] summary { margin-bottom: 8px; }

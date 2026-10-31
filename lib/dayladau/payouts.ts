@@ -320,6 +320,7 @@ export interface DlPayoutView {
   investorId: string;
   investorName: string;
   accountLabel: string;
+  hostId: string;
   payoutDate: string;
   createdAt: Date;
   amount: number;
@@ -332,23 +333,28 @@ export interface DlPayoutView {
 export interface DlAccountView {
   id: string;
   label: string;
+  hostId: string;
   investorId: string;
   investorName: string;
 }
 
-/** Phiếu Dayladau tạo trong tháng (theo ngày tạo phiếu, giờ VN) và các đơn đang chờ trả, chỉ của NĐT người dùng được xem. */
-export async function dayladauPayoutsForMonth(db: DB, user: SessionUser, month: string): Promise<{ payouts: DlPayoutView[]; pending: (DlPayoutLine & { accountLabel: string; investorName: string })[]; accounts: DlAccountView[] }> {
+/**
+ * Phiếu Dayladau tạo trong tháng (theo ngày tạo phiếu, giờ VN) và các đơn đang chờ trả, chỉ của NĐT người dùng được xem.
+ * hostId: chỉ lấy tài khoản có host ID này; accounts luôn trả đủ để dựng bộ lọc.
+ */
+export async function dayladauPayoutsForMonth(db: DB, user: SessionUser, month: string, hostId?: string): Promise<{ payouts: DlPayoutView[]; pending: (DlPayoutLine & { accountLabel: string; hostId: string; investorName: string })[]; accounts: DlAccountView[] }>{
   const invIds = await allowedInvestorIds(db, user);
   if (!invIds.length) return { payouts: [], pending: [], accounts: [] };
   const accounts = await db
-    .select({ id: dayladauAccounts.id, label: dayladauAccounts.label, investorId: dayladauAccounts.investorId, investorName: investors.name })
+    .select({ id: dayladauAccounts.id, label: dayladauAccounts.label, hostId: dayladauAccounts.hostId, investorId: dayladauAccounts.investorId, investorName: investors.name })
     .from(dayladauAccounts)
     .innerJoin(investors, eq(investors.id, dayladauAccounts.investorId))
     .where(and(inArray(dayladauAccounts.investorId, invIds), eq(dayladauAccounts.active, true)))
     .orderBy(asc(investors.name), asc(dayladauAccounts.label));
-  if (!accounts.length) return { payouts: [], pending: [], accounts };
-  const accById = new Map(accounts.map((a) => [a.id, a]));
-  const accIds = accounts.map((a) => a.id);
+  const picked = hostId ? accounts.filter((a) => a.hostId === hostId) : accounts;
+  if (!picked.length) return { payouts: [], pending: [], accounts };
+  const accById = new Map(picked.map((a) => [a.id, a]));
+  const accIds = picked.map((a) => a.id);
 
   const ps = await db
     .select().from(dayladauPayouts)
@@ -375,12 +381,12 @@ export async function dayladauPayoutsForMonth(db: DB, user: SessionUser, month: 
   const payouts = ps.map((p) => {
     const a = accById.get(p.dayladauAccountId)!;
     return {
-      id: p.id, externalId: p.externalId, investorId: p.investorId, investorName: a.investorName, accountLabel: a.label,
+      id: p.id, externalId: p.externalId, investorId: p.investorId, investorName: a.investorName, accountLabel: a.label, hostId: a.hostId,
       payoutDate: p.payoutDate, createdAt: p.createdOnDayladauAt, amount: p.amount, itemsTotal: p.itemsTotal, status: p.status, pictureUrl: p.pictureUrl,
       lines: (byPayout.get(p.id) ?? []).sort((x, y) => rank[x.matchStatus] - rank[y.matchStatus]),
     };
   });
-  const pending = pend.map(({ payoutId, accountId, ...l }) => ({ ...(l as DlPayoutLine), accountLabel: accById.get(accountId)!.label, investorName: accById.get(accountId)!.investorName }));
+  const pending = pend.map(({ payoutId, accountId, ...l }) => ({ ...(l as DlPayoutLine), accountLabel: accById.get(accountId)!.label, hostId: accById.get(accountId)!.hostId, investorName: accById.get(accountId)!.investorName }));
   return { payouts, pending, accounts };
 }
 

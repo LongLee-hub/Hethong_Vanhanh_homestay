@@ -167,6 +167,20 @@ describe("trang đối chiếu", () => {
     expect(b.accounts.map((x) => x.id)).toEqual(["acc-b"]);
   });
 
+  it("lọc theo host ID", async () => {
+    const all = await dayladauPayoutsForMonth(db, admin, "2026-10");
+    expect(all.accounts.map((x) => x.hostId).sort()).toEqual(["host-a", "host-b"]);
+    const a = await dayladauPayoutsForMonth(db, admin, "2026-10", "host-a");
+    expect(a.payouts.map((p) => p.hostId)).toEqual(["host-a"]);
+    expect(a.pending.every((l) => l.hostId === "host-a")).toBe(true);
+    const b = await dayladauPayoutsForMonth(db, admin, "2026-10", "host-b");
+    expect(b.payouts).toHaveLength(0);
+    expect(b.pending).toHaveLength(0);
+    expect(b.accounts).toHaveLength(2); // bộ lọc vẫn đủ lựa chọn
+    // NĐT không lọc được sang host của người khác
+    expect((await dayladauPayoutsForMonth(db, invB, "2026-10", "host-a")).payouts).toHaveLength(0);
+  });
+
   it("lọc theo tháng tạo phiếu", async () => {
     expect((await dayladauPayoutsForMonth(db, admin, "2026-09")).payouts).toHaveLength(0);
     expect((await dayladauPayoutsForMonth(db, admin, "2026-10")).payouts).toHaveLength(1);

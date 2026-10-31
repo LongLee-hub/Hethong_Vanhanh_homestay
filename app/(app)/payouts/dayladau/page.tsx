@@ -4,7 +4,8 @@ import { getDb } from "@/lib/db";
 import { can } from "@/lib/auth/access";
 import { requireUser } from "@/lib/server";
 import { monthParam, visibleProperties } from "@/lib/queries";
-import { dayladauPayoutsForMonth, DL_PAYOUT_TOLERANCE, type DlPayoutLine, type DlPayoutView } from "@/lib/dayladau/payouts";
+import Link from "next/link";
+import { dayladauPayoutsForMonth, DL_PAYOUT_TOLERANCE, type DlAccountView, type DlPayoutLine, type DlPayoutView } from "@/lib/dayladau/payouts";
 import { NoAccess } from "@/components/NoAccess";
 import { MonthNav, vnd } from "@/components/MonthNav";
 import { RunButton } from "../run-button";
@@ -38,10 +39,26 @@ function Recon({ lines }: { lines: DlPayoutLine[] }) {
   );
 }
 
-function LineRow({ l, roomName }: { l: DlPayoutLine; roomName: Record<string, string> }) {
+/** Lọc theo host ID: mỗi tài khoản Dayladau một chip, kèm tên để nhận ra nhanh. Chỉ hiện khi có từ 2 tài khoản. */
+function HostFilter({ accounts, host, month }: { accounts: DlAccountView[]; host: string | undefined; month: string }) {
+  if (accounts.length < 2) return null;
+  const href = (h?: string) => `/payouts/dayladau?month=${month}${h ? `&host=${encodeURIComponent(h)}` : ""}`;
+  return (
+    <nav className="chips host-filter" aria-label="Lọc theo host ID">
+      <Link className="chip" aria-pressed={!host} href={href()}>Tất cả host</Link>
+      {accounts.map((a) => (
+        <Link key={a.id} className="chip" aria-pressed={host === a.hostId} href={href(a.hostId)} title={`${a.investorName}, ${a.label}`}>
+          <span className="num">{a.hostId}</span> <span className="muted">{a.label}</span>
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+function LineRow({ l, roomName, host }: { l: DlPayoutLine; roomName: Record<string, string>; host?: string }) {
   return (
     <tr>
-      <td><b>{l.guestName ?? "Khách"}</b><div className="small muted">#{l.orderId}{l.source ? ` · ${l.source}` : ""}</div></td>
+      <td><b>{l.guestName ?? "Khách"}</b><div className="small muted">#{l.orderId}{l.source ? ` · ${l.source}` : ""}{host ? ` · host ${host}` : ""}</div></td>
       <td>{l.roomId ? roomName[l.roomId] ?? l.listingName : l.listingName ?? "—"}</td>
       <td className="num">{stay(l.checkIn, l.checkOut)}{cancelled(l.orderStatus) && <div className="small muted">Đã hủy, trả phí hủy</div>}</td>
       <td className="n muted">{vnd(l.grossAmount)}</td>
@@ -65,7 +82,7 @@ function PayoutBlock({ p, roomName, multi, month }: { p: DlPayoutView; roomName:
         <td colSpan={3}>
           <b>{D.formatDateVN(p.payoutDate)}</b>
           <div className="small muted">
-            Phiếu #{p.externalId}, tạo lúc {fmtTime(p.createdAt)}{multi ? `, ${p.investorName} (${p.accountLabel})` : ""}
+            Phiếu #{p.externalId}, tạo lúc {fmtTime(p.createdAt)}{multi ? `, ${p.investorName} (${p.accountLabel}, host ${p.hostId})` : ""}
             {p.pictureUrl && <> · <a href={p.pictureUrl} target="_blank" rel="noreferrer">Ảnh chuyển khoản</a></>}
           </div>
           {p.status !== "confirmed" && <span className={`pill ${cancelled(p.status) ? "bad" : "warn"}`}>{cancelled(p.status) ? "Phiếu đã hủy" : `Trạng thái: ${p.status}`}</span>}
@@ -99,10 +116,11 @@ export default async function DayladauPayouts({ searchParams }: { searchParams: 
   if (!can(user, "viewFee")) return <NoAccess />;
   const sp = await searchParams;
   const month = monthParam(sp.month);
+  const host = sp.host?.trim() || undefined;
   const db = getDb();
   let data;
   try {
-    const [d, props] = await Promise.all([dayladauPayoutsForMonth(db, user, month), visibleProperties(db, user)]);
+    const [d, props] = await Promise.all([dayladauPayoutsForMonth(db, user, month, host), visibleProperties(db, user)]);
     data = { ...d, roomName: Object.fromEntries(props.flatMap((p) => p.rooms.map((r) => [r.id, `${p.name} · ${r.name}`]))) as Record<string, string> };
   } catch (e) {
     console.error("[payouts/dayladau] lỗi đọc dữ liệu", e);
@@ -123,7 +141,9 @@ export default async function DayladauPayouts({ searchParams }: { searchParams: 
     );
   }
   const { payouts, pending, accounts, roomName } = data;
-  const multi = new Set(accounts.map((a) => a.investorId)).size > 1 || accounts.length > 1;
+  const picked = host ? accounts.find((a) => a.hostId === host) : undefined;
+  // Đang lọc một host thì không cần nhắc lại tên tài khoản trên từng phiếu
+  const multi = !picked && accounts.length > 1;
   const lines = payouts.filter((p) => !cancelled(p.status)).flatMap((p) => p.lines);
   const total = payouts.filter((p) => !cancelled(p.status)).reduce((s, p) => s + p.amount, 0);
   const matched = lines.filter((l) => l.matchStatus === "MATCHED").length;
@@ -135,21 +155,24 @@ export default async function DayladauPayouts({ searchParams }: { searchParams: 
     <>
       <div className="topbar">
         <h1>Thanh toán Dayladau</h1>
-        <MonthNav month={month} path="/payouts/dayladau" />
+        <MonthNav month={month} path="/payouts/dayladau" extra={host ? `&host=${encodeURIComponent(host)}` : ""} />
         <p className="sub">Tiền Dayladau chuyển cho host theo phiếu (đơn đặt qua app, web, CTV của Dayladau), đối chiếu từng đơn với đơn trong hệ thống. Đơn Airbnb, Booking.com không nằm trong phiếu này.</p>
         <ChannelTabs month={month} channel="dayladau" />
       </div>
 
-      {accounts.length > 0 && (
+      <HostFilter accounts={accounts} host={host} month={month} />
+      {host && !picked && <div className="banner" role="status">Không có tài khoản Dayladau nào có host ID {host}. <Link href={`/payouts/dayladau?month=${month}`}>Xem tất cả host</Link></div>}
+
+      {accounts.length > 0 && (!host || picked) && (
         <div className="row" style={{ marginBottom: 16 }}>
-          <RunButton run={syncDayladauPayoutsAction.bind(null, { month })} label={`Lấy phiếu ${D.formatMonthVN(month).toLowerCase()}`} pendingLabel="Đang lấy từ Dayladau…" />
+          <RunButton run={syncDayladauPayoutsAction.bind(null, { month, accountId: picked?.id })} label={`Lấy phiếu ${D.formatMonthVN(month).toLowerCase()}${picked ? ` của host ${picked.hostId}` : ""}`} pendingLabel="Đang lấy từ Dayladau…" />
           <span className="small muted">Tự lấy lúc 15:00 hằng ngày (phiếu 45 ngày gần nhất).</span>
         </div>
       )}
       {!accounts.length && <div className="banner">Chưa có tài khoản Dayladau nào đang bật. Admin thêm ở trang Kết nối Dayladau.</div>}
 
       <div className="cards">
-        <div className="stat"><span className="lbl">Dayladau đã chuyển</span><span className="v">{vnd(total)}</span><span className="s">{payouts.length} phiếu trong {D.formatMonthVN(month).toLowerCase()}</span></div>
+        <div className="stat"><span className="lbl">Dayladau đã chuyển</span><span className="v">{vnd(total)}</span><span className="s">{payouts.length} phiếu trong {D.formatMonthVN(month).toLowerCase()}{picked ? `, host ${picked.hostId}` : ""}</span></div>
         <div className="stat"><span className="lbl">Đơn khớp</span><span className="v">{matched}/{lines.length}</span><span className="s">Đúng đơn và đúng số tiền</span></div>
         <div className="stat"><span className="lbl">Lệch tiền</span><span className="v">{diffs.length}</span><span className="s">{diffs.length ? `Tổng lệch ${vnd(diffs.reduce((s, l) => s + (l.diffAmount ?? 0), 0))}` : "Tiền Dayladau trả khác thực nhận trong hệ thống"}</span></div>
         <div className="stat"><span className="lbl">Chưa có trong hệ thống</span><span className="v">{missing.length}</span><span className="s">{missing.length ? `${vnd(missing.reduce((s, l) => s + l.amount, 0))} chưa ghi doanh thu` : "Đơn được trả nhưng app chưa có"}</span></div>
@@ -169,7 +192,7 @@ export default async function DayladauPayouts({ searchParams }: { searchParams: 
           <header><div><h2>Đơn chờ Dayladau trả</h2><p>{pending.length} đơn, {vnd(pendingTotal)}. Dayladau sẽ gộp vào phiếu kế tiếp, thường sáng thứ Hai.</p></div></header>
           <div className="tbl-wrap"><table>
             <thead><tr><th>Khách</th><th>Phòng</th><th>Ngày ở</th><th className="n">Khách trả</th><th className="n">Dayladau sẽ trả</th><th>Đối chiếu</th></tr></thead>
-            <tbody>{pending.map((l) => <LineRow key={l.id} l={l} roomName={roomName} />)}</tbody>
+            <tbody>{pending.map((l) => <LineRow key={l.id} l={l} roomName={roomName} host={multi ? l.hostId : undefined} />)}</tbody>
           </table></div>
         </section>
       )}
