@@ -299,3 +299,23 @@ describe("tài khoản tạm dừng", () => {
     await db.update(schema.dayladauAccounts).set({ active: true }).where(eq(schema.dayladauAccounts.id, "acc-a"));
   });
 });
+
+describe("phiếu đang chờ chuyển tiền (pending)", () => {
+  it("đơn của phiếu pending vẫn nằm trong danh sách chờ trả: vẫn lấy được tiền, không đếm thêm vào chờ trả", async () => {
+    const pendingPayout = {
+      id: 16993, order_ids: "310001", host_id: "host-a", amount: 300000, status: "pending",
+      created_at: T("2026-11-02T10:25:00+07:00"), confirmed_at: 0, picture_url: "", transfer_ref: "", note: "",
+    };
+    const api: DayladauPayoutApi = {
+      async listPayouts(hostId) { return hostId === "host-a" ? [pendingPayout] : []; },
+      // Dayladau chưa chuyển tiền: đơn chưa sang "paid"
+      async listOrders(hostId, _t, status, offset) { return hostId === "host-a" && offset === 0 && status === "unpaid" ? UNPAID : []; },
+    };
+    const sum = await syncDayladauPayouts(db, { api, decrypt: (x) => x, today: "2026-11-03", accountIds: ["acc-a"] });
+    expect(sum).toMatchObject({ payouts: 1, orders: 1, pending: 0, errors: [] });
+    const [p] = await db.select().from(schema.dayladauPayouts).where(eq(schema.dayladauPayouts.externalId, "16993"));
+    expect(p).toMatchObject({ amount: 300000, itemsTotal: 300000, status: "pending" });
+    const [line] = await db.select().from(schema.dayladauPayoutItems).where(eq(schema.dayladauPayoutItems.payoutId, p.id));
+    expect(line).toMatchObject({ orderId: "310001", amount: 300000, guestName: "Khách 310001", checkIn: "2026-10-24" });
+  });
+});

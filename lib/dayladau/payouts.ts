@@ -190,9 +190,21 @@ export async function syncDayladauPayouts(
       const payouts = raws.filter((p) => p?.id !== undefined && p?.id !== null);
       const idsOf = (p: RawPayout) => String(p.order_ids ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
-      // Tìm đơn của các phiếu trong danh sách đơn đã thanh toán (mới trước), dừng khi đủ
+      // Đơn đang chờ Dayladau trả (lấy trước: đơn của phiếu đang "pending" vẫn nằm ở đây, chưa sang "paid")
+      const unpaidAll: RawOrder[] = [];
+      for (let offset = 0; offset < DL_MAX_UNPAID_ORDERS; offset += PAGE_SIZE) {
+        const page = await api.listOrders(acc.hostId, token, "unpaid", offset);
+        unpaidAll.push(...page);
+        if (page.length < PAGE_SIZE) break;
+      }
+
+      // Tìm đơn của các phiếu: trước hết trong đơn chờ trả, rồi trong đơn đã thanh toán (mới trước), dừng khi đủ
       const need = new Set(payouts.flatMap(idsOf));
       const orders = new Map<string, RawOrder>();
+      for (const o of unpaidAll) {
+        const k = String(o?.id ?? "");
+        if (need.delete(k)) orders.set(k, o);
+      }
       for (let offset = 0; need.size && offset < DL_MAX_PAID_ORDERS; offset += PAGE_SIZE) {
         const page = await api.listOrders(acc.hostId, token, "paid", offset);
         for (const o of page) {
@@ -202,13 +214,9 @@ export async function syncDayladauPayouts(
         if (page.length < PAGE_SIZE) break;
       }
 
-      // Đơn đang chờ Dayladau trả
-      const unpaid: RawOrder[] = [];
-      for (let offset = 0; offset < DL_MAX_UNPAID_ORDERS; offset += PAGE_SIZE) {
-        const page = await api.listOrders(acc.hostId, token, "unpaid", offset);
-        unpaid.push(...page);
-        if (page.length < PAGE_SIZE) break;
-      }
+      // Đơn đã nằm trong một phiếu thì không còn là "chờ trả", tránh đếm hai lần
+      const inPayout = new Set(payouts.flatMap(idsOf));
+      const unpaid = unpaidAll.filter((o) => !inPayout.has(String(o?.id ?? "")));
 
       // Đơn đặt từ lâu rồi mới sửa trên Dayladau nằm ngoài vùng đồng bộ đơn hằng đêm: cập nhật đơn trong hệ thống
       // theo bản mới nhất vừa tải về, trước khi đối chiếu.
