@@ -135,6 +135,23 @@ describe("tổng hợp tháng", () => {
     expect(s.byProperty.find((p) => p.propertyId === "Z")?.prevOverall).toBe(5);
   });
 
+  it("bảng theo phòng: đếm mức sao từng phòng, cộng doanh thu và số đơn của phòng trong tháng", async () => {
+    await db.insert(schema.bookingNights).values([
+      { bookingId: "bk-2", propertyId: "Y", roomId: "y1", nightDate: "2026-10-18", netAmount: 500_000 },
+      { bookingId: "bk-2", propertyId: "Y", roomId: "y1", nightDate: "2026-10-19", netAmount: 500_000 },
+    ]);
+    await db.update(schema.rooms).set({ revenueKpiMonthly: 4_000_000 }).where(eq(schema.rooms.id, "y1"));
+    const s = await monthlyReviewSummary(db, admin, "2026-10", "2026-10-30");
+    const y = s.byProperty.find((p) => p.propertyId === "Y")!;
+    const room = y.rooms.find((r) => r.roomId === "y1")!;
+    expect(room).toMatchObject({ revenue: 1_000_000, revenueKpi: 4_000_000, kpiPct: 25, bookings: 1 });
+    expect(room.stats.count).toBe(y.stats.count);
+    expect(room.stats.fiveStar + room.stats.fourStar + room.stats.low).toBeLessThanOrEqual(room.stats.count);
+    expect(y).toMatchObject({ revenue: 1_000_000, kpiPct: 25, bookings: 1 });
+    const item = s.items.find((i) => i.propertyId === "Y")!;
+    expect(item.checkIn).toBe("2026-10-01");
+  });
+
   it("NĐT chỉ thấy đánh giá cơ sở của mình", async () => {
     const s = await monthlyReviewSummary(db, invA, "2026-10", "2026-10-30");
     expect(new Set(s.items.map((i) => i.propertyId))).toEqual(new Set(["X", "Y"]));

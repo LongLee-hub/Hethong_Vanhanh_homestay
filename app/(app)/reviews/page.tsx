@@ -7,7 +7,7 @@ import { requireUser } from "@/lib/server";
 import { monthParam } from "@/lib/queries";
 import { MonthNav } from "@/components/MonthNav";
 import { ActionForm } from "@/components/ActionForm";
-import { CRITERIA, CRITERION_LABEL, monthlyReviewSummary, type ReviewItem } from "@/lib/services/reviews";
+import { CRITERIA, CRITERION_LABEL, monthlyReviewSummary, type ReviewItem, type ReviewStats } from "@/lib/services/reviews";
 import { LOW_REVIEW_SCORE } from "@/lib/dayladau/reviews";
 import { syncReviewsAction } from "./actions";
 import css from "./reviews.module.css";
@@ -22,6 +22,31 @@ function Delta({ now, before }: { now: number | null; before: number | null }) {
   const d = Math.round((now - before) * 100) / 100;
   if (d === 0) return <span className="muted">bằng tháng trước</span>;
   return <span className={d > 0 ? "pos" : "neg"}>{d > 0 ? "+" : "−"}{sc(Math.abs(d))} so với tháng trước</span>;
+}
+
+/** 1,2 tr: doanh thu gọn cho bảng nhiều cột. */
+const money = (n: number) => (n ? D.formatVND(n) : "–");
+const pctTxt = (n: number | null) => (n === null ? "–" : `${n.toFixed(1).replace(".", ",")}%`);
+const dateTxt = (d: string | null) => (d ? D.formatDateVN(d).slice(0, 5) : "–");
+
+/** Các ô đánh giá chung cho dòng phòng và dòng tổng của bảng Theo phòng. */
+function RoomScoreCells({ st }: { st: ReviewStats }) {
+  const o = st.avg.overall;
+  const cl = st.avg.cleanliness;
+  return (
+    <>
+      <td className="n">{st.count || "–"}</td>
+      <td className="n">{st.fiveStar || "–"}</td>
+      <td className="n">{st.fourStar || "–"}</td>
+      <td className={`n ${st.low ? "neg" : ""}`}>{st.low || "–"}</td>
+      <td className={`n ${o !== null && o < WEAK ? "neg" : ""}`}><b>{sc(o)}</b></td>
+      <td className={`n ${cl !== null && cl < WEAK ? "neg" : ""}`}>{sc(cl)}</td>
+    </>
+  );
+}
+
+function KpiCell({ pct }: { pct: number | null }) {
+  return <td className={`n ${pct === null ? "muted" : pct >= 100 ? "pos" : ""}`}>{pctTxt(pct)}</td>;
 }
 
 function ReviewCard({ r }: { r: ReviewItem }) {
@@ -58,6 +83,7 @@ export default async function Reviews({ searchParams }: { searchParams: Promise<
   const low = s.items.filter((r) => r.low);
   const showProp = sp.p && s.byProperty.some((p) => p.propertyId === sp.p) ? sp.p : null;
   const listed = showProp ? s.items.filter((r) => r.propertyId === showProp) : s.items;
+  const roomProps = (showProp ? s.byProperty.filter((p) => p.propertyId === showProp) : s.byProperty).filter((p) => p.rooms.length);
 
   return (
     <>
@@ -129,7 +155,7 @@ export default async function Reviews({ searchParams }: { searchParams: Promise<
                   {s.byProperty.map((p) => (
                     <tr key={p.propertyId}>
                       <td>
-                        <Link href={`/reviews?month=${month}&p=${p.propertyId}#danh-sach`}>{p.name}</Link>
+                        <Link href={`/reviews?month=${month}&p=${p.propertyId}#theo-phong`}>{p.name}</Link>
                         {p.prevOverall !== null && <div className="small"><Delta now={p.stats.avg.overall} before={p.prevOverall} /></div>}
                       </td>
                       <td className="n">{p.stats.count}</td>
@@ -145,19 +171,98 @@ export default async function Reviews({ searchParams }: { searchParams: Promise<
             </div>
           </section>
 
+          <section className="panel" style={{ marginBottom: 24 }} id="theo-phong">
+            <header>
+              <div>
+                <h2>Theo phòng</h2>
+                <p>
+                  Số đánh giá theo mức sao cạnh doanh thu và KPI doanh thu tháng của từng phòng. Doanh thu đã trừ hoa hồng OTA
+                  {s.inProgress ? `, tính đến hết ngày ${D.formatDateVN(s.asOf)}` : ""}. Phòng chưa đặt KPI để trống cột % KPI.
+                </p>
+              </div>
+            </header>
+            <div className="tbl-wrap">
+              <table className={css.roomTbl}>
+                <thead>
+                  <tr>
+                    <th>Phòng</th>
+                    <th className="n">Đánh giá</th><th className="n">5★</th><th className="n">4★</th><th className="n">Dưới {LOW_REVIEW_SCORE}★</th>
+                    <th className="n">Điểm TB</th><th className="n">Sạch sẽ</th>
+                    <th className="n">Doanh thu</th><th className="n">KPI doanh thu</th><th className="n">% KPI</th><th className="n">Số đơn</th>
+                  </tr>
+                </thead>
+                {roomProps.map((p) => (
+                  <tbody key={p.propertyId}>
+                    {roomProps.length > 1 && <tr className={css.group}><td colSpan={11}>{p.name}</td></tr>}
+                    {p.rooms.map((r) => (
+                      <tr key={r.roomId ?? "none"}>
+                        <td>{r.roomId ? r.roomName : <span className="muted">{r.roomName}</span>}</td>
+                        <RoomScoreCells st={r.stats} />
+                        <td className="n">{money(r.revenue)}</td>
+                        <td className="n muted">{r.revenueKpi ? D.formatVND(r.revenueKpi) : "–"}</td>
+                        <KpiCell pct={r.kpiPct} />
+                        <td className="n">{r.bookings || "–"}</td>
+                      </tr>
+                    ))}
+                    <tr className="total">
+                      <td>Tổng {roomProps.length > 1 ? p.name : ""}</td>
+                      <RoomScoreCells st={p.stats} />
+                      <td className="n">{money(p.revenue)}</td>
+                      <td className="n">{p.revenueKpi ? D.formatVND(p.revenueKpi) : "–"}</td>
+                      <KpiCell pct={p.kpiPct} />
+                      <td className="n">{p.bookings || "–"}</td>
+                    </tr>
+                  </tbody>
+                ))}
+              </table>
+            </div>
+          </section>
+
           <section className="panel" id="danh-sach">
             <header>
-              <div><h2>Tất cả đánh giá</h2><p>Mới nhất trước.</p></div>
+              <div><h2>Chi tiết đánh giá</h2><p>Mới nhất trước. Dòng nền đỏ là đánh giá dưới {LOW_REVIEW_SCORE}★, ô đỏ là tiêu chí dưới {LOW_REVIEW_SCORE}.</p></div>
               {s.byProperty.length > 1 && (
                 <div className="chips">
-                  <Link className="chip" aria-pressed={!showProp} href={`/reviews?month=${month}#danh-sach`}>Tất cả</Link>
-                  {s.byProperty.filter((p) => p.stats.count).map((p) => (
-                    <Link key={p.propertyId} className="chip" aria-pressed={showProp === p.propertyId} href={`/reviews?month=${month}&p=${p.propertyId}#danh-sach`}>{p.name}</Link>
+                  <Link className="chip" aria-pressed={!showProp} href={`/reviews?month=${month}#theo-phong`}>Tất cả</Link>
+                  {s.byProperty.filter((p) => p.stats.count || p.revenue).map((p) => (
+                    <Link key={p.propertyId} className="chip" aria-pressed={showProp === p.propertyId} href={`/reviews?month=${month}&p=${p.propertyId}#theo-phong`}>{p.name}</Link>
                   ))}
                 </div>
               )}
             </header>
-            <div className={css.list}>{listed.map((r) => <ReviewCard key={r.id} r={r} />)}</div>
+            {listed.length === 0 ? (
+              <p className="muted">Cơ sở này chưa có đánh giá trong {monthLow}.</p>
+            ) : (
+              <div className="tbl-wrap">
+                <table className={css.detailTbl}>
+                  <thead>
+                    <tr>
+                      <th>Phòng</th><th>Ngày đến</th><th>Ngày đi</th><th>Khách</th>
+                      {CRITERIA.map((c) => <th key={c} className="n">{CRITERION_LABEL[c]}</th>)}
+                      <th>Nhận xét</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listed.map((r) => (
+                      <tr key={r.id} className={r.low ? css.lowRow : undefined}>
+                        <td className={css.nowrap}>
+                          {r.roomName ?? <span className="muted">{r.listingName ?? "Chưa gắn phòng"}</span>}
+                          {!showProp && s.byProperty.length > 1 && <div className="small muted">{r.propertyName}</div>}
+                        </td>
+                        <td className={css.nowrap}>{dateTxt(r.checkIn)}</td>
+                        <td className={css.nowrap}>{dateTxt(r.checkOut ?? r.reviewDate)}</td>
+                        <td>{r.guestName ?? <span className="muted">Không rõ</span>}</td>
+                        {CRITERIA.map((c) => {
+                          const v = c === "overall" ? r.overall : r.scores[c];
+                          return <td key={c} className={`n ${v !== null && v < LOW_REVIEW_SCORE ? "neg" : ""}`}>{c === "overall" ? <b>{sc(v)}</b> : sc(v)}</td>;
+                        })}
+                        <td className={css.comment}>{r.content ?? <span className="muted">Không viết nhận xét</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </>
       )}

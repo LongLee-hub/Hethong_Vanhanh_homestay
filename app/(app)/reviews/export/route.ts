@@ -49,13 +49,37 @@ export async function GET(req: Request) {
   total.font = { bold: true };
   total.eachCell((c) => { c.border = { top: { style: "thin" } }; });
 
-  // ---- Sheet 2: Chi tiết ----
+  // ---- Sheet 2: Theo phòng ----
+  const roomWs = wb.addWorksheet("Theo phòng", { views: [{ state: "frozen", ySplit: 1 }] });
+  const roomHead = roomWs.addRow(["Cơ sở", "Phòng", "Số đánh giá", "5★", "4★", `Dưới ${LOW_REVIEW_SCORE}★`, "Điểm TB", "Sạch sẽ", "Doanh thu", "KPI doanh thu", "% KPI", "Số đơn"]);
+  roomHead.font = { bold: true };
+  roomHead.eachCell((c) => { c.fill = HEAD_FILL; c.border = { bottom: { style: "thin" } }; });
+  [20, 14, 11, 7, 7, 10, 9, 9, 15, 15, 9, 9].forEach((w, i) => { roomWs.getColumn(i + 1).width = w; });
+  [7, 8].forEach((i) => { roomWs.getColumn(i).numFmt = SCORE; });
+  [9, 10].forEach((i) => { roomWs.getColumn(i).numFmt = "#,##0"; });
+  roomWs.getColumn(11).numFmt = "0.00%";
+  for (const p of s.byProperty) {
+    if (!p.rooms.length) continue;
+    const line = (name: string, st: typeof p.stats, rev: number, kpi: number | null, pct: number | null, bk: number) =>
+      roomWs.addRow([p.name, name, st.count, st.fiveStar, st.fourStar, st.low, st.avg.overall, st.avg.cleanliness, rev, kpi, pct === null ? null : pct / 100, bk]);
+    for (const r of p.rooms) {
+      const row = line(r.roomName, r.stats, r.revenue, r.revenueKpi, r.kpiPct, r.bookings);
+      if (r.stats.low) row.getCell(6).font = { bold: true, color: RED };
+    }
+    const t = line("Tổng", p.stats, p.revenue, p.revenueKpi, p.kpiPct, p.bookings);
+    t.font = { bold: true };
+    t.eachCell((c) => { c.border = { top: { style: "thin" } }; });
+  }
+
+  // ---- Sheet 3: Chi tiết ----
   const ws = wb.addWorksheet("Chi tiết", { views: [{ state: "frozen", ySplit: 1 }] });
   const cols: { header: string; width: number; fmt?: string }[] = [
     { header: "Trả phòng", width: 12, fmt: DATE },
     { header: "Cơ sở", width: 20 },
     { header: "Phòng", width: 10 },
     { header: "Listing", width: 24 },
+    { header: "Ngày đến", width: 12, fmt: DATE },
+    { header: "Ngày đi", width: 12, fmt: DATE },
     { header: "Khách", width: 22 },
     { header: "Tổng thể", width: 10, fmt: SCORE },
     ...SCORE_FIELDS.map((f) => ({ header: CRITERION_LABEL[f], width: 11, fmt: SCORE })),
@@ -69,7 +93,8 @@ export async function GET(req: Request) {
 
   for (const r of s.items) {
     const row = ws.addRow([
-      new Date(`${r.reviewDate}T00:00:00Z`), r.propertyName, r.roomName ?? "", r.listingName ?? "", r.guestName ?? "",
+      new Date(`${r.reviewDate}T00:00:00Z`), r.propertyName, r.roomName ?? "", r.listingName ?? "",
+      r.checkIn ? new Date(`${r.checkIn}T00:00:00Z`) : null, r.checkOut ? new Date(`${r.checkOut}T00:00:00Z`) : null, r.guestName ?? "",
       r.overall, ...SCORE_FIELDS.map((f) => r.scores[f]), r.content ?? "",
     ]);
     // Đánh giá thấp tô nền đỏ nhạt để lọc nhanh

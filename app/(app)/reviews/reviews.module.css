@@ -43,3 +43,14 @@
 
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .taskLink { justify-self: start; }
+
+/* Bảng Theo phòng: dòng tên cơ sở ngăn các nhóm phòng */
+.roomTbl td { padding-block: 10px; }
+.group td { padding-top: 20px; font-weight: 600; font-size: .86rem; color: var(--muted); border-bottom: 1px solid var(--line); }
+.roomTbl tbody:first-of-type .group td { padding-top: 12px; }
+
+/* Bảng Chi tiết đánh giá */
+.detailTbl td { padding-block: 10px; font-variant-numeric: tabular-nums; }
+.nowrap { white-space: nowrap; }
+.comment { min-width: 280px; max-width: 520px; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
+.lowRow td { background: var(--neg-soft); }
