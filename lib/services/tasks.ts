@@ -119,25 +119,45 @@ export async function generateCleaningTasks(db: DB, fromDate: string, toDate: st
 }
 
 // ---- Chấm công ----
-export async function clockIn(db: DB, user: SessionUser, propertyId: string, photoUrl?: string) {
+export interface ClockInInput {
+  propertyId: string;
+  shift?: "MORNING" | "EVENING" | "OVERTIME";
+  photoUrl?: string;
+  lat?: number | null;
+  lng?: number | null;
+  accuracyM?: number | null;
+}
+
+/** Vào ca. Buồng phòng bắt buộc có ảnh chụp tại chỗ (đã in ngày giờ, cơ sở, tọa độ). Mỗi người mỗi ngày mỗi ca một lần. */
+export async function clockIn(db: DB, user: SessionUser, i: ClockInInput) {
   requirePermission(user, "clock");
-  await assertPropertyAccess(db, user, propertyId);
+  const shift = i.shift ?? "MORNING";
+  await assertPropertyAccess(db, user, i.propertyId);
+  if (user.role === "HOUSEKEEPER" && !i.photoUrl) throw badRequest("Chụp ảnh tại cơ sở để vào ca");
   const today = D.todayVN();
-  const [ex] = await db.select().from(attendance).where(and(eq(attendance.userId, user.id), eq(attendance.date, today))).limit(1);
-  if (ex) throw badRequest("Hôm nay đã vào ca");
-  const [row] = await db.insert(attendance).values({ userId: user.id, propertyId, date: today, checkInAt: new Date(), photoUrl }).returning();
+  const [ex] = await db.select().from(attendance).where(and(eq(attendance.userId, user.id), eq(attendance.date, today), eq(attendance.shift, shift))).limit(1);
+  if (ex) throw badRequest("Hôm nay đã vào ca này rồi");
+  const num = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const [row] = await db
+    .insert(attendance)
+    .values({
+      userId: user.id, propertyId: i.propertyId, date: today, shift, checkInAt: new Date(), photoUrl: i.photoUrl,
+      lat: num(i.lat), lng: num(i.lng), accuracyM: num(i.accuracyM) === null ? null : Math.round(i.accuracyM!),
+    })
+    .returning();
   return row;
 }
 
-export async function clockOut(db: DB, user: SessionUser) {
+/** Ra ca: ca đang mở gần nhất hôm nay (hoặc đúng ca được chỉ định). */
+export async function clockOut(db: DB, user: SessionUser, opts: { attendanceId?: string; photoUrl?: string } = {}) {
   requirePermission(user, "clock");
   const today = D.todayVN();
-  const [ex] = await db.select().from(attendance).where(and(eq(attendance.userId, user.id), eq(attendance.date, today))).limit(1);
-  if (!ex) throw badRequest("Chưa vào ca hôm nay");
-  if (ex.checkOutAt) throw badRequest("Đã ra ca");
-  await db.update(attendance).set({ checkOutAt: new Date() }).where(eq(attendance.id, ex.id));
+  const open = (await db.select().from(attendance).where(and(eq(attendance.userId, user.id), eq(attendance.date, today))))
+    .filter((r) => !r.checkOutAt && (!opts.attendanceId || r.id === opts.attendanceId))
+    .sort((a, b) => b.checkInAt.getTime() - a.checkInAt.getTime());
+  if (!open.length) throw badRequest("Không có ca nào đang mở hôm nay");
+  await db.update(attendance).set({ checkOutAt: new Date(), checkOutPhotoUrl: opts.photoUrl ?? null }).where(eq(attendance.id, open[0].id));
 }
-
 export async function attendanceForMonth(db: DB, user: SessionUser, month: string) {
   const conds = [gte(attendance.date, D.firstDay(month)), lte(attendance.date, D.lastDay(month))];
   if (!can(user, "viewAllAttendance")) conds.push(eq(attendance.userId, user.id));

@@ -71,13 +71,47 @@ function ReviewCard({ r }: { r: ReviewItem }) {
   );
 }
 
+/** Buồng phòng: đánh giá của cơ sở được giao, không có doanh thu. Thưởng 5★ và phạt dưới 4★ tính vào lương tháng. */
+function StaffReviews({ s, month, p }: { s: Awaited<ReturnType<typeof monthlyReviewSummary>>; month: string; p?: string }) {
+  const monthLow = D.formatMonthVN(month).toLowerCase();
+  const showProp = p && s.byProperty.some((x) => x.propertyId === p) ? p : null;
+  const listed = showProp ? s.items.filter((r) => r.propertyId === showProp) : s.items;
+  return (
+    <>
+      <div className="topbar">
+        <h1>Đánh giá khách</h1>
+        <MonthNav month={month} path="/reviews" />
+        <p className="sub">Đánh giá các cơ sở bạn được giao, tính vào tháng khách trả phòng. Mỗi đánh giá 5★ được thưởng, mỗi đánh giá dưới {LOW_REVIEW_SCORE}★ bị trừ vào lương tháng.</p>
+      </div>
+      <div className="cards">
+        <div className="stat"><span className="lbl">Điểm trung bình</span><span className="v">{sc(s.total.avg.overall)}</span><span className="s">Sạch sẽ {sc(s.total.avg.cleanliness)}</span></div>
+        <div className="stat"><span className="lbl">Đánh giá 5★</span><span className="v pos">{s.total.fiveStar}</span><span className="s">trên {s.total.count} đánh giá</span></div>
+        <div className="stat"><span className="lbl">Dưới {LOW_REVIEW_SCORE}★</span><span className={`v ${s.total.low ? "neg" : ""}`}>{s.total.low}</span><span className="s">{s.total.low ? "Đọc nhận xét để rút kinh nghiệm" : "Chưa có đánh giá thấp"}</span></div>
+      </div>
+      <section className="panel">
+        <header>
+          <div><h2>Nhận xét của khách</h2><p>Mới nhất trước.</p></div>
+          {s.byProperty.length > 1 && (
+            <div className="chips">
+              <Link className="chip" aria-pressed={!showProp} href={`/reviews?month=${month}`}>Tất cả</Link>
+              {s.byProperty.map((x) => <Link key={x.propertyId} className="chip" aria-pressed={showProp === x.propertyId} href={`/reviews?month=${month}&p=${x.propertyId}`}>{x.name} ({x.stats.count})</Link>)}
+            </div>
+          )}
+        </header>
+        {listed.length ? <div className={css.list}>{listed.map((r) => <ReviewCard key={r.id} r={r} />)}</div> : <p className="muted">Chưa có đánh giá nào trong {monthLow}.</p>}
+      </section>
+    </>
+  );
+}
+
 export default async function Reviews({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const sp = await searchParams;
   const user = await requireUser();
-  if (!can(user, "viewFinance")) return <NoAccess />;
+  if (!can(user, "viewReviews")) return <NoAccess />;
   const db = getDb();
   const month = monthParam(sp.month);
   const s = await monthlyReviewSummary(db, user, month);
+  if (!can(user, "viewFinance")) return <StaffReviews s={s} month={month} p={sp.p} />;
   const isAdmin = can(user, "admin");
   const monthLow = D.formatMonthVN(month).toLowerCase();
   const low = s.items.filter((r) => r.low);

@@ -1,0 +1,31 @@
+/* Máy ảnh chấm công: khung ngắm dọc 3:4 như app camera điện thoại, dấu thời gian xem trước nằm đúng chỗ sẽ in. */
+.wrap { display: grid; gap: 14px; max-width: 480px; }
+
+.shifts { border: 0; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+.shifts legend { font-size: .86rem; color: var(--muted); font-weight: 500; margin-bottom: 4px; padding: 0; }
+.shift { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; background: var(--surface); }
+.shift input { position: absolute; opacity: 0; pointer-events: none; }
+.shift[aria-checked="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.shift:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+.frame { position: relative; aspect-ratio: 3 / 4; border-radius: var(--r); overflow: hidden; background: #0e2226; color: #fff; }
+.media { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.frame[data-state="shot"] .media { object-fit: contain; background: #0e2226; }
+.mirror { transform: scaleX(-1); }
+
+.open { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 8px; padding: 24px; text-align: center; border: 0; cursor: pointer; color: #fff;
+  background: radial-gradient(120% 80% at 50% 110%, rgba(46,156,146,.45), transparent 60%), #0e2226; }
+.open b { font-size: 1.05rem; }
+.open span { color: rgba(255,255,255,.75); max-width: 30ch; }
+
+/* Xem trước dấu: cùng bố cục với khối vẽ trên canvas trong CameraStamp.tsx */
+.stamp { position: absolute; inset: auto 0 0 0; display: grid; gap: 1px; padding: 48px 14px 12px 24px; font-size: .78rem; line-height: 1.4;
+  background: linear-gradient(transparent, rgba(0,0,0,.62)); text-shadow: 0 1px 3px rgba(0,0,0,.5); }
+.stamp::before { content: ""; position: absolute; left: 14px; bottom: 14px; top: 56px; width: 3px; border-radius: 2px; background: var(--brand); }
+.time { font-size: 2.6rem; line-height: 1; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+
+.controls { display: flex; align-items: center; justify-content: center; gap: 16px; min-height: 64px; }
+.shutter { width: 64px; height: 64px; border-radius: 50%; border: 3px solid var(--ink); background: var(--surface); padding: 4px; cursor: pointer; }
+.shutter i { display: block; width: 100%; height: 100%; border-radius: 50%; background: var(--accent); transition: transform .12s; }
+.shutter:active i { transform: scale(.9); }
+@media (prefers-reduced-motion: reduce) { .shutter i { transition: none; } }

@@ -434,6 +434,9 @@ export const checklistResults = pgTable("checklist_results", {
   results: jsonb("results").notNull(), // [{ item, done, note }]
 });
 
+/** Ca làm của buồng phòng: sáng, tối tính công theo lương tháng; tăng ca tính theo lần. */
+export const shiftEnum = pgEnum("attendance_shift", ["MORNING", "EVENING", "OVERTIME"]);
+
 export const attendance = pgTable(
   "attendance",
   {
@@ -441,11 +444,43 @@ export const attendance = pgTable(
     userId: text("user_id").notNull().references(() => users.id),
     propertyId: text("property_id").notNull(),
     date: day("date").notNull(),
+    shift: shiftEnum("shift").notNull().default("MORNING"),
     checkInAt: ts("check_in_at").notNull(),
     checkOutAt: ts("check_out_at"),
+    /** Ảnh vào ca đã in ngày giờ, cơ sở, tọa độ lên ảnh (components/CameraStamp.tsx). */
     photoUrl: text("photo_url"),
+    checkOutPhotoUrl: text("check_out_photo_url"),
+    // Vị trí máy lúc chụp ảnh vào ca; null = người dùng không cho lấy vị trí
+    lat: numeric("lat", { precision: 9, scale: 6, mode: "number" }),
+    lng: numeric("lng", { precision: 9, scale: 6, mode: "number" }),
+    accuracyM: integer("accuracy_m"),
+    note: text("note"),
   },
-  (t) => [uniqueIndex("attendance_user_date").on(t.userId, t.date)],
+  (t) => [uniqueIndex("attendance_user_date_shift").on(t.userId, t.date, t.shift)],
+);
+
+/** Lương tháng theo ca của từng nhân viên buồng phòng, admin đặt. 1 công = lương tháng ÷ (số ngày trong tháng − ngày nghỉ). */
+export const housekeeperPay = pgTable("housekeeper_pay", {
+  userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  morningMonthly: money("morning_monthly"), // lương ca sáng cả tháng
+  eveningMonthly: money("evening_monthly"), // lương ca tối cả tháng
+  updatedBy: text("updated_by"),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** Khoản cộng/trừ tay vào lương tháng (ứng lương, phụ cấp…). */
+export const payrollAdjustments = pgTable(
+  "payroll_adjustments",
+  {
+    id: id(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    month: text("month").notNull(),
+    amount: bigint("amount", { mode: "number" }).notNull(), // dương = cộng, âm = trừ
+    reason: text("reason").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("payroll_adj_month").on(t.month, t.userId)],
 );
 
 // ---------- 4.6 Cấu hình và cảnh báo ----------

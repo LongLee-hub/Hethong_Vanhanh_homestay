@@ -13,7 +13,7 @@ const MOBILE_PRIMARY = {
   ACCOUNTANT: ["/", "/bookings", "/expenses", "/settlements"],
   INVESTOR: ["/", "/bookings", "/settlements", "/reports"],
   MANAGER: ["/", "/bookings", "/tasks", "/attendance"],
-  HOUSEKEEPER: ["/tasks", "/attendance", "/bookings"],
+  HOUSEKEEPER: ["/attendance", "/tasks", "/reviews", "/bookings"],
 };
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -26,10 +26,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     ["/settlements", "Quyết toán", can(user, "viewFee")],
     ["/payouts", "Payout", can(user, "viewFee")],
     ["/reports", "Báo cáo NĐT", can(user, "viewFee")],
-    ["/reviews", "Đánh giá", can(user, "viewFinance")],
+    ["/reviews", "Đánh giá", can(user, "viewReviews")],
     ["/targets", "Chỉ tiêu", can(user, "admin")],
     ["/tasks", "Công việc", can(user, "workTask")],
     ["/attendance", "Chấm công", can(user, "clock") || can(user, "viewAllAttendance")],
+    ["/payroll", "Lương buồng phòng", can(user, "admin")],
     ["/dayladau", "Kết nối Dayladau", can(user, "admin")],
     ["/users", "Tài khoản", can(user, "admin")],
   ].filter((x) => x[2]).map(([href, label]) => [href, label]) as [string, string][];

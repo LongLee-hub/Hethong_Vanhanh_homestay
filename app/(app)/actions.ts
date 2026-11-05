@@ -102,7 +102,23 @@ export async function checklistAction(f: FormData) {
 
 export async function clockAction(_: State, f: FormData): Promise<State> {
   const user = await requireUser();
-  const r = await action(() => (f.get("action") === "in" ? clockIn(getDb(), user, String(f.get("propertyId"))) : clockOut(getDb(), user)));
+  const r = await action(async () => {
+    const db = getDb();
+    const file = photo(f, "photo");
+    const coord = (k: string) => { const v = String(f.get(k) ?? ""); return v === "" ? null : Number(v); };
+    if (f.get("action") === "out") {
+      await clockOut(db, user, { attendanceId: String(f.get("attendanceId") || "") || undefined, photoUrl: file ? await uploadPhoto(file, "attendance") : undefined });
+      return;
+    }
+    const shift = String(f.get("shift") || "MORNING");
+    if (shift !== "MORNING" && shift !== "EVENING" && shift !== "OVERTIME") throw badRequest("Chọn ca làm");
+    // Buồng phòng bắt buộc có ảnh; service kiểm tra lại, ở đây chặn sớm để khỏi tải ảnh vô ích khi thiếu
+    if (user.role === "HOUSEKEEPER" && !file) throw badRequest("Chụp ảnh tại cơ sở để vào ca");
+    await clockIn(db, user, {
+      propertyId: String(f.get("propertyId")), shift, photoUrl: file ? await uploadPhoto(file, "attendance") : undefined,
+      lat: coord("lat"), lng: coord("lng"), accuracyM: coord("accuracy"),
+    });
+  });
   revalidatePath("/attendance");
   return r;
 }

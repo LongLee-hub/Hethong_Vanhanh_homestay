@@ -38,6 +38,8 @@ const PERMS = {
   approveChecklist: ["MANAGER", "ADMIN"],
   clock: ["MANAGER", "ACCOUNTANT", "HOUSEKEEPER"],
   viewAllAttendance: ["ADMIN", "MANAGER", "ACCOUNTANT"],
+  // Buồng phòng xem đánh giá (không có doanh thu) của cơ sở được giao: thưởng/phạt lương tính theo đánh giá
+  viewReviews: ["ADMIN", "INVESTOR", "MANAGER", "ACCOUNTANT", "HOUSEKEEPER"],
   lockSettlement: ["ADMIN"],
   admin: ["ADMIN"],
 } as const satisfies Record<string, readonly Role[]>;

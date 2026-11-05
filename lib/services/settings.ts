@@ -15,6 +15,11 @@ export const DEFAULTS: Record<string, string> = {
   "commission.Agoda": "18",
   "commission.Direct": "0",
   cleaningDueHour: "14:00",
+  // Lương buồng phòng (lib/services/payroll.ts)
+  "payroll.daysOff": "2", // công chuẩn = số ngày trong tháng − ngày nghỉ
+  "payroll.overtimeRate": "31000", // VND / lần tăng ca
+  "payroll.fiveStarBonus": "10000", // VND / đánh giá 5★
+  "payroll.lowReviewPenalty": "50000", // VND / đánh giá dưới 4★
 };
 
 export async function getSetting(db: DB, key: string): Promise<string> {
