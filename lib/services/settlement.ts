@@ -37,17 +37,21 @@ interface InvestorData {
   adjustments: D.AdjustmentLite[];
   finalized: Set<string>; // tháng đã chốt chi phí chung
   pct: number;
+  feeTiers: D.FeeTier[] | null; // Phí Host lũy tiến; null = cố định pct %
   vatPct: number; // thuế GTGT của CĐT đặc biệt, 0 = không áp dụng
   pitPct: number; // thuế TNCN của CĐT đặc biệt, 0 = không áp dụng
 }
 
-/** Phí quản lý của NĐT (mức trong hợp đồng, chưa đặt thì dùng mức chung) và thuế nếu là CĐT đặc biệt. */
-export async function investorRates(db: DB, investorId: string): Promise<{ pct: number; vatPct: number; pitPct: number }> {
+/**
+ * Phí quản lý của NĐT và thuế nếu là CĐT đặc biệt.
+ * Phí Host: lũy tiến theo bậc nếu hợp đồng đặt bậc, ngược lại cố định % (mức trong hợp đồng, chưa đặt thì dùng mức chung).
+ */
+export async function investorRates(db: DB, investorId: string): Promise<{ pct: number; feeTiers: D.FeeTier[] | null; vatPct: number; pitPct: number }> {
   const [[inv], global] = await Promise.all([
-    db.select({ pct: investors.managementFeePct, vatPct: investors.vatPct, pitPct: investors.pitPct }).from(investors).where(eq(investors.id, investorId)).limit(1),
+    db.select({ pct: investors.managementFeePct, feeTiers: investors.feeTiers, vatPct: investors.vatPct, pitPct: investors.pitPct }).from(investors).where(eq(investors.id, investorId)).limit(1),
     feePct(db),
   ]);
-  return { pct: inv?.pct ?? global, vatPct: inv?.vatPct ?? 0, pitPct: inv?.pitPct ?? 0 };
+  return { pct: inv?.pct ?? global, feeTiers: inv?.feeTiers?.length ? inv.feeTiers : null, vatPct: inv?.vatPct ?? 0, pitPct: inv?.pitPct ?? 0 };
 }
 
 async function loadInvestorData(db: DB, investorId: string, months: string[], nightsFrom?: string): Promise<InvestorData> {
@@ -83,7 +87,7 @@ async function loadInvestorData(db: DB, investorId: string, months: string[], ni
 function settleFrom(d: InvestorData, month: string): D.InvestorSettlement {
   return D.settleInvestorMonth({
     month, propertyIds: d.props.map((p) => p.id), rooms: d.rooms, nights: d.nights, expenses: d.expenses,
-    adjustments: d.adjustments, commonFinalized: d.finalized.has(month), feePct: d.pct,
+    adjustments: d.adjustments, commonFinalized: d.finalized.has(month), feePct: d.pct, feeTiers: d.feeTiers,
     vatPct: d.vatPct, pitPct: d.pitPct,
   });
 }
@@ -119,6 +123,8 @@ export async function getSettlements(db: DB, user: SessionUser, investorId: stri
       const lines = lockedLines.filter((r) => r.month === month).map((r) => r.line);
       return {
         investorId, month, status: "LOCKED", lockedAt: s.lockedAt, commonProvisional: false, feePct: s.feePct ?? data.pct,
+        // Bản khóa trước khi có cột fee_tiers: feePct đã lưu thì là phí cố định
+        feeTiers: s.feeTiers?.length ? s.feeTiers : s.feePct != null ? null : data.feeTiers,
         totalRevenue: s.totalRevenue, totalDirectCost: s.totalDirectCost, totalCommonCost: s.totalCommonCost,
         totalProfit: s.totalProfit, managementFee: s.managementFee, investorNet: s.investorNet,
         operatingProfit: s.totalProfit + s.vatAmount, vatPct: s.vatPct ?? 0, vat: s.vatAmount, pitPct: s.pitPct ?? 0, pit: s.pitAmount,
@@ -191,7 +197,7 @@ export async function lockSettlement(db: DB, user: SessionUser, investorId: stri
     if (existing?.status === "LOCKED") throw badRequest("Tháng này đã khóa sổ");
     const values = {
       investorId, month, status: "LOCKED" as const, totalRevenue: c.totalRevenue, totalDirectCost: c.totalDirectCost, totalCommonCost: c.totalCommonCost,
-      totalProfit: c.totalProfit, managementFee: c.managementFee, feePct: data.pct, investorNet: c.investorNet, lockedAt: new Date(), lockedById: user.id,
+      totalProfit: c.totalProfit, managementFee: c.managementFee, feePct: data.pct, feeTiers: c.feeTiers, investorNet: c.investorNet, lockedAt: new Date(), lockedById: user.id,
       vatPct: c.vatPct || null, vatAmount: c.vat, pitPct: c.pitPct || null, pitAmount: c.pit,
     };
     let id = existing?.id;
@@ -257,7 +263,7 @@ export async function paybackForInvestor(db: DB, user: SessionUser, investorId: 
 export async function investorForecast(db: DB, investorId: string, month: string, today = D.todayVN()) {
   // Lấy thêm đêm của tháng trước để ước công suất cho đêm còn trống
   const d = await loadInvestorData(db, investorId, [month], D.firstDay(D.prevMonth(month)));
-  const { props, rooms: roomsAll, nights, expenses: exps, adjustments: adjs, pct, vatPct, pitPct } = d;
+  const { props, rooms: roomsAll, nights, expenses: exps, adjustments: adjs, pct, feeTiers, vatPct, pitPct } = d;
   const finalized = d.finalized.has(month);
   const common = D.commonCostForMonth({ month, expenses: exps, rooms: roomsAll, finalized });
   const lines = props.map((p) => {
@@ -273,12 +279,12 @@ export async function investorForecast(db: DB, investorId: string, month: string
   const revenue = lines.reduce((s, l) => s + l.revenueForecast, 0);
   const cost = lines.reduce((s, l) => s + l.costForecast, 0);
   const profit = revenue - cost;
-  const t = D.feeAndTaxes({ revenue, profit, feePct: pct, vatPct, pitPct });
+  const t = D.feeAndTaxes({ revenue, profit, feePct: pct, feeTiers, vatPct, pitPct });
   // Số thực tế đến hôm nay: doanh thu đã thực hiện (gồm điều chỉnh của tháng) trừ chi phí đã ghi nhận, phí và thuế tính riêng NĐT này
   const adjTotal = adjs.reduce((s, a) => s + a.amount, 0);
   const revenuePast = lines.reduce((s, l) => s + l.revenuePast, 0) + adjTotal;
   const actualCost = lines.reduce((s, l) => s + l.actualCost, 0);
-  const a = D.feeAndTaxes({ revenue: revenuePast, profit: revenuePast - actualCost, feePct: pct, vatPct, pitPct });
+  const a = D.feeAndTaxes({ revenue: revenuePast, profit: revenuePast - actualCost, feePct: pct, feeTiers, vatPct, pitPct });
   return {
     lines, revenueForecast: revenue, costForecast: cost, actualCost, profitForecast: profit,
     managementFee: t.fee, vat: t.vat, pit: t.pit, investorNet: t.investorNet, commonProvisional: common.provisional,

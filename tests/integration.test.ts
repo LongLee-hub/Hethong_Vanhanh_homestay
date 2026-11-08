@@ -1,4 +1,5 @@
 // Test tích hợp trên PostgreSQL nhúng (PGlite): chạy migration thật, gọi service thật.
+import * as D from "../lib/domain";
 import { beforeAll, describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
@@ -644,6 +645,24 @@ describe("Một NĐT nhiều cơ sở, mỗi cơ sở một tài khoản Daylada
     const s = await getSettlement(db, admin, "inv-m", "2026-09");
     expect(s.feePct).toBe(30);
     expect(s.managementFee).toBe(s.totalProfit > 0 ? Math.floor((s.totalProfit * 30) / 100) : 0);
+  });
+
+  it("Phí Host lũy tiến từng phần theo hợp đồng NĐT, chuyển lại % cố định được", async () => {
+    const base = { ...emptyInfo, id: "inv-m", name: "NĐT nhiều cơ sở", managementFeePct: 30 };
+    await expect(saveInvestor(db, admin, { ...base, feeTiers: [{ upTo: 20_000_000, pct: 20 }, { upTo: 10_000_000, pct: 25 }, { upTo: null, pct: 30 }] })).rejects.toThrow(/lũy tiến/);
+    await saveInvestor(db, admin, { ...base, feeTiers: D.DEFAULT_FEE_TIERS });
+    const s = await getSettlement(db, admin, "inv-m", "2026-09");
+    expect(s.feeTiers).toEqual(D.DEFAULT_FEE_TIERS);
+    expect(s.managementFee).toBe(D.managementFee(s.totalProfit, 0, D.DEFAULT_FEE_TIERS));
+    const list = await listConnections(db, admin, plain);
+    expect(list.find((i) => i.id === "inv-m")!.feeTiers).toEqual(D.DEFAULT_FEE_TIERS);
+    // Không truyền feeTiers thì giữ nguyên; null thì về % cố định
+    await saveInvestor(db, admin, base);
+    expect((await getSettlement(db, admin, "inv-m", "2026-09")).feeTiers).toEqual(D.DEFAULT_FEE_TIERS);
+    await saveInvestor(db, admin, { ...base, feeTiers: null });
+    const flat = await getSettlement(db, admin, "inv-m", "2026-09");
+    expect(flat.feeTiers).toBeNull();
+    expect(flat.managementFee).toBe(flat.totalProfit > 0 ? Math.floor((flat.totalProfit * 30) / 100) : 0);
   });
 
   it("đổi tài khoản của cơ sở hoặc chuyển phòng sang cơ sở dùng tài khoản khác thì bỏ gắn listing", async () => {

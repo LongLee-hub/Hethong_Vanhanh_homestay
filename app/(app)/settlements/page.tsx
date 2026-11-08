@@ -40,6 +40,12 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
   const loss = s.totalProfit <= 0;
   // CĐT đặc biệt (vd Uxistay): thuế GTGT trừ trước phí quản lý, thuế TNCN trừ sau phí
   const taxed = s.vatPct > 0 || s.pitPct > 0;
+  // Phí Host lũy tiến từng phần: tách lợi nhuận thực tính theo bậc
+  const tiers = s.feeTiers;
+  const tierRows = tiers && !loss ? D.tieredFeeBreakdown(s.totalProfit, tiers) : [];
+  const feeFormula = tiers
+    ? tierRows.map((b) => `${vnd(b.part)} × ${b.pct}%`).join(" + ")
+    : `${s.feePct}% × ${vnd(s.totalProfit)}`;
 
   // Công thức chi phí chung: tổng toàn hệ thống ÷ số phòng × số phòng của NĐT
   const myRooms = s.lines.reduce((t, l) => t + l.roomCount, 0);
@@ -66,7 +72,7 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
           <div><dt>Chi phí chung được chia</dt><dd>− {vnd(s.totalCommonCost)}</dd></div>
           {s.vatPct > 0 && <div><dt>Thuế VAT chủ nhà trả (DT × {s.vatPct}/{100 + s.vatPct})</dt><dd>− {vnd(s.vat)}</dd></div>}
           <div><dt>Lợi nhuận thực tính{s.vatPct > 0 ? " (sau VAT)" : " (chủ nhà không trả VAT)"}</dt><dd className={sign(s.totalProfit)}>{vnd(s.totalProfit)}</dd></div>
-          <div><dt>Phí Host LOCI ({s.feePct}% lợi nhuận thực tính)</dt><dd>{loss ? "0 ₫" : `− ${vnd(s.managementFee)}`}</dd></div>
+          <div><dt>Phí Host LOCI ({tiers ? "lũy tiến từng phần" : `${s.feePct}% lợi nhuận thực tính`})</dt><dd>{loss ? "0 ₫" : `− ${vnd(s.managementFee)}`}</dd></div>
           {s.pitPct > 0 && <div><dt>Thuế TNCN ({s.pitPct}% lợi nhuận sau phí)</dt><dd>{s.pit ? `− ${vnd(s.pit)}` : "0 ₫"}</dd></div>}
           <div className="sum"><dt>{who}</dt><dd className={sign(s.investorNet)}>{vnd(s.investorNet)}</dd></div>
         </dl>
@@ -111,10 +117,31 @@ export default async function Settlements({ searchParams }: { searchParams: Prom
           {taxed && (
             <p>
               {s.vatPct > 0
-                ? <>Chủ nhà trả VAT (đã nằm trong doanh thu): {vnd(s.totalRevenue)} × {s.vatPct}/{100 + s.vatPct} = {vnd(s.vat)}. Lợi nhuận thực tính = {vnd(s.operatingProfit)} − {vnd(s.vat)} = {vnd(s.totalProfit)}, Phí Host = {s.feePct}% × {vnd(s.totalProfit)}.</>
-                : <>Chủ nhà không trả VAT: Phí Host = {s.feePct}% × lợi nhuận {vnd(s.totalProfit)}.</>}
+                ? <>Chủ nhà trả VAT (đã nằm trong doanh thu): {vnd(s.totalRevenue)} × {s.vatPct}/{100 + s.vatPct} = {vnd(s.vat)}. Lợi nhuận thực tính = {vnd(s.operatingProfit)} − {vnd(s.vat)} = {vnd(s.totalProfit)}{tiers ? "." : <>, Phí Host = {feeFormula}.</>}</>
+                : <>Chủ nhà không trả VAT{tiers ? ", Phí Host tính trên lợi nhuận" : <>: Phí Host = {feeFormula}</>}.</>}
               {s.pitPct > 0 && <> TNCN {s.pitPct}% × lợi nhuận sau khi trừ hết chi phí, thuế GTGT và phí quản lý ({vnd(s.totalProfit - s.managementFee)}) = {vnd(s.pit)}.</>}
             </p>
+          )}
+          {tiers && !loss && (
+            <>
+              <p>
+                Phí Host lũy tiến từng phần trên lợi nhuận thực tính {vnd(s.totalProfit)}: phần lợi nhuận nằm trong bậc nào chia theo tỷ lệ của bậc đó, rồi cộng lại.
+                {" "}Phí Host = {feeFormula} = <b>{vnd(s.managementFee)}</b>{s.totalProfit > 0 ? ` (bình quân ${((s.managementFee / s.totalProfit) * 100).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%)` : ""}.
+              </p>
+              <div className="tbl-wrap"><table>
+                <thead><tr><th>Bậc</th><th>Phần lợi nhuận</th><th className="n">Lợi nhuận trong bậc</th><th className="n">LOCI nhận</th><th className="n">Phí Host</th><th className="n">{mine ? "Bạn" : "Chủ nhà"} nhận</th></tr></thead>
+                <tbody>
+                  {tierRows.map((b, i) => (
+                    <tr key={i}>
+                      <td>{i + 1}</td>
+                      <td>{b.upTo == null ? `Trên ${vnd(b.from)}` : b.from ? `Trên ${vnd(b.from)} đến ${vnd(b.upTo)}` : `${vnd(b.upTo)} đầu tiên`}</td>
+                      <td className="n">{vnd(b.part)}</td><td className="n">{b.pct}%</td><td className="n">{vnd(Math.round(b.fee))}</td><td className="n">{vnd(Math.round(b.part - b.fee))}</td>
+                    </tr>
+                  ))}
+                  <tr className="total"><td colSpan={2}>Tổng</td><td className="n">{vnd(s.totalProfit)}</td><td /><td className="n">{vnd(s.managementFee)}</td><td className="n">{vnd(s.totalProfit - s.managementFee)}</td></tr>
+                </tbody>
+              </table></div>
+            </>
           )}
           <p>
             Chi phí chung: {basis.provisional ? `tạm tính theo ${D.formatMonthVN(basis.basisMonth).toLowerCase()}, ` : ""}

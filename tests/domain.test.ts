@@ -18,6 +18,7 @@ import {
   payback,
   settleInvestorMonth,
   splitNights,
+  DEFAULT_FEE_TIERS, feeRuleText, feeTiersError, tieredFeeBreakdown,
 } from "../lib/domain";
 
 const bk = (p: Partial<BookingLite>): BookingLite => ({
@@ -412,5 +413,37 @@ describe("Thuế CĐT đặc biệt (GTGT, TNCN)", () => {
 
   it("lỗ sau GTGT: không phí, không TNCN, GTGT vẫn phải nộp", () => {
     expect(feeAndTaxes({ revenue: 50_000_000, profit: 3_000_000, feePct: 20, vatPct: 8, pitPct: 17 })).toEqual({ vat: 3_703_703, profitBeforeFee: -703_703, fee: 0, pit: 0, investorNet: -703_703 });
+  });
+});
+
+describe("Phí Host lũy tiến từng phần", () => {
+  const T = DEFAULT_FEE_TIERS;
+  it("khớp bảng minh họa trong hợp đồng", () => {
+    expect(managementFee(20_000_000, 0, T)).toBe(4_000_000);
+    expect(managementFee(40_000_000, 0, T)).toBe(9_000_000);
+    expect(managementFee(60_000_000, 0, T)).toBe(15_000_000);
+    // Ví dụ 50 tr: 20tr×20% + 20tr×25% + 10tr×30% = 12 tr
+    expect(managementFee(50_000_000, 0, T)).toBe(12_000_000);
+    expect(tieredFeeBreakdown(50_000_000, T).map((b) => [b.part, b.fee])).toEqual([[20_000_000, 4_000_000], [20_000_000, 5_000_000], [10_000_000, 3_000_000]]);
+  });
+  it("lỗ/hòa vốn không thu phí, dưới bậc 1 chỉ tính 20%, làm tròn xuống", () => {
+    expect(managementFee(-1, 0, T)).toBe(0);
+    expect(managementFee(0, 0, T)).toBe(0);
+    expect(managementFee(10_000_000, 0, T)).toBe(2_000_000);
+    expect(managementFee(20_000_003, 0, T)).toBe(4_000_000);
+  });
+  it("không có bậc thì dùng % cố định", () => {
+    expect(managementFee(50_000_000, 20, null)).toBe(10_000_000);
+    expect(feeAndTaxes({ revenue: 80_000_000, profit: 50_000_000, feePct: 20, feeTiers: T }).fee).toBe(12_000_000);
+  });
+  it("kiểm tra bậc", () => {
+    expect(feeTiersError(T)).toBeNull();
+    expect(feeTiersError([{ upTo: 20_000_000, pct: 20 }])).toMatch(/Bậc cuối/);
+    expect(feeTiersError([{ upTo: 20_000_000, pct: 20 }, { upTo: 10_000_000, pct: 25 }, { upTo: null, pct: 30 }])).toMatch(/Bậc 2/);
+    expect(feeTiersError([{ upTo: null, pct: 120 }])).toMatch(/0 đến 100/);
+  });
+  it("mô tả ngắn", () => {
+    expect(feeRuleText(T, null, 20)).toBe("Lũy tiến: đến 20 tr 20% · 20 tr–40 tr 25% · trên 40 tr 30%");
+    expect(feeRuleText(null, null, 20)).toBe("20% lợi nhuận (mức chung)");
   });
 });

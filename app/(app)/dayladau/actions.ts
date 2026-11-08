@@ -27,13 +27,26 @@ const vatPctOf = (f: FormData) => {
   return numOrNull(f, "vatPct");
 };
 
+/** Số tiền nhập có dấu chấm/phẩy ngăn cách nghìn: "20.000.000" → 20000000. Trống → null. */
+const moneyOrNull = (v: string) => (v.trim() ? Number(v.replace(/[^\d-]/g, "")) : null);
+
+/** "Cố định %" → null (xóa bậc); "Lũy tiến" → các bậc đã nhập. Form cũ không có feeMode → undefined (giữ nguyên). */
+const feeTiersOf = (f: FormData): D.FeeTier[] | null | undefined => {
+  const mode = s(f, "feeMode");
+  if (mode === "FLAT") return null;
+  if (mode !== "TIERED") return undefined;
+  const ups = f.getAll("tierUpTo").map(String);
+  const pcts = f.getAll("tierPct").map(String);
+  return pcts.map((p, i) => ({ upTo: i === pcts.length - 1 ? null : moneyOrNull(ups[i] ?? ""), pct: Number(p.replace(",", ".")) }));
+};
+
 export async function saveInvestorAction(_: State, f: FormData): Promise<State> {
   const user = await requireUser();
   const r = await action(() =>
     saveInvestor(getDb(), user, {
       id: s(f, "id") || undefined, name: s(f, "name"), phone: s(f, "phone"), email: s(f, "email"), taxCode: s(f, "taxCode"), address: s(f, "address"),
       bankName: s(f, "bankName"), bankAccountNo: s(f, "bankAccountNo"), bankAccountName: s(f, "bankAccountName"),
-      managementFeePct: numOrNull(f, "managementFeePct"), vatPct: vatPctOf(f), pitPct: numOrNull(f, "pitPct"), sharesCommonCost: s(f, "sharesCommonCost") === "1", contractStartOn: s(f, "contractStartOn") || null, contractEndOn: s(f, "contractEndOn") || null,
+      managementFeePct: numOrNull(f, "managementFeePct"), feeTiers: feeTiersOf(f), vatPct: vatPctOf(f), pitPct: numOrNull(f, "pitPct"), sharesCommonCost: s(f, "sharesCommonCost") === "1", contractStartOn: s(f, "contractStartOn") || null, contractEndOn: s(f, "contractEndOn") || null,
       contractUrl: s(f, "contractUrl"), payoutDay: numOrNull(f, "payoutDay"), active: s(f, "active") !== "0", note: s(f, "note"),
       larkWebhookUrl: s(f, "larkWebhookUrl"),
     }),

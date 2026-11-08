@@ -293,6 +293,8 @@ export interface InvestorSettlement {
   /** Lợi nhuận trước phí quản lý = operatingProfit − GTGT. CĐT không chịu thuế thì bằng operatingProfit. */
   totalProfit: number;
   managementFee: number;
+  /** Bậc Phí Host lũy tiến đã áp dụng; null = cố định % lợi nhuận. */
+  feeTiers: FeeTier[] | null;
   vatPct: number;
   vat: number;
   pitPct: number;
@@ -301,10 +303,73 @@ export interface InvestorSettlement {
   commonProvisional: boolean;
 }
 
-/** Phí quản lý: floor(LN × pct%) nếu LN > 0, ngược lại 0. */
-export function managementFee(profit: number, feePct: number): number {
+/**
+ * Một bậc của Phí Host lũy tiến từng phần: phần lợi nhuận từ mức trần của bậc trước đến `upTo` tính `pct`%.
+ * `upTo` = null là bậc cuối (không giới hạn trên).
+ */
+export interface FeeTier { upTo: number | null; pct: number }
+
+/** Bậc mặc định của hợp đồng lũy tiến: 20 tr đầu 20%, 20–40 tr 25%, trên 40 tr 30% (phần Bên B = LOCI). */
+export const DEFAULT_FEE_TIERS: FeeTier[] = [
+  { upTo: 20_000_000, pct: 20 },
+  { upTo: 40_000_000, pct: 25 },
+  { upTo: null, pct: 30 },
+];
+
+/** Kiểm tra bậc lũy tiến; trả lỗi tiếng Việt hoặc null nếu hợp lệ. */
+export function feeTiersError(tiers: FeeTier[]): string | null {
+  if (!tiers.length) return "Cần ít nhất một bậc";
+  let prev = 0;
+  for (let i = 0; i < tiers.length; i++) {
+    const { upTo, pct } = tiers[i];
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return `Bậc ${i + 1}: tỷ lệ phải từ 0 đến 100%`;
+    const last = i === tiers.length - 1;
+    if (last) {
+      if (upTo != null) return "Bậc cuối không có mức trần (để trống)";
+    } else {
+      if (upTo == null || !Number.isInteger(upTo) || upTo <= prev) return `Bậc ${i + 1}: mức trần phải là số nguyên lớn hơn bậc trước`;
+      prev = upTo;
+    }
+  }
+  return null;
+}
+
+const trieu = (n: number) => `${(n / 1_000_000).toLocaleString("vi-VN")} tr`;
+
+/** Mô tả ngắn cách tính Phí Host, vd "Lũy tiến: đến 20 tr 20% · 20–40 tr 25% · trên 40 tr 30%". */
+export function feeRuleText(tiers: FeeTier[] | null | undefined, pct: number | null | undefined, defaultPct: number): string {
+  if (!tiers?.length) return pct != null ? `${pct}% lợi nhuận` : `${defaultPct}% lợi nhuận (mức chung)`;
+  let from = 0;
+  return "Lũy tiến: " + tiers.map((t) => {
+    const txt = t.upTo == null ? `trên ${trieu(from)} ${t.pct}%` : `${from ? `${trieu(from)}–` : "đến "}${trieu(t.upTo)} ${t.pct}%`;
+    if (t.upTo != null) from = t.upTo;
+    return txt;
+  }).join(" · ");
+}
+
+/** Chi tiết Phí Host lũy tiến: từng bậc lợi nhuận rơi vào, phần lợi nhuận và phí của bậc đó. */
+export function tieredFeeBreakdown(profit: number, tiers: FeeTier[]): { from: number; upTo: number | null; pct: number; part: number; fee: number }[] {
+  const out: { from: number; upTo: number | null; pct: number; part: number; fee: number }[] = [];
+  let from = 0;
+  for (const t of tiers) {
+    if (profit <= from) break;
+    const part = Math.min(profit, t.upTo ?? Infinity) - from;
+    out.push({ from, upTo: t.upTo, pct: t.pct, part, fee: (part * t.pct) / 100 });
+    if (t.upTo == null) break;
+    from = t.upTo;
+  }
+  return out;
+}
+
+/**
+ * Phí quản lý (Phí Host) nếu LN > 0, ngược lại 0.
+ * Không có `tiers`: floor(LN × pct%). Có `tiers`: lũy tiến từng phần, cộng phí các bậc rồi làm tròn xuống.
+ */
+export function managementFee(profit: number, feePct: number, tiers?: FeeTier[] | null): number {
   assertInt(profit, "Lợi nhuận");
-  return profit > 0 ? Math.floor((profit * feePct) / 100) : 0;
+  if (profit <= 0) return 0;
+  if (tiers?.length) return Math.floor(tieredFeeBreakdown(profit, tiers).reduce((s, b) => s + b.fee, 0) + 1e-9);
+  return Math.floor((profit * feePct) / 100);
 }
 
 /**
@@ -312,15 +377,15 @@ export function managementFee(profit: number, feePct: number): number {
  * GTGT nằm trong doanh thu = DT × vatPct/(100 + vatPct) → lợi nhuận trước phí = lợi nhuận − GTGT → phí quản lý trên lợi nhuận đó
  * → TNCN = pitPct % phần còn lại sau phí. CĐT thường để 0 nên kết quả như cũ.
  */
-export function feeAndTaxes(opts: { revenue: number; profit: number; feePct: number; vatPct?: number; pitPct?: number }): {
+export function feeAndTaxes(opts: { revenue: number; profit: number; feePct: number; feeTiers?: FeeTier[] | null; vatPct?: number; pitPct?: number }): {
   vat: number; profitBeforeFee: number; fee: number; pit: number; investorNet: number;
 } {
-  const { revenue, profit, feePct, vatPct = 0, pitPct = 0 } = opts;
+  const { revenue, profit, feePct, feeTiers, vatPct = 0, pitPct = 0 } = opts;
   assertInt(revenue, "Doanh thu");
   // Doanh thu đã gồm VAT: VAT = DT × vatPct / (100 + vatPct), vd 8% → DT × 8/108
   const vat = revenue > 0 && vatPct > 0 ? Math.floor((revenue * vatPct) / (100 + vatPct)) : 0;
   const profitBeforeFee = profit - vat;
-  const fee = managementFee(profitBeforeFee, feePct);
+  const fee = managementFee(profitBeforeFee, feePct, feeTiers);
   const afterFee = profitBeforeFee - fee;
   const pit = afterFee > 0 ? Math.floor((afterFee * pitPct) / 100) : 0;
   return { vat, profitBeforeFee, fee, pit, investorNet: afterFee - pit };
@@ -335,10 +400,12 @@ export function settleInvestorMonth(opts: {
   adjustments: AdjustmentLite[];
   commonFinalized: boolean;
   feePct: number;
+  /** Phí Host lũy tiến từng phần; null/không truyền = cố định feePct % lợi nhuận. */
+  feeTiers?: FeeTier[] | null;
   vatPct?: number;
   pitPct?: number;
 }): InvestorSettlement {
-  const { month, propertyIds, rooms, nights, expenses, adjustments, commonFinalized, feePct, vatPct = 0, pitPct = 0 } = opts;
+  const { month, propertyIds, rooms, nights, expenses, adjustments, commonFinalized, feePct, feeTiers = null, vatPct = 0, pitPct = 0 } = opts;
   const from = firstDay(month);
   const to = lastDay(month);
   const common = commonCostForMonth({ month, expenses, rooms, finalized: commonFinalized });
@@ -369,7 +436,7 @@ export function settleInvestorMonth(opts: {
   const sum = (f: (l: PropertyLine) => number) => lines.reduce((s, l) => s + f(l), 0);
   const operatingProfit = sum((l) => l.profit);
   const totalRevenue = sum((l) => l.revenue);
-  const t = feeAndTaxes({ revenue: totalRevenue, profit: operatingProfit, feePct, vatPct, pitPct });
+  const t = feeAndTaxes({ revenue: totalRevenue, profit: operatingProfit, feePct, feeTiers, vatPct, pitPct });
   return {
     month,
     lines,
@@ -379,6 +446,7 @@ export function settleInvestorMonth(opts: {
     operatingProfit,
     totalProfit: t.profitBeforeFee,
     managementFee: t.fee,
+    feeTiers: feeTiers?.length ? feeTiers : null,
     vatPct,
     vat: t.vat,
     pitPct,

@@ -3,6 +3,7 @@ import { useState, useTransition } from "react";
 import { ActionForm } from "@/components/ActionForm";
 import type { ConnectionTest, InvestorConnection } from "@/lib/dayladau/admin";
 import { DISMISSIBLE_ALERTS } from "@/lib/dayladau/alert-types";
+import { DEFAULT_FEE_TIERS, feeRuleText, feeTiersError, managementFee, type FeeTier } from "@/lib/domain";
 import type { SyncSummary } from "@/lib/dayladau/sync";
 import {
   createPropertyAction, createRoomForListingAction, dismissAlertAction, mapListingAction, saveAccountAction, saveInvestorAction, syncNowAction, testConnectionAction,
@@ -116,6 +117,87 @@ function VatField({ inv, id }: { inv?: Investor; id: string }) {
   );
 }
 
+/** Cách tính Phí Host: cố định % lợi nhuận, hoặc lũy tiến từng phần theo bậc lợi nhuận (phần LOCI = Bên B nhận). */
+function FeeField({ inv, defaultFeePct, id }: { inv?: Investor; defaultFeePct: number; id: string }) {
+  const [tiered, setTiered] = useState(!!inv?.feeTiers?.length);
+  const [tiers, setTiers] = useState<FeeTier[]>(inv?.feeTiers?.length ? inv.feeTiers : DEFAULT_FEE_TIERS);
+  const set = (i: number, patch: Partial<FeeTier>) => setTiers((ts) => ts.map((t, j) => (j === i ? { ...t, ...patch } : t)));
+  const addTier = () => setTiers((ts) => {
+    const prevCap = ts.length > 1 ? ts[ts.length - 2].upTo ?? 0 : 0;
+    const last = ts[ts.length - 1];
+    return [...ts.slice(0, -1), { upTo: prevCap + 20_000_000, pct: last.pct }, { upTo: null, pct: last.pct }];
+  });
+  const removeTier = (i: number) => setTiers((ts) => {
+    const next = ts.filter((_, j) => j !== i);
+    return next.map((t, j) => (j === next.length - 1 ? { ...t, upTo: null } : t));
+  });
+  const err = tiered ? feeTiersError(tiers) : null;
+  const caps = tiers.slice(0, -1).map((t) => t.upTo ?? 0);
+  const samples = [...new Set([...caps, (caps[caps.length - 1] ?? 20_000_000) + 20_000_000])].filter((n) => n > 0);
+  return (
+    <div className="field full">
+      <span>Cách tính Phí Host</span>
+      <div className="seg" role="group" aria-label="Cách tính Phí Host" style={{ justifySelf: "start" }}>
+        <button type="button" aria-pressed={!tiered} onClick={() => setTiered(false)}>Cố định % lợi nhuận</button>
+        <button type="button" aria-pressed={tiered} onClick={() => setTiered(true)}>Lũy tiến từng phần</button>
+      </div>
+      <input type="hidden" name="feeMode" value={tiered ? "TIERED" : "FLAT"} />
+      {!tiered ? (
+        <label className="row" style={{ gap: 8, marginTop: 8 }}>
+          <span className="small muted">Phí Host (% lợi nhuận sau khi trừ hết chi phí)</span>
+          <input type="number" min={0} max={100} step="0.01" name="managementFeePct" id={id} defaultValue={inv?.managementFeePct ?? ""} placeholder={`Trống = ${defaultFeePct}%`} style={{ width: 120 }} />
+        </label>
+      ) : (
+        <div className="stack" style={{ marginTop: 8 }}>
+          <input type="hidden" name="managementFeePct" value={inv?.managementFeePct ?? ""} />
+          <div className="tbl-wrap"><table>
+            <thead><tr><th>Bậc</th><th>Phần lợi nhuận</th><th className="n">Đến mức (VND)</th><th className="n">LOCI nhận (%)</th><th className="n">Chủ nhà nhận</th><th /></tr></thead>
+            <tbody>
+              {tiers.map((t, i) => {
+                const last = i === tiers.length - 1;
+                const from = i ? tiers[i - 1].upTo ?? 0 : 0;
+                return (
+                  <tr key={i}>
+                    <td>{i + 1}</td>
+                    <td className="small">{last ? `Trên ${vnd(from)} trở lên` : i === 0 ? `${vnd(t.upTo ?? 0)} đầu tiên` : `Trên ${vnd(from)} đến ${vnd(t.upTo ?? 0)}`}</td>
+                    <td className="n">
+                      {last ? <><span className="muted">Không giới hạn</span><input type="hidden" name="tierUpTo" value="" /></> : (
+                        <input type="text" inputMode="numeric" name="tierUpTo" id={`${id}-up-${i}`} aria-label={`Mức trần bậc ${i + 1}`} value={t.upTo != null ? t.upTo.toLocaleString("vi-VN") : ""}
+                          onChange={(e) => { const d = e.target.value.replace(/\D/g, ""); set(i, { upTo: d ? Number(d) : null }); }} style={{ width: 140, textAlign: "right" }} />
+                      )}
+                    </td>
+                    <td className="n">
+                      <input type="number" min={0} max={100} step="0.01" name="tierPct" id={`${id}-pct-${i}`} aria-label={`Tỷ lệ LOCI bậc ${i + 1}`} value={Number.isFinite(t.pct) ? t.pct : ""}
+                        onChange={(e) => set(i, { pct: e.target.value === "" ? NaN : Number(e.target.value) })} style={{ width: 80, textAlign: "right" }} required />
+                    </td>
+                    <td className="n muted">{Number.isFinite(t.pct) ? `${+(100 - t.pct).toFixed(2)}%` : "—"}</td>
+                    <td className="n">{tiers.length > 1 && <button type="button" className="btn sm" onClick={() => removeTier(i)} aria-label={`Xóa bậc ${i + 1}`}>Xóa</button>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table></div>
+          <div className="row" style={{ gap: 8 }}>
+            <button type="button" className="btn sm" onClick={addTier}>Thêm bậc</button>
+            <button type="button" className="btn sm" onClick={() => setTiers(DEFAULT_FEE_TIERS)}>Về mặc định 20% · 25% · 30%</button>
+          </div>
+          {err ? <div className="banner">{err}</div> : (
+            <div className="tbl-wrap"><table>
+              <thead><tr><th>Ví dụ lợi nhuận tháng</th><th className="n">Chủ nhà nhận</th><th className="n">Phí Host LOCI</th><th className="n">Tỷ lệ bình quân LOCI</th></tr></thead>
+              <tbody>
+                {samples.map((p) => { const fee = managementFee(p, 0, tiers); return (
+                  <tr key={p}><td>{vnd(p)}</td><td className="n">{vnd(p - fee)}</td><td className="n">{vnd(fee)}</td><td className="n">{((fee / p) * 100).toLocaleString("vi-VN", { maximumFractionDigits: 1 })}%</td></tr>
+                ); })}
+              </tbody>
+            </table></div>
+          )}
+          <p className="hint">Lợi nhuận tách thành các bậc, phần nằm trong bậc nào chia theo tỷ lệ của bậc đó rồi cộng lại. Lỗ hoặc hòa vốn thì không thu phí.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InvestorForm({ inv, defaultFeePct, onDone }: { inv?: Investor; defaultFeePct: number; onDone: () => void }) {
   const f = (k: string) => `inv-${k}-${inv?.id ?? "new"}`;
   return (
@@ -136,7 +218,7 @@ function InvestorForm({ inv, defaultFeePct, onDone }: { inv?: Investor; defaultF
         <label className="field"><span>Ngày chuyển tiền hằng tháng</span><input type="number" min={1} max={28} name="payoutDay" id={f("payoutDay")} defaultValue={inv?.payoutDay ?? ""} placeholder="1–28" /></label>
 
         <h3 className="full sub-title">Hợp đồng</h3>
-        <label className="field"><span>Phí quản lý LOCI (%)</span><input type="number" min={0} max={100} step="0.01" name="managementFeePct" id={f("fee")} defaultValue={inv?.managementFeePct ?? ""} placeholder={`Để trống = mức chung ${defaultFeePct}%`} /></label>
+        <FeeField inv={inv} defaultFeePct={defaultFeePct} id={f("fee")} />
         <VatField inv={inv} id={f("vat")} />
         <label className="field"><span>Thuế TNCN (% lợi nhuận sau phí)</span><input type="number" min={0} max={100} step="0.01" name="pitPct" id={f("pit")} defaultValue={inv?.pitPct ?? ""} placeholder="Để trống = không áp dụng" /></label>
         <label className="check-item full"><input type="checkbox" name="sharesCommonCost" value="1" id={f("shares")} defaultChecked={inv?.sharesCommonCost ?? false} /><span>Chịu chi phí chung (Unix): chi phí chung chia đều theo phòng các cơ sở của những NĐT được chọn</span></label>
@@ -178,7 +260,7 @@ function InvestorCard({ inv, props, bookingCount, defaultFeePct, onEdit }: { inv
       <div className="facts">
         <div className="kv"><span>Liên hệ</span><b>{[inv.phone, inv.email].filter(Boolean).join(" · ") || "—"}</b></div>
         <div className="kv"><span>MST / CCCD</span><b>{inv.taxCode || "—"}</b></div>
-        <div className="kv"><span>Phí quản lý</span><b>{inv.managementFeePct != null ? `${inv.managementFeePct}%` : `${defaultFeePct}% (mức chung)`}</b></div>
+        <div className="kv"><span>Phí Host</span><b>{feeRuleText(inv.feeTiers, inv.managementFeePct, defaultFeePct)}</b></div>
         <div className="kv"><span>Thuế VAT</span><b>{inv.vatPct ? `Chủ nhà trả VAT ${inv.vatPct}% (DT × ${inv.vatPct}/${100 + Number(inv.vatPct)})` : "Không phải trả VAT"}</b></div>
         {inv.pitPct ? <div className="kv"><span>Thuế TNCN</span><b>{inv.pitPct}% lợi nhuận sau phí</b></div> : null}
         <div className="kv"><span>Hợp đồng</span><b>{contract}</b></div>

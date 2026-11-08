@@ -1,6 +1,7 @@
 // Quản trị nhà đầu tư và tài khoản Dayladau: thông tin NĐT, host ID + access token của từng tài khoản,
 // cơ sở dùng tài khoản nào, kiểm tra kết nối, gắn listing Dayladau với phòng. Chỉ Admin.
 // Token lưu mã hóa AES-256-GCM, không bao giờ trả ra ngoài.
+import * as D from "../domain";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { DB } from "../db";
 import { alerts, dayladauAccounts, investors, properties, rooms } from "../db/schema";
@@ -44,6 +45,8 @@ export interface InvestorInfo {
   bankAccountNo: string | null;
   bankAccountName: string | null;
   managementFeePct: number | null; // null = dùng mức chung
+  /** Phí Host lũy tiến từng phần; null = cố định managementFeePct %. Không truyền = giữ nguyên. */
+  feeTiers?: D.FeeTier[] | null;
   /** CĐT đặc biệt: thuế suất GTGT (VAT = DT × % / (100 + %)), thuế TNCN % lợi nhuận sau phí. null = không áp dụng. Không truyền = giữ nguyên. */
   vatPct?: number | null;
   pitPct?: number | null;
@@ -84,7 +87,7 @@ export async function listConnections(db: DB, user: SessionUser, decrypt = decry
   return invs.map((i) => ({
     id: i.id, name: i.name, phone: i.phone, email: i.email, taxCode: i.taxCode, address: i.address,
     bankName: i.bankName, bankAccountNo: i.bankAccountNo, bankAccountName: i.bankAccountName,
-    managementFeePct: i.managementFeePct, vatPct: i.vatPct, pitPct: i.pitPct, sharesCommonCost: i.sharesCommonCost, contractStartOn: i.contractStartOn, contractEndOn: i.contractEndOn,
+    managementFeePct: i.managementFeePct, feeTiers: i.feeTiers?.length ? i.feeTiers : null, vatPct: i.vatPct, pitPct: i.pitPct, sharesCommonCost: i.sharesCommonCost, contractStartOn: i.contractStartOn, contractEndOn: i.contractEndOn,
     contractUrl: i.contractUrl, payoutDay: i.payoutDay, active: i.active, note: i.note, larkWebhookUrl: i.larkWebhookUrl, hasAccount: !!i.userId,
     accounts: accs
       .filter((a) => a.investorId === i.id)
@@ -103,6 +106,10 @@ export async function saveInvestor(db: DB, user: SessionUser, input: { id?: stri
   if (!name) throw badRequest("Nhập tên nhà đầu tư");
   const fee = input.managementFeePct;
   if (fee != null && (!Number.isFinite(fee) || fee < 0 || fee > 100)) throw badRequest("Phí quản lý phải từ 0 đến 100%");
+  if (input.feeTiers?.length) {
+    const err = D.feeTiersError(input.feeTiers);
+    if (err) throw badRequest(`Phí Host lũy tiến — ${err}`);
+  }
   for (const [v, label] of [[input.vatPct, "Thuế GTGT"], [input.pitPct, "Thuế TNCN"]] as const) {
     if (v != null && (!Number.isFinite(v) || v < 0 || v > 100)) throw badRequest(`${label} phải từ 0 đến 100%`);
   }
@@ -123,6 +130,7 @@ export async function saveInvestor(db: DB, user: SessionUser, input: { id?: stri
     ...(input.vatPct !== undefined ? { vatPct: input.vatPct || null } : {}),
     ...(input.pitPct !== undefined ? { pitPct: input.pitPct || null } : {}),
     ...(input.sharesCommonCost !== undefined ? { sharesCommonCost: input.sharesCommonCost } : {}),
+    ...(input.feeTiers !== undefined ? { feeTiers: input.feeTiers?.length ? input.feeTiers.map((t) => ({ upTo: t.upTo, pct: t.pct })) : null } : {}),
     // Không truyền (form cũ / test) thì giữ nguyên webhook đang lưu
     ...(input.larkWebhookUrl !== undefined ? { larkWebhookUrl: t(input.larkWebhookUrl) } : {}),
   };

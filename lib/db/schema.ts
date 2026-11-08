@@ -41,6 +41,8 @@ export const investors = pgTable("investors", {
   bankAccountName: text("bank_account_name"),
   // Hợp đồng
   managementFeePct: numeric("management_fee_pct", { precision: 5, scale: 2, mode: "number" }), // null = dùng mức chung managementFeePct
+  /** Phí Host lũy tiến từng phần theo bậc lợi nhuận; null = cố định managementFeePct % lợi nhuận. */
+  feeTiers: jsonb("fee_tiers").$type<{ upTo: number | null; pct: number }[]>(),
   // CĐT đặc biệt (vd Uxistay) chịu thêm thuế trong quyết toán; null = không áp dụng
   vatPct: numeric("vat_pct", { precision: 5, scale: 2, mode: "number" }), // thuế suất GTGT; VAT = DT × vat_pct / (100 + vat_pct)
   pitPct: numeric("pit_pct", { precision: 5, scale: 2, mode: "number" }), // thuế TNCN, % lợi nhuận sau phí quản lý
@@ -345,6 +347,7 @@ export const settlements = pgTable(
     totalProfit: money("total_profit"),
     managementFee: money("management_fee"),
     feePct: numeric("fee_pct", { precision: 5, scale: 2, mode: "number" }), // mức phí lúc khóa sổ; null = khóa trước khi có cột này
+    feeTiers: jsonb("fee_tiers").$type<{ upTo: number | null; pct: number }[]>(), // bậc lũy tiến lúc khóa sổ; null = phí cố định feePct
     investorNet: money("investor_net"),
     // Thuế của CĐT đặc biệt lúc khóa sổ (0 = không áp dụng)
     vatPct: numeric("vat_pct", { precision: 5, scale: 2, mode: "number" }),

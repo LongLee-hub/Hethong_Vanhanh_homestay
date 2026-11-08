@@ -96,7 +96,7 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
     // Phí quản lý (và thuế tự tính của CĐT đặc biệt) tính trên lãi của NĐT; xem riêng 1 cơ sở thì tính trên lãi của cơ sở đó.
     const auto = s.vatPct > 0 || s.pitPct > 0 ? { vatPct: s.vatPct, pitPct: s.pitPct } : null;
     const t = propertyId
-      ? D.feeAndTaxes({ revenue, profit: lines[0].profit, feePct: s.feePct, vatPct: s.vatPct, pitPct: s.pitPct })
+      ? D.feeAndTaxes({ revenue, profit: lines[0].profit, feePct: s.feePct, feeTiers: s.feeTiers, vatPct: s.vatPct, pitPct: s.pitPct })
       : { fee: s.managementFee, vat: s.vat, pit: s.pit };
     const host = t.fee;
 
