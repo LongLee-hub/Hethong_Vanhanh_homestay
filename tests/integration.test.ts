@@ -145,6 +145,12 @@ describe("Doanh thu, chi phí, quyết toán (giai đoạn 2)", () => {
     ]);
     const one = await buildInvestorReport(db, invA, "inv-a", "2026-08", "X");
     expect(one.rooms.rows.map((x) => x.roomId)).toEqual(["X1"]);
+    // Căn cứ Phí Host: tổng NĐT lấy lợi nhuận thực tính của quyết toán; riêng 1 cơ sở tính trên lãi cơ sở đó
+    const cur = r.months[3];
+    expect(cur.fee.tiers).toBeNull();
+    expect(cur.host).toBe(D.managementFee(cur.fee.base, cur.fee.pct));
+    const oneCur = one.months[3];
+    expect(oneCur.host).toBe(D.managementFee(oneCur.fee.base, oneCur.fee.pct));
   });
 
   it("báo cáo NĐT: BHXH, Kế toán trả dưới dạng chi phí chung được tách khỏi CP Homestay", async () => {

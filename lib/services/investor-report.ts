@@ -20,6 +20,8 @@ export interface ReportMonth {
   revenue: number;
   homestay: number; // chi phí cơ sở + chi phí chung, trừ các nhóm tách riêng
   host: number; // phí quản lý LOCI
+  /** Căn cứ tính Phí Host: lợi nhuận thực tính (sau VAT nếu chủ nhà trả VAT), % cố định hoặc bậc lũy tiến. */
+  fee: { base: number; pct: number; tiers: D.FeeTier[] | null };
   tax: number;
   vat: number; // GTGT = DT × 8/108, không vượt quá CP Thuế đã nhập; CĐT đặc biệt: GTGT tự tính
   cit: number; // TNDN = CP Thuế − GTGT; CĐT đặc biệt: TNCN tự tính
@@ -97,7 +99,7 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
     const auto = s.vatPct > 0 || s.pitPct > 0 ? { vatPct: s.vatPct, pitPct: s.pitPct } : null;
     const t = propertyId
       ? D.feeAndTaxes({ revenue, profit: lines[0].profit, feePct: s.feePct, feeTiers: s.feeTiers, vatPct: s.vatPct, pitPct: s.pitPct })
-      : { fee: s.managementFee, vat: s.vat, pit: s.pit };
+      : { fee: s.managementFee, vat: s.vat, pit: s.pit, profitBeforeFee: s.totalProfit };
     const host = t.fee;
 
     const byCat: Record<string, number> = {};
@@ -140,6 +142,7 @@ export async function buildInvestorReport(db: DB, user: SessionUser, investorId:
       revenue,
       homestay: direct + common - declaredTax - bhxh - accounting,
       host,
+      fee: { base: t.profitBeforeFee, pct: s.feePct, tiers: s.feeTiers },
       tax,
       vat,
       cit: tax - vat,

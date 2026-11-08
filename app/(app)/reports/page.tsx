@@ -124,10 +124,21 @@ export default async function InvestorReportPage({ searchParams }: { searchParam
 
   // CĐT đặc biệt: thuế tự tính GTGT + TNCN thay cho GTGT + TNDN từ khoản chi đã nhập
   const at = cur.autoTax;
+  // Cách tính Phí Host của tháng báo cáo: lũy tiến từng phần hoặc % cố định trên lợi nhuận thực tính
+  const fee = cur.fee;
+  const feeTiers = fee.tiers;
+  const feeLoss = fee.base <= 0;
+  const feeRows = feeTiers && !feeLoss ? D.tieredFeeBreakdown(fee.base, feeTiers) : [];
+  const feeFormula = feeTiers ? feeRows.map((b) => `${full(b.part)} × ${b.pct}%`).join(" + ") : `${fee.base > 0 ? full(fee.base) : 0} × ${fee.pct}%`;
+  const tierName = (from: number, upTo: number | null) => (upTo == null ? `Trên ${full(from)} ₫ trở lên` : from ? `Trên ${full(from)} ₫ đến ${full(upTo)} ₫` : `${full(upTo)} ₫ đầu tiên`);
+  const feeTierAll = (() => {
+    let from = 0;
+    return (feeTiers ?? []).map((t) => { const r = { from, upTo: t.upTo, pct: t.pct }; if (t.upTo != null) from = t.upTo; return r; });
+  })();
   const taxNote = at ? "GTGT + TNCN" : "GTGT + TNDN";
   const summary: [string, number, string, string | undefined][] = [
     ["CP Homestay", cur.homestay, "vận hành cơ sở", undefined],
-    ["CP Host", cur.host, "phí quản lý LOCI", "#378ADD"],
+    ["CP Host", cur.host, feeTiers ? "phí LOCI lũy tiến" : `phí LOCI ${fee.pct}% LN`, "#378ADD"],
     ["CP Thuế", cur.tax, taxNote, "#BA7517"],
     ["CP BHXH", cur.bhxh, "bảo hiểm XH", "#7B5EA7"],
     ["CP Kế toán", cur.accounting, "dịch vụ kế toán", "#7B5EA7"],
@@ -384,6 +395,58 @@ export default async function InvestorReportPage({ searchParams }: { searchParam
           </div>
         </div>
 
+        {/* Cách tính Phí Host */}
+        <div className={s.section}>
+          <div className={s.sectionTitle}>Cách tính Phí Host — Tháng {mm}/{yy}</div>
+          <div className={s.tableScroll}>
+            <table className={s.costTable}>
+              <thead>
+                <tr>
+                  <th>{feeTiers ? "Bậc lợi nhuận" : "Khoản"}</th>
+                  {feeTiers ? <><th>Tỷ lệ LOCI</th><th>Tỷ lệ NĐT</th><th className={s.hl}>Lợi nhuận trong bậc</th><th className={s.hl}>Phí Host</th></> : <th className={s.hl}>Số tiền</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {feeTiers ? (
+                  <>
+                    {feeTierAll.map((t, i) => {
+                      const r = feeRows[i];
+                      return (
+                        <tr key={i}>
+                          <td>Bậc {i + 1}: {tierName(t.from, t.upTo)}</td>
+                          <td>{t.pct}%</td>
+                          <td>{+(100 - t.pct).toFixed(2)}%</td>
+                          <td className={s.hlCol}>{r ? `${full(r.part)} ₫` : "—"}</td>
+                          <td className={s.hlCol}>{r ? `${full(r.fee)} ₫` : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                    <tr className={s.totalRow}>
+                      <td>Tổng</td><td /><td />
+                      <td className={s.hlCol}>{full(Math.max(0, fee.base))} ₫</td>
+                      <td className={s.hlCol}>{full(cur.host)} ₫</td>
+                    </tr>
+                  </>
+                ) : (
+                  <>
+                    <tr><td>Lợi nhuận thực tính</td><td className={s.hlCol}>{full(fee.base)} ₫</td></tr>
+                    <tr><td>Tỷ lệ Phí Host</td><td className={s.hlCol}>{fee.pct}%</td></tr>
+                    <tr className={s.totalRow}><td>Phí Host</td><td className={s.hlCol}>{full(cur.host)} ₫</td></tr>
+                  </>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className={s.footnote}>
+            Lợi nhuận thực tính = doanh thu − chi phí cơ sở − chi phí chung được chia{at?.vatPct ? ` − GTGT (DT × ${at.vatPct}/${100 + at.vatPct})` : ""} = {full(fee.base)} ₫{prop ? " (riêng cơ sở này)" : " (gộp các cơ sở của NĐT)"}.<br />
+            {feeTiers
+              ? <>Phí Host lũy tiến từng phần: lợi nhuận tách thành các bậc, phần nằm trong bậc nào chia theo tỷ lệ của bậc đó rồi cộng lại.{!feeLoss && <> Phí Host = {feeFormula} = {full(cur.host)} ₫ (bình quân {dec1(pctOf(cur.host, fee.base))}% lợi nhuận).</>}</>
+              : <>Phí Host = {fee.pct}% lợi nhuận thực tính{!feeLoss && <> = {feeFormula} = {full(cur.host)} ₫</>}.</>}
+            {feeLoss && <> Tháng này {fee.base < 0 ? "lỗ" : "hòa vốn"} nên không thu Phí Host.</>}
+            {" "}Mỗi tháng tính riêng, không chuyển lỗ sang tháng sau.
+          </div>
+        </div>
+
         {/* Chi tiết CP Homestay */}
         <div className={s.section}>
           <div className={s.sectionTitle}>Chi tiết CP Homestay — So sánh {tLabel(t2.month)} / {tLabel(t1.month)} / {tLabel(t0.month)}</div>
@@ -416,7 +479,7 @@ export default async function InvestorReportPage({ searchParams }: { searchParam
           <div className={s.footnote}>
             DT tham chiếu: {tLabel(t0.month)} = {full(t0.revenue)} ₫ · {tLabel(t1.month)} = {full(t1.revenue)} ₫ · {tLabel(t2.month)} = {full(t2.revenue)} ₫<br />
             <span style={{ color: "#A32D2D" }}>■ Đỏ</span> = tỷ lệ cao hơn tháng báo cáo (bất lợi) · <span style={{ color: "#0F6E56" }}>■ Xanh</span> = tỷ lệ thấp hơn (tốt hơn)<br />
-            CP Host = phí quản lý LOCI {prop ? "tính trên lãi của riêng cơ sở này" : "tính trên tổng lãi các cơ sở"}. {at
+            CP Host = phí quản lý LOCI {feeTiers ? "lũy tiến từng phần" : `${fee.pct}%`} {prop ? "tính trên lãi của riêng cơ sở này" : "tính trên tổng lãi các cơ sở"} (xem mục Cách tính Phí Host). {at
               ? `CP Thuế tự tính theo hồ sơ NĐT: GTGT = DT × ${at.vatPct}/${100 + at.vatPct}, TNCN ${at.pitPct}% × lợi nhuận sau phí quản lý. BHXH, Kế toán lấy từ các khoản chi đã nhập đúng loại.`
               : "CP Thuế, BHXH, Kế toán lấy từ các khoản chi đã nhập đúng loại; GTGT = DT × 8/108, phần thuế còn lại tính là TNDN."}
           </div>
