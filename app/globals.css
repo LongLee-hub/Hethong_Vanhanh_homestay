@@ -463,3 +463,11 @@ form.backfill .row > .field { flex: 1 1 180px; }
   .kpi-table td .s { font-size: .7rem; }
   .kpi-table tr.sub td:first-child { padding-left: 12px; }
 }
+
+/* Tháng hạch toán: một hoặc nhiều tháng, chia đều số tiền */
+.month-list { display: grid; gap: 8px; }
+.month-list .month-item { display: flex; gap: 8px; align-items: center; }
+.month-list .month-item input[type=month] { flex: 1 1 auto; min-width: 0; }
+.month-list .month-remove { flex: none; width: 36px; height: 36px; padding: 0; justify-content: center; border-color: var(--line); font-weight: 500; }
+.month-list .month-add { justify-self: start; }
+table.statement .month-list .month-item input[type=month] { min-width: 140px; }

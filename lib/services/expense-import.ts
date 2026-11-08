@@ -7,7 +7,7 @@ import { expenseCategories, expenses, properties } from "../db/schema";
 import { allowedPropertyIds, badRequest, can, requirePermission, type SessionUser } from "../auth/access";
 import { buildDescription, isCommonName, nameKey, type SheetRow } from "../expenses/sheet";
 import { isAnyInvestorLocked, isCommonFinalized, isPropertyMonthLocked } from "./settlement";
-import { createCategory, createExpense } from "./expenses";
+import { createCategory, createSplitExpense } from "./expenses";
 
 export const MAX_IMPORT_ROWS = 500;
 
@@ -42,7 +42,8 @@ export interface ImportItem {
   propertyId: string | null;
   categoryId: string | null;
   categoryName: string;
-  month: string;
+  /** Một hoặc nhiều tháng hạch toán; nhiều tháng thì số tiền chia đều mỗi tháng một khoản. */
+  months: string[];
   incurredOn: string;
   amount: number;
   description: string;
@@ -154,10 +155,10 @@ export async function commitExpenseImport(db: DB, user: SessionUser, items: Impo
     if (errors.some((e) => e.line === i.line)) continue;
     const categoryId = (i.categoryId && all.some((c) => c.id === i.categoryId && c.active) ? i.categoryId : catIds.get(nameKey(i.categoryName))) ?? "";
     try {
-      const e = await createExpense(db, user, {
-        propertyId: i.propertyId, categoryId, month: i.month, incurredOn: i.incurredOn, amount: i.amount, description: i.description,
-      });
-      created.push(e.id);
+      const rows = await createSplitExpense(db, user, {
+        propertyId: i.propertyId, categoryId, incurredOn: i.incurredOn, amount: i.amount, description: i.description,
+      }, i.months ?? []);
+      created.push(...rows.map((e) => e.id));
     } catch (e) {
       errors.push({ line: i.line, message: e instanceof Error ? e.message : "Lỗi không rõ" });
     }

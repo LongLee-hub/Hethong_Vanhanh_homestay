@@ -9,8 +9,9 @@ import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import type { SessionUser } from "../lib/auth/access";
 import { readXlsxGrids, type Cell } from "../lib/bank/statement-parser";
-import { buildDescription, monthLabel, parseExpenseGrid, parseSheetMonth, splitDescription } from "../lib/expenses/sheet";
+import { allocationNote, buildDescription, monthLabel, splitAmount, parseExpenseGrid, parseSheetMonth, splitDescription } from "../lib/expenses/sheet";
 import { commitExpenseImport, previewExpenseImport } from "../lib/services/expense-import";
+import { createSplitExpense } from "../lib/services/expenses";
 
 // Giống ảnh bảng tổng hợp chi phí tháng 10 của kế toán
 const HEAD: Cell[] = ["Ngày", "Khoản chi", "Nhóm chi phí", "Cơ sở", "Người nhận", "Số tiền", "Ghi chú", "Thuộc tháng"];
@@ -135,7 +136,7 @@ describe("Xem trước và kê khai", () => {
   it("kê khai: chờ duyệt, tạo loại mới; tải lại cùng file báo trùng", async () => {
     const p = await previewExpenseImport(db, acc, parseExpenseGrid(GRID), "paid");
     const res = await commitExpenseImport(db, acc, p.map((r) => ({
-      line: r.line, propertyId: r.propertyId ?? null, categoryId: r.categoryId, categoryName: r.categoryName, month: r.month, incurredOn: r.incurredOn, amount: r.amount, description: r.description,
+      line: r.line, propertyId: r.propertyId ?? null, categoryId: r.categoryId, categoryName: r.categoryName, months: [r.month], incurredOn: r.incurredOn, amount: r.amount, description: r.description,
     })));
     expect(res.errors).toEqual([]);
     expect(res.created).toHaveLength(4);
@@ -148,5 +149,41 @@ describe("Xem trước và kê khai", () => {
     const again = await previewExpenseImport(db, acc, parseExpenseGrid(GRID), "paid");
     expect(again.every((r) => r.duplicateOf)).toBe(true);
     expect(again[3]).toMatchObject({ newCategory: false });
+  });
+});
+
+describe("Phân bổ nhiều tháng hạch toán", () => {
+  it("chia đều, phần lẻ dồn tháng đầu; mô tả giữ Người nhận / Ghi chú tách được", () => {
+    expect(splitAmount(1_000_000, 3)).toEqual([333_334, 333_333, 333_333]);
+    expect(splitAmount(900_000, 3)).toEqual([300_000, 300_000, 300_000]);
+    const d = allocationNote(buildDescription({ item: "Wifi", recipient: "Viettel", note: "Trả trước" }), 2, 3, 900_000);
+    expect(splitDescription(d)).toEqual({ item: "Wifi (phân bổ 2/3 của 900.000 ₫)", recipient: "Viettel", note: "Trả trước" });
+  });
+
+  it("kê khai tay 3 tháng → 3 khoản, tổng đúng bằng số tiền", async () => {
+    const rows = await createSplitExpense(db, acc, { propertyId: "VP", categoryId: "dn", incurredOn: "2026-11-02", amount: 1_000_000, description: "Wifi 3 tháng" }, ["2026-12", "2026-11", "2027-01"]);
+    expect(rows.map((e) => [e.month, e.amount])).toEqual([["2026-11", 333_334], ["2026-12", 333_333], ["2027-01", 333_333]]);
+    expect(rows.every((e) => e.approvalStatus === "PENDING" && e.propertyId === "VP")).toBe(true);
+    expect(rows[0].description).toBe("Wifi 3 tháng (phân bổ 1/3 của 1.000.000 ₫)");
+  });
+
+  it("một tháng giữ nguyên mô tả; tháng trùng hoặc trống thì báo lỗi", async () => {
+    const [e] = await createSplitExpense(db, acc, { propertyId: "VP", categoryId: "dn", incurredOn: "2026-11-02", amount: 50_000, description: "Ga" }, ["2026-11"]);
+    expect(e.description).toBe("Ga");
+    await expect(createSplitExpense(db, acc, { propertyId: "VP", categoryId: "dn", incurredOn: "2026-11-02", amount: 50_000, description: "x" }, ["2026-11", "2026-11"])).rejects.toThrow(/trùng/);
+    await expect(createSplitExpense(db, acc, { propertyId: "VP", categoryId: "dn", incurredOn: "2026-11-02", amount: 50_000, description: "x" }, [])).rejects.toThrow(/Chọn tháng/);
+  });
+
+  it("một tháng đã khóa sổ thì không tạo tháng nào", async () => {
+    await db.insert(schema.settlements).values({ investorId: "inv-a", month: "2026-08", status: "LOCKED" } as never);
+    const before = (await db.select().from(schema.expenses)).length;
+    await expect(createSplitExpense(db, acc, { propertyId: "VP", categoryId: "dn", incurredOn: "2026-08-02", amount: 300_000, description: "Bảo trì" }, ["2026-08", "2026-09", "2026-10"])).rejects.toThrow(/khóa sổ/);
+    expect((await db.select().from(schema.expenses)).length).toBe(before);
+  });
+
+  it("nhập file: một dòng chọn 3 tháng → 3 khoản", async () => {
+    const res = await commitExpenseImport(db, acc, [{ line: 9, propertyId: "DQ", categoryId: "vt", categoryName: "Vật tư", months: ["2026-11", "2026-12", "2027-01"], incurredOn: "2026-11-05", amount: 3_000_000, description: buildDescription({ item: "Amenities quý", recipient: "CTY VU XUAN PHUONG" }) }]);
+    expect(res.errors).toEqual([]);
+    expect(res.created).toHaveLength(3);
   });
 });

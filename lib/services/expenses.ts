@@ -13,6 +13,7 @@ import {
   allowedPropertyIds, assertPropertyAccess, badRequest, can, forbidden, notFound, requirePermission, type SessionUser,
 } from "../auth/access";
 import { isAnyInvestorLocked, isCommonFinalized, isPropertyMonthLocked } from "./settlement";
+import { allocationNote, splitAmount } from "../expenses/sheet";
 
 export type ExpenseRow = typeof expenses.$inferSelect;
 export type ApprovalStatus = ExpenseRow["approvalStatus"];
@@ -121,6 +122,28 @@ export async function createExpense(db: DB, user: SessionUser, i: ExpenseInput) 
     })
     .returning();
   return row;
+}
+
+/**
+ * Kê khai một khoản chi trải nhiều tháng hạch toán (vd tiền wifi trả trước 3 tháng): tổng chia đều,
+ * mỗi tháng một khoản (phần lẻ đồng dồn vào tháng đầu), mô tả ghi "phân bổ 1/3 của …".
+ * Tạo trong một giao dịch: một tháng lỗi (khóa sổ…) thì không tạo tháng nào.
+ */
+export async function createSplitExpense(db: DB, user: SessionUser, i: Omit<ExpenseInput, "month">, months: string[]) {
+  const list = [...new Set(months.map((m) => m.trim()).filter(Boolean))].sort();
+  if (!list.length) throw badRequest("Chọn tháng hạch toán");
+  if (list.length !== months.filter((m) => m.trim()).length) throw badRequest("Tháng hạch toán bị trùng");
+  if (list.length > 24) throw badRequest("Phân bổ tối đa 24 tháng");
+  if (list.length === 1) return [await createExpense(db, user, { ...i, month: list[0] })];
+  if (!Number.isSafeInteger(i.amount) || i.amount < list.length) throw badRequest("Số tiền phải là số nguyên VND, không nhỏ hơn số tháng phân bổ");
+  const parts = splitAmount(i.amount, list.length);
+  return db.transaction(async (tx) => {
+    const rows: ExpenseRow[] = [];
+    for (const [k, month] of list.entries()) {
+      rows.push(await createExpense(tx as unknown as DB, user, { ...i, month, amount: parts[k], description: allocationNote(i.description, k + 1, list.length, i.amount) }));
+    }
+    return rows;
+  });
 }
 
 /**

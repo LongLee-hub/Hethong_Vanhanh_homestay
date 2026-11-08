@@ -19,7 +19,7 @@ export default async function ImportExpenses() {
         <ExpenseTabs current="import" pending={pending.length} bank={can(user, "importStatement")} />
         <p className="sub">
           Tải bảng chi phí Excel đúng các cột <b>{SHEET_COLUMNS.join(" · ")}</b>. App đọc và cho xem trước; chọn dòng rồi kê khai —
-          các khoản ở trạng thái chờ duyệt và được gửi nhắc chủ đầu tư như kê khai tay.
+          khoản chi trải nhiều tháng thì bấm <b>+ Thêm tháng</b> ở cột Hạch toán, số tiền được chia đều. Các khoản ở trạng thái chờ duyệt và được gửi nhắc chủ đầu tư như kê khai tay.
         </p>
       </div>
       <ImportReview />

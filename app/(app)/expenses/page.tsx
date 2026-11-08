@@ -81,7 +81,7 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
         <section className="panel">
           <header><div><h2>Kê khai chi phí</h2><p>Gửi nhóm chat của chủ nhà để duyệt; chỉ ghi nhận sau khi chủ đầu tư duyệt và xác nhận đã chi.</p></div></header>
           <ActionForm action={declareExpenseAction} submit="Kê khai và gửi duyệt">
-            <ExpenseFields props={props} cats={cats} allowCommon={can(user, "declareCommon")} idPrefix="new" value={{ propertyId: props[0]?.id ?? null, categoryId: cats[0]?.id ?? "", amount: 0, month, incurredOn: D.todayVN(), description: "" }} />
+            <ExpenseFields props={props} cats={cats} allowCommon={can(user, "declareCommon")} idPrefix="new" multiMonth value={{ propertyId: props[0]?.id ?? null, categoryId: cats[0]?.id ?? "", amount: 0, month, incurredOn: D.todayVN(), description: "" }} />
             <PhotoInput name="receipt" label="Ảnh hóa đơn" />
           </ActionForm>
           <details className="fold" style={{ marginTop: 16 }}>

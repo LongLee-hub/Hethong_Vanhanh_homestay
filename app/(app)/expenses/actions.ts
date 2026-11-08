@@ -6,7 +6,7 @@ import { getDb } from "@/lib/db";
 import { badRequest } from "@/lib/auth/access";
 import { action, appBaseUrl, requireUser } from "@/lib/server";
 import { uploadPhoto } from "@/lib/storage";
-import { approveExpenses, createCategory, createExpense, deleteExpense, expenseDetail, rejectExpenses, updateExpense } from "@/lib/services/expenses";
+import { approveExpenses, createCategory, createSplitExpense, deleteExpense, expenseDetail, rejectExpenses, updateExpense } from "@/lib/services/expenses";
 import { notifyPendingExpenses } from "@/lib/services/expense-notify";
 import { importStatement, recordTransactions, setTransactionsIgnored, type RecordItem } from "@/lib/services/bank-statements";
 import { readStatementFile, readXlsxGrids } from "@/lib/bank/statement-parser";
@@ -50,12 +50,14 @@ export async function declareExpenseAction(_: State, f: FormData): Promise<State
   const r = await action(async () => {
     const file = photo(f, "receipt");
     const prop = s(f, "propertyId");
-    const e = await createExpense(getDb(), user, {
-      propertyId: prop === "__common" ? null : prop, categoryId: s(f, "categoryId"), month: s(f, "month"),
+    // Nhiều tháng hạch toán: chia đều, mỗi tháng một khoản (cùng ảnh hóa đơn)
+    const rows = await createSplitExpense(getDb(), user, {
+      propertyId: prop === "__common" ? null : prop, categoryId: s(f, "categoryId"),
       incurredOn: s(f, "incurredOn"), amount: money(f.get("amount")), description: s(f, "description"),
       receiptUrls: file ? [await uploadPhoto(file, "receipts")] : [], taskId: s(f, "taskId") || null,
-    });
-    info = e.approvalStatus === "APPROVED" ? "Đã ghi nhận" : `Đã kê khai, ${notifyText(await notify([e.id]))}`;
+    }, f.getAll("month").map(String));
+    const split = rows.length > 1 ? ` (chia ${rows.length} tháng)` : "";
+    info = rows.every((e) => e.approvalStatus === "APPROVED") ? `Đã ghi nhận${split}` : `Đã kê khai${split}, ${notifyText(await notify(rows.map((e) => e.id)))}`;
   });
   refresh();
   return r.ok ? { ...r, info } : r;
@@ -207,7 +209,7 @@ export async function commitImportAction(items: ImportItem[]): Promise<{ ok: boo
     out = await commitExpenseImport(getDb(), user, items);
   });
   if (!r.ok) return r;
-  let info = `Đã kê khai ${out.created.length} khoản`;
+  let info = `Đã kê khai ${items.length - (out.errors?.length ?? 0)} dòng (${out.created.length} khoản theo tháng)`;
   if (out.created.length) info += `, ${notifyText(await notify(out.created))}`;
   refresh();
   return { ok: true, info, errors: out.errors };

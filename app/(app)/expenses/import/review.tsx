@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import type { PreviewRow } from "@/lib/services/expense-import";
+import { MonthList } from "@/components/MonthsField";
 import { commitImportAction, previewImportAction } from "../actions";
 
 const vnd = (n: number) => n.toLocaleString("vi-VN") + " ₫";
@@ -13,6 +14,8 @@ export function ImportReview() {
   const [rows, setRows] = useState<PreviewRow[] | null>(null);
   const [fileName, setFileName] = useState("");
   const [checked, setChecked] = useState<Record<number, boolean>>({});
+  // Tháng hạch toán từng dòng; thêm tháng thì số tiền chia đều
+  const [months, setMonths] = useState<Record<number, string[]>>({});
   const [lineErrors, setLineErrors] = useState<Record<number, string>>({});
   const [done, setDone] = useState<{ count: number; months: string[] } | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -38,6 +41,7 @@ export function ImportReview() {
       }
       setRows(r.rows);
       setFileName(r.fileName ?? "");
+      setMonths(Object.fromEntries(r.rows.map((x) => [x.line, [x.month]])));
       // Mặc định chọn dòng hợp lệ; dòng có thể trùng để người dùng tự quyết
       setChecked(Object.fromEntries(r.rows.map((x) => [x.line, !x.errors.length && x.propertyId !== undefined && !x.duplicateOf && !x.warnings.some((w) => w.startsWith("Giống hệt"))])));
     });
@@ -45,9 +49,14 @@ export function ImportReview() {
 
   function commit() {
     if (!selected.length) return setMsg({ ok: false, text: "Chọn ít nhất một dòng" });
+    const badMonths = selected.filter((r) => { const m = months[r.line] ?? []; return !m.length || m.some((x) => !x) || new Set(m).size !== m.length || r.amount < m.length; });
+    if (badMonths.length) {
+      setLineErrors(Object.fromEntries(badMonths.map((r) => [r.line, "Tháng hạch toán trống hoặc bị trùng"])));
+      return setMsg({ ok: false, text: `${badMonths.length} dòng có tháng hạch toán chưa hợp lệ` });
+    }
     const items = selected.map((r) => ({
       line: r.line, propertyId: r.propertyId ?? null, categoryId: r.categoryId, categoryName: r.categoryName,
-      month: r.month, incurredOn: r.incurredOn, amount: r.amount, description: r.description,
+      months: months[r.line] ?? [r.month], incurredOn: r.incurredOn, amount: r.amount, description: r.description,
     }));
     start(async () => {
       const res = await commitImportAction(items);
@@ -56,7 +65,7 @@ export function ImportReview() {
       const ok = items.filter((i) => !errs[i.line]);
       setLineErrors(errs);
       setRows((rs) => (rs ?? []).filter((r) => !ok.some((i) => i.line === r.line)));
-      setDone({ count: ok.length, months: [...new Set(ok.map((i) => i.month))].sort() });
+      setDone({ count: ok.length, months: [...new Set(ok.flatMap((i) => i.months))].sort() });
       setMsg({ ok: !res.errors?.length, text: res.info + (res.errors?.length ? ` · ${res.errors.length} dòng lỗi, xem ở từng dòng` : "") });
     });
   }
@@ -87,7 +96,7 @@ export function ImportReview() {
 
       {done && done.count > 0 && (
         <div className="banner info">
-          <span>Đã kê khai <b>{done.count}</b> khoản, đang chờ chủ đầu tư duyệt.</span>
+          <span>Đã kê khai <b>{done.count}</b> dòng, đang chờ chủ đầu tư duyệt.</span>
           <span className="spacer" />
           {done.months.map((m) => <Link key={m} className="btn sm" href={`/expenses?month=${m}`}>Xem {mLabel(m)}</Link>)}
         </div>
@@ -129,7 +138,10 @@ export function ImportReview() {
                         <td>{r.categoryName || "—"}{r.newCategory && <> <span className="pill fc">Loại mới</span></>}</td>
                         <td>{r.propertyId === null ? <span className="muted">Chi phí chung (Unix)</span> : r.propertyName || "—"}</td>
                         <td className="n"><b>{r.amount ? vnd(r.amount) : "—"}</b></td>
-                        <td className="num">{mLabel(r.month)}</td>
+                        <td>{ok
+                          ? <MonthList idPrefix={`month-${r.line}`} label={`Tháng hạch toán dòng ${r.line}`} months={months[r.line] ?? [r.month]} amount={r.amount}
+                              onChange={(m) => setMonths((x) => ({ ...x, [r.line]: m }))} />
+                          : <span className="num">{mLabel(r.month)}</span>}</td>
                         <td style={{ minWidth: 200 }}>
                           {err && <div className="err small">{err}</div>}
                           {r.errors.map((e) => <div key={e} className="err small">{e}</div>)}

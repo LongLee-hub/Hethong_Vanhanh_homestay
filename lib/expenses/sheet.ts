@@ -159,3 +159,21 @@ export const nameKey = (s: string) => fold(s).replace(/[^a-z0-9 ]/g, " ").replac
 
 /** Ô Cơ sở ghi chi phí chung. */
 export const isCommonName = (s: string) => /^(chi phi )?chung\b|^unix$|^cp chung/.test(nameKey(s));
+
+/** Chia đều tổng tiền cho n tháng, số nguyên VND; phần lẻ dồn vào tháng đầu. */
+export function splitAmount(total: number, n: number): number[] {
+  const base = Math.floor(total / n);
+  return Array.from({ length: n }, (_, k) => (k === 0 ? total - base * (n - 1) : base));
+}
+
+/** Ghi phần phân bổ vào Khoản chi (giữ Người nhận, Ghi chú ở sau để xuất file vẫn tách đúng cột). */
+export function allocationNote(description: string, k: number, n: number, total: number): string {
+  const d = splitDescription(description);
+  return buildDescription({ ...d, item: `${d.item} (phân bổ ${k}/${n} của ${total.toLocaleString("vi-VN")} ₫)` });
+}
+
+/** Tháng kế tiếp của YYYY-MM. */
+export function nextMonth(m: string): string {
+  const [y, mo] = m.split("-").map(Number);
+  return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`;
+}
