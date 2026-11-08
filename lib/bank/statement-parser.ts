@@ -181,17 +181,16 @@ export function parseStatementGrid(grid: Cell[][]): ParsedStatement {
   };
 }
 
-/** Đọc file .xlsx (sheet đầu tiên có bảng giao dịch). */
-export async function readStatementFile(data: ArrayBuffer): Promise<ParsedStatement> {
+/** Đọc mọi sheet của file .xlsx thành bảng ô (công thức lấy kết quả, rich text nối chữ). */
+export async function readXlsxGrids(data: ArrayBuffer, loadError: string): Promise<Cell[][][]> {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   try {
     await wb.xlsx.load(data as never);
   } catch {
-    throw new Error("Không đọc được file. Tải lên file Excel (.xlsx) xuất từ ngân hàng; file .xls cũ thì mở bằng Excel và lưu lại dạng .xlsx.");
+    throw new Error(loadError);
   }
-  let lastErr: unknown = null;
-  for (const ws of wb.worksheets) {
+  return wb.worksheets.map((ws) => {
     const grid: Cell[][] = [];
     ws.eachRow({ includeEmpty: true }, (row, n) => {
       const vals: Cell[] = [];
@@ -209,6 +208,15 @@ export async function readStatementFile(data: ArrayBuffer): Promise<ParsedStatem
       grid[n - 1] = vals;
     });
     for (let i = 0; i < grid.length; i++) grid[i] ??= [];
+    return grid;
+  });
+}
+
+/** Đọc file .xlsx (sheet đầu tiên có bảng giao dịch). */
+export async function readStatementFile(data: ArrayBuffer): Promise<ParsedStatement> {
+  const grids = await readXlsxGrids(data, "Không đọc được file. Tải lên file Excel (.xlsx) xuất từ ngân hàng; file .xls cũ thì mở bằng Excel và lưu lại dạng .xlsx.");
+  let lastErr: unknown = null;
+  for (const grid of grids) {
     try {
       return parseStatementGrid(grid);
     } catch (e) {

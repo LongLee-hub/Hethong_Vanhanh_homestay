@@ -9,7 +9,9 @@ import { uploadPhoto } from "@/lib/storage";
 import { approveExpenses, createCategory, createExpense, deleteExpense, expenseDetail, rejectExpenses, updateExpense } from "@/lib/services/expenses";
 import { notifyPendingExpenses } from "@/lib/services/expense-notify";
 import { importStatement, recordTransactions, setTransactionsIgnored, type RecordItem } from "@/lib/services/bank-statements";
-import { readStatementFile } from "@/lib/bank/statement-parser";
+import { readStatementFile, readXlsxGrids } from "@/lib/bank/statement-parser";
+import { parseExpenseGrid } from "@/lib/expenses/sheet";
+import { commitExpenseImport, previewExpenseImport, type ImportItem, type MonthMode, type PreviewRow } from "@/lib/services/expense-import";
 
 type State = { ok: boolean; error?: string; info?: string } | null;
 const s = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
@@ -23,6 +25,7 @@ function refresh(id?: string) {
   revalidatePath("/expenses");
   revalidatePath("/expenses/pending");
   revalidatePath("/expenses/bank");
+  revalidatePath("/expenses/import");
   if (id) revalidatePath(`/expenses/${id}`);
 }
 
@@ -169,4 +172,43 @@ export async function ignoreTxnsAction(ids: string[], ignored: boolean, note?: s
   const r = await action(() => setTransactionsIgnored(getDb(), user, ids, ignored, note));
   revalidatePath("/expenses/bank");
   return r;
+}
+
+// ---------- Nhập file chi phí ----------
+
+/** Đọc file chi phí, trả bản xem trước (chưa ghi gì vào app). */
+export async function previewImportAction(f: FormData): Promise<{ ok: boolean; error?: string; rows?: PreviewRow[]; fileName?: string }> {
+  const user = await requireUser();
+  const file = f.get("file");
+  const mode: MonthMode = s(f, "monthMode") === "file" ? "file" : "paid";
+  let rows: PreviewRow[] = [];
+  const r = await action(async () => {
+    if (!(file instanceof File) || !file.size) throw badRequest("Chọn file chi phí (.xlsx)");
+    if (file.size > 10 * 1024 * 1024) throw badRequest("File quá lớn (tối đa 10 MB)");
+    let lastErr: unknown = null;
+    let parsed = null;
+    try {
+      for (const grid of await readXlsxGrids(await file.arrayBuffer(), "Không đọc được file. Tải lên file Excel (.xlsx); file Google Sheets thì chọn Tệp → Tải xuống → Microsoft Excel (.xlsx).")) {
+        try { parsed = parseExpenseGrid(grid); break; } catch (e) { lastErr = e; }
+      }
+    } catch (e) {
+      lastErr = e;
+    }
+    if (!parsed) throw badRequest(lastErr instanceof Error ? lastErr.message : "Không đọc được file");
+    rows = await previewExpenseImport(getDb(), user, parsed, mode);
+  });
+  return r.ok ? { ok: true, rows, fileName: file instanceof File ? file.name : "" } : r;
+}
+
+export async function commitImportAction(items: ImportItem[]): Promise<{ ok: boolean; error?: string; info?: string; errors?: { line: number; message: string }[] }> {
+  const user = await requireUser();
+  let out: Awaited<ReturnType<typeof commitExpenseImport>> = { created: [], errors: [] };
+  const r = await action(async () => {
+    out = await commitExpenseImport(getDb(), user, items);
+  });
+  if (!r.ok) return r;
+  let info = `Đã kê khai ${out.created.length} khoản`;
+  if (out.created.length) info += `, ${notifyText(await notify(out.created))}`;
+  refresh();
+  return { ok: true, info, errors: out.errors };
 }

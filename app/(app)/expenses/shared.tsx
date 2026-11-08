@@ -17,12 +17,13 @@ export function Receipts({ urls }: { urls: string[] }) {
   );
 }
 
-/** Thanh chuyển giữa các màn hình chi phí. */
-export function ExpenseTabs({ current, pending, bank, month }: { current: "list" | "pending" | "bank"; pending: number; bank: boolean; month?: string }) {
+/** Thanh chuyển giữa các màn hình chi phí. `bank`: Admin/Kế toán — thấy thêm Nhập từ file và Sao kê. */
+export function ExpenseTabs({ current, pending, bank, month }: { current: "list" | "pending" | "bank" | "import"; pending: number; bank: boolean; month?: string }) {
   return (
     <div className="chips" style={{ width: "100%" }}>
       <Link className="chip" aria-pressed={current === "list"} href={month ? `/expenses?month=${month}` : "/expenses"}>Theo tháng</Link>
       <Link className="chip" aria-pressed={current === "pending"} href="/expenses/pending">Chờ duyệt{pending ? ` (${pending})` : ""}</Link>
+      {bank && <Link className="chip" aria-pressed={current === "import"} href="/expenses/import">Nhập từ file</Link>}
       {bank && <Link className="chip" aria-pressed={current === "bank"} href="/expenses/bank">Sao kê ngân hàng</Link>}
     </div>
   );

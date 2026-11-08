@@ -116,6 +116,7 @@ export default async function Expenses({ searchParams }: { searchParams: Promise
           <div className="row">
             <button className="btn primary">Lọc</button>
             {filtered && <Link className="btn" href={`/expenses?month=${month}`}>Xóa lọc</Link>}
+            <a className="btn" href={`/expenses/export?${new URLSearchParams({ ...(ranged ? {} : { month }), ...Object.fromEntries(Object.entries(f).filter(([, v]) => v)) })}`} download>Tải Excel</a>
           </div>
         </form>
         {filtered && (
