@@ -10,7 +10,7 @@ import type { DB } from "../lib/db";
 import { allowedPropertyIds, assertPropertyAccess, type SessionUser } from "../lib/auth/access";
 import { saveManualBooking, upsertBooking } from "../lib/services/bookings";
 import { approveExpenses, createExpense, setCommonFinalized } from "../lib/services/expenses";
-import { commonCostBasis, getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } from "../lib/services/settlement";
+import { commonAllocation, commonCostBasis, getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } from "../lib/services/settlement";
 import { SYNC_FULL_MAX_ORDERS, SYNC_MAX_ORDERS, syncBookings } from "../lib/dayladau/sync";
 import { createRoom, listConnections, listingsForProperty, mapListingToRoom, saveDayladauAccount, saveInvestor, setPropertyAccount, testConnection, type InvestorInfo } from "../lib/dayladau/admin";
 import { liveOrdersForMonth } from "../lib/dayladau/live";
@@ -187,6 +187,12 @@ describe("Doanh thu, chi phí, quyết toán (giai đoạn 2)", () => {
       expect(sb.lines.find((l) => l.propertyId === "Z")!.commonCostAlloc).toBe(0);
       const sa = await getSettlement(db, invA, "inv-a", "2026-10");
       expect(sa.lines.reduce((t, l) => t + l.commonCostAlloc, 0)).toBe(b.total);
+      // Bảng kê chi phí đã duyệt: chỉ cơ sở Unix nhận phần chi phí chung, tổng phân bổ = tổng chi phí chung đã duyệt
+      const al = await commonAllocation(db, "2026-10");
+      expect(al.roomTotal).toBe(2);
+      expect(al.isUnix("Z")).toBe(false);
+      expect(al.shareOf("Z")).toBe(0);
+      expect(al.shareOf("X") + al.shareOf("Y")).toBe(al.total);
     } finally {
       await saveInvestor(db, admin, { ...emptyInfo, id: "inv-a", name: "NĐT A", sharesCommonCost: false });
     }

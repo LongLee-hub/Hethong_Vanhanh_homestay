@@ -169,6 +169,26 @@ export async function commonCostBasis(db: DB, month: string, locked = false): Pr
   return { total, rooms: n, perRoom, provisional: !finalized, basisMonth };
 }
 
+/**
+ * Phân bổ chi phí chung ĐÃ DUYỆT của đúng tháng hạch toán `month` cho từng cơ sở Unix (chia đều theo phòng đang hoạt động).
+ * Khác commonCostBasis: không tạm tính theo tháng trước — dùng cho bảng kê chi phí đã duyệt.
+ * `rooms`: số phòng đang hoạt động của từng cơ sở Unix; `isUnix`: cơ sở có chịu chi phí chung không.
+ */
+export async function commonAllocation(db: DB, month: string) {
+  const [roomRows, exps, finalized] = await Promise.all([
+    allRooms(db),
+    db.select({ amount: expenses.amount }).from(expenses).where(and(eq(expenses.approvalStatus, "APPROVED"), isNull(expenses.propertyId), eq(expenses.month, month))),
+    isCommonFinalized(db, month),
+  ]);
+  const rooms = Object.fromEntries(Object.entries(D.activeRoomCountByProperty(roomRows, month)).filter(([, n]) => n > 0));
+  const roomTotal = Object.values(rooms).reduce((s, n) => s + n, 0);
+  const total = exps.reduce((s, e) => s + e.amount, 0);
+  const perRoom = roomTotal ? total / roomTotal : 0;
+  const unix = new Set(roomRows.map((r) => r.propertyId));
+  const shareOf = (propertyId: string) => Math.round(perRoom * (rooms[propertyId] ?? 0));
+  return { total, roomTotal, perRoom, rooms, finalized, shareOf, isUnix: (propertyId: string) => unix.has(propertyId) };
+}
+
 /** Các khoản điều chỉnh được ghi vào tháng `month` cho các cơ sở của NĐT, kèm đơn gốc nếu có. */
 export async function adjustmentDetails(db: DB, user: SessionUser, investorId: string, month: string) {
   await assertInvestorAccess(db, user, investorId);

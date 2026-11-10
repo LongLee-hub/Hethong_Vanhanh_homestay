@@ -10,6 +10,7 @@ import { can } from "@/lib/auth/access";
 import { currentUser } from "@/lib/server";
 import { categories, expensesForMonth, expensesInRange, monthParam, visibleProperties } from "@/lib/queries";
 import { fold } from "@/lib/bank/statement-parser";
+import { commonAllocation } from "@/lib/services/settlement";
 import { SHEET_COLUMNS, monthLabel, splitDescription } from "@/lib/expenses/sheet";
 
 const MONEY = "#,##0";
@@ -69,8 +70,12 @@ export async function GET(req: Request) {
     const ranged = !!(f.from || f.to);
     const { direct, common } = ranged ? await expensesInRange(db, user, f.from || "2000-01-01", f.to || "2999-12-31") : await expensesForMonth(db, user, month);
     const words = fold(f.q).split(" ").filter(Boolean);
+    // Bảng kê đã duyệt: chi phí chung chỉ tính cho cơ sở Unix — thay các khoản chung bằng dòng phân bổ theo phòng cho từng
+    // cơ sở Unix; chỉ liệt kê từng khoản chung khi lọc "common" (và người xem có cơ sở Unix).
+    const alloc = approvedOnly ? await commonAllocation(db, month) : null;
+    const hasUnix = !!alloc && props.some((p) => alloc.isUnix(p.id));
     const rows = [...direct, ...common]
-      .filter((e) => (!approvedOnly || e.approvalStatus === "APPROVED") && (!f.prop || (f.prop === "common" ? e.propertyId === null : e.propertyId === f.prop)) && (!f.cat || e.categoryId === f.cat) && words.every((w) => fold(e.description).includes(w)))
+      .filter((e) => (!approvedOnly || (e.approvalStatus === "APPROVED" && (e.propertyId !== null || (f.prop === "common" && hasUnix)))) && (!f.prop || (f.prop === "common" ? e.propertyId === null : e.propertyId === f.prop)) && (!f.cat || e.categoryId === f.cat) && words.every((w) => fold(e.description).includes(w)))
       .sort((a, b) => approvedOnly
         ? (a.propertyId ? propName[a.propertyId] ?? "" : "\uffff").localeCompare(b.propertyId ? propName[b.propertyId] ?? "" : "\uffff", "vi") ||
           (catName[a.categoryId] ?? "").localeCompare(catName[b.categoryId] ?? "", "vi") || a.incurredOn.localeCompare(b.incurredOn)
@@ -89,9 +94,23 @@ export async function GET(req: Request) {
           : [STATUS[e.approvalStatus]]),
       ]);
     }
-    if (rows.length) {
+    let shares = 0;
+    if (alloc && f.prop !== "common" && !f.cat && !words.length) {
+      const lastDay = new Date(`${D.lastDay(month)}T00:00:00Z`);
+      for (const p of props.filter((p) => alloc.isUnix(p.id) && (!f.prop || p.id === f.prop))) {
+        const share = alloc.shareOf(p.id);
+        if (!share) continue;
+        shares += share;
+        ws.addRow([
+          lastDay, "Phân bổ chi phí chung (Unix)", "Chi phí chung (Unix)", p.name, "", share,
+          `${D.formatVND(alloc.total)} ÷ ${alloc.roomTotal} phòng Unix × ${alloc.rooms[p.id]} phòng${alloc.finalized ? "" : " (chưa hoàn tất kê khai)"}`,
+          monthLabel(month, D.lastDay(month)), "", "",
+        ]);
+      }
+    }
+    if (rows.length || shares) {
       const ok = rows.filter((e) => e.approvalStatus === "APPROVED");
-      const total = ws.addRow(["Tổng đã duyệt", `${ok.length}/${rows.length} khoản`, "", "", "", ok.reduce((s, e) => s + e.amount, 0)]);
+      const total = ws.addRow(["Tổng đã duyệt", approvedOnly ? `${ok.length} khoản${shares ? " + chi phí chung phân bổ" : ""}` : `${ok.length}/${rows.length} khoản`, "", "", "", ok.reduce((s, e) => s + e.amount, 0) + shares]);
       total.font = { bold: true };
       total.eachCell((c) => { c.border = { top: { style: "thin" } }; });
     }
