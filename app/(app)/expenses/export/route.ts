@@ -3,7 +3,9 @@
 // GET /expenses/export?template=1 — file mẫu trống để kế toán điền rồi tải lên ở "Nhập từ file".
 import { NextResponse } from "next/server";
 import * as D from "@/lib/domain";
+import { inArray } from "drizzle-orm";
 import { getDb } from "@/lib/db";
+import { users } from "@/lib/db/schema";
 import { can } from "@/lib/auth/access";
 import { currentUser } from "@/lib/server";
 import { categories, expensesForMonth, expensesInRange, monthParam, visibleProperties } from "@/lib/queries";
@@ -22,6 +24,8 @@ export async function GET(req: Request) {
   if (!can(user, "viewFinance")) return NextResponse.json({ error: "Không có quyền xem chi phí" }, { status: 403 });
   const sp = Object.fromEntries(new URL(req.url).searchParams);
   const template = sp.template === "1";
+  // approved=1: bảng kê chi phí đã duyệt theo tháng hạch toán (trang /expenses/approved) — thay cột Trạng thái bằng Người duyệt, Ngày duyệt
+  const approvedOnly = !template && sp.approved === "1";
   const db = getDb();
   const props = await visibleProperties(db, user);
   const propName = Object.fromEntries(props.map((p) => [p.id, p.name]));
@@ -30,7 +34,7 @@ export async function GET(req: Request) {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(template ? "Kê khai chi phí" : "Chi phí", { views: [{ state: "frozen", ySplit: 1 }] });
-  const header = template ? [...SHEET_COLUMNS] : [...SHEET_COLUMNS, "Trạng thái"];
+  const header = template ? [...SHEET_COLUMNS] : approvedOnly ? [...SHEET_COLUMNS, "Người duyệt", "Ngày duyệt"] : [...SHEET_COLUMNS, "Trạng thái"];
   const head = ws.addRow(header);
   head.height = 20;
   head.eachCell((c) => {
@@ -41,6 +45,7 @@ export async function GET(req: Request) {
   header.forEach((_, i) => { ws.getColumn(i + 1).width = WIDTHS[i]; });
   ws.getColumn(1).numFmt = DATE;
   ws.getColumn(6).numFmt = MONEY;
+  if (approvedOnly) { ws.getColumn(10).width = 14; ws.getColumn(10).numFmt = DATE; }
 
   let name: string;
   if (template) {
@@ -65,13 +70,23 @@ export async function GET(req: Request) {
     const { direct, common } = ranged ? await expensesInRange(db, user, f.from || "2000-01-01", f.to || "2999-12-31") : await expensesForMonth(db, user, month);
     const words = fold(f.q).split(" ").filter(Boolean);
     const rows = [...direct, ...common]
-      .filter((e) => (!f.prop || (f.prop === "common" ? e.propertyId === null : e.propertyId === f.prop)) && (!f.cat || e.categoryId === f.cat) && words.every((w) => fold(e.description).includes(w)))
-      .sort((a, b) => a.incurredOn.localeCompare(b.incurredOn) || a.createdAt.getTime() - b.createdAt.getTime());
+      .filter((e) => (!approvedOnly || e.approvalStatus === "APPROVED") && (!f.prop || (f.prop === "common" ? e.propertyId === null : e.propertyId === f.prop)) && (!f.cat || e.categoryId === f.cat) && words.every((w) => fold(e.description).includes(w)))
+      .sort((a, b) => approvedOnly
+        ? (a.propertyId ? propName[a.propertyId] ?? "" : "\uffff").localeCompare(b.propertyId ? propName[b.propertyId] ?? "" : "\uffff", "vi") ||
+          (catName[a.categoryId] ?? "").localeCompare(catName[b.categoryId] ?? "", "vi") || a.incurredOn.localeCompare(b.incurredOn)
+        : a.incurredOn.localeCompare(b.incurredOn) || a.createdAt.getTime() - b.createdAt.getTime());
+    const approverIds = [...new Set(rows.map((e) => e.approvedById).filter((v): v is string => !!v))];
+    const approverName: Record<string, string> = approvedOnly && approverIds.length
+      ? Object.fromEntries((await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, approverIds))).map((u) => [u.id, u.name]))
+      : {};
     for (const e of rows) {
       const d = splitDescription(e.description);
       ws.addRow([
         new Date(`${e.incurredOn}T00:00:00Z`), d.item, catName[e.categoryId] ?? "", e.propertyId ? propName[e.propertyId] ?? "" : "Chi phí chung",
-        d.recipient, e.amount, d.note, monthLabel(e.month, e.incurredOn), STATUS[e.approvalStatus],
+        d.recipient, e.amount, d.note, monthLabel(e.month, e.incurredOn),
+        ...(approvedOnly
+          ? [e.approvedById ? approverName[e.approvedById] ?? "" : "", e.approvedAt ? new Date(`${D.todayVN(e.approvedAt)}T00:00:00Z`) : ""]
+          : [STATUS[e.approvalStatus]]),
       ]);
     }
     if (rows.length) {
@@ -80,7 +95,7 @@ export async function GET(req: Request) {
       total.font = { bold: true };
       total.eachCell((c) => { c.border = { top: { style: "thin" } }; });
     }
-    name = `chi-phi_${ranged ? `${f.from || "dau"}_${f.to || "nay"}` : month}.xlsx`;
+    name = approvedOnly ? `chi-phi-da-duyet_${month}${f.prop ? `_${f.prop === "common" ? "chung" : f.prop}` : ""}.xlsx` : `chi-phi_${ranged ? `${f.from || "dau"}_${f.to || "nay"}` : month}.xlsx`;
   }
 
   const buf = await wb.xlsx.writeBuffer();

@@ -19,10 +19,11 @@ export function Receipts({ urls }: { urls: string[] }) {
 }
 
 /** Thanh chuyển giữa các màn hình chi phí. `bank`: Admin/Kế toán — thấy thêm Nhập từ file và Sao kê. */
-export function ExpenseTabs({ current, pending, bank, month }: { current: "list" | "pending" | "bank" | "import"; pending: number; bank: boolean; month?: string }) {
+export function ExpenseTabs({ current, pending, bank, month }: { current: "list" | "approved" | "pending" | "bank" | "import"; pending: number; bank: boolean; month?: string }) {
   return (
     <div className="chips" style={{ width: "100%" }}>
       <Link className="chip" aria-pressed={current === "list"} href={month ? `/expenses?month=${month}` : "/expenses"}>Theo tháng</Link>
+      <Link className="chip" aria-pressed={current === "approved"} href={month ? `/expenses/approved?month=${month}` : "/expenses/approved"}>Đã duyệt</Link>
       <Link className="chip" aria-pressed={current === "pending"} href="/expenses/pending">Chờ duyệt{pending ? ` (${pending})` : ""}</Link>
       {bank && <Link className="chip" aria-pressed={current === "import"} href="/expenses/import">Nhập từ file</Link>}
       {bank && <Link className="chip" aria-pressed={current === "bank"} href="/expenses/bank">Sao kê ngân hàng</Link>}
