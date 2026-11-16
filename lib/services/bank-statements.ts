@@ -7,7 +7,7 @@ import { bankStatements, bankTransactions, expenseCategories, expenses, properti
 import { allowedPropertyIds, badRequest, notFound, requirePermission, type SessionUser } from "../auth/access";
 import type { ParsedStatement } from "../bank/statement-parser";
 import { classifyTransaction, type Suggestion } from "../bank/classify";
-import { createExpense } from "./expenses";
+import { createSplitExpense } from "./expenses";
 
 export type BankTxnRow = typeof bankTransactions.$inferSelect;
 
@@ -67,6 +67,8 @@ export async function listStatements(db: DB, user: SessionUser) {
 export interface TxnView extends BankTxnRow {
   suggestion: Suggestion | null; // chỉ dòng chưa phân loại
   expense: { id: string; propertyId: string | null; categoryId: string; month: string; approvalStatus: string } | null;
+  /** Mọi khoản chi sinh từ dòng này (nhiều khoản khi chia nhiều tháng hạch toán), theo tháng. */
+  expenseParts: { id: string; month: string; amount: number; approvalStatus: string }[];
 }
 
 /**
@@ -93,7 +95,7 @@ export async function statementTransactions(db: DB, user: SessionUser, statement
       .limit(2000),
     rows.length
       ? db
-          .select({ id: expenses.id, txnId: expenses.bankTransactionId, propertyId: expenses.propertyId, categoryId: expenses.categoryId, month: expenses.month, approvalStatus: expenses.approvalStatus })
+          .select({ id: expenses.id, txnId: expenses.bankTransactionId, propertyId: expenses.propertyId, categoryId: expenses.categoryId, month: expenses.month, amount: expenses.amount, approvalStatus: expenses.approvalStatus })
           .from(expenses)
           .where(and(isNotNull(expenses.bankTransactionId), inArray(expenses.bankTransactionId, rows.map((r) => r.id))))
       : [],
@@ -101,11 +103,13 @@ export async function statementTransactions(db: DB, user: SessionUser, statement
   // Chỉ gợi ý cơ sở người dùng được phép ghi chi phí
   const ctx = { properties: props.filter((p) => allowed.has(p.id)).map((p) => ({ id: p.id, codes: p.codes })), categories: cats, history };
   return rows.map((r) => {
-    const e = linked.find((x) => x.txnId === r.id);
+    const parts = linked.filter((x) => x.txnId === r.id).sort((a, b) => a.month.localeCompare(b.month));
+    const e = parts[0];
     return {
       ...r,
       suggestion: r.status === "NEW" ? classifyTransaction(r, ctx) : null,
       expense: e ? { id: e.id, propertyId: e.propertyId, categoryId: e.categoryId, month: e.month, approvalStatus: e.approvalStatus } : null,
+      expenseParts: parts.map((x) => ({ id: x.id, month: x.month, amount: x.amount, approvalStatus: x.approvalStatus })),
     };
   });
 }
@@ -115,6 +119,8 @@ export interface RecordItem {
   propertyId: string | null; // null = chi phí chung
   categoryId: string;
   month: string;
+  /** Chia đều cho nhiều tháng hạch toán (vd trả trước wifi 3 tháng); có thì dùng thay `month`. */
+  months?: string[];
   description: string;
 }
 
@@ -141,11 +147,12 @@ export async function recordTransactions(db: DB, user: SessionUser, items: Recor
         .returning({ id: bankTransactions.id });
       if (!claimed) throw badRequest("Dòng này vừa được người khác xử lý");
       try {
-        const e = await createExpense(db, user, {
-          propertyId: it.propertyId, categoryId: it.categoryId, month: it.month, incurredOn: t.bookedOn, amount: t.debit,
+        const months = it.months?.length ? it.months : [it.month];
+        const rows = await createSplitExpense(db, user, {
+          propertyId: it.propertyId, categoryId: it.categoryId, incurredOn: t.bookedOn, amount: t.debit,
           description: it.description?.trim() || t.content, paymentStatus: "PAID", bankTransactionId: t.id,
-        });
-        created.push(e.id);
+        }, months);
+        created.push(...rows.map((e) => e.id));
       } catch (err) {
         await db.update(bankTransactions).set({ status: "NEW", handledById: null, handledAt: null }).where(eq(bankTransactions.id, t.id));
         throw err;

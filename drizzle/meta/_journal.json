@@ -141,6 +141,13 @@
       "when": 1794112049337,
       "tag": "0018_host_fee_tiers",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794815969990,
+      "tag": "0019_bank_txn_multi_month",
+      "breakpoints": true
     }
   ]
 }

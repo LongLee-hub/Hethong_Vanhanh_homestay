@@ -182,8 +182,16 @@ export async function deleteExpense(db: DB, user: SessionUser, id: string) {
   await assertCanSee(db, user, prev);
   assertCanModify(user, prev);
   await assertMonthOpen(db, prev.propertyId, prev.month);
+  // Dòng sao kê chia nhiều tháng hạch toán: xóa cả nhóm để dòng sao kê về "chưa phân loại" và ghi nhận lại cho đủ tiền
+  const siblings = prev.bankTransactionId
+    ? (await db.select().from(expenses).where(eq(expenses.bankTransactionId, prev.bankTransactionId))).filter((e) => e.id !== id)
+    : [];
+  for (const e of siblings) {
+    assertCanModify(user, e);
+    await assertMonthOpen(db, e.propertyId, e.month);
+  }
   await db.transaction(async (tx) => {
-    await tx.delete(expenses).where(eq(expenses.id, id));
+    await tx.delete(expenses).where(prev.bankTransactionId ? eq(expenses.bankTransactionId, prev.bankTransactionId) : eq(expenses.id, id));
     // Ghi nhận từ sao kê: trả dòng sao kê về "chưa phân loại" để ghi nhận lại
     if (prev.bankTransactionId) {
       await tx.update(bankTransactions).set({ status: "NEW", handledById: null, handledAt: null }).where(eq(bankTransactions.id, prev.bankTransactionId));
@@ -267,12 +275,16 @@ export async function expenseDetail(db: DB, user: SessionUser, id: string) {
   const [cat] = await db.select({ name: expenseCategories.name }).from(expenseCategories).where(eq(expenseCategories.id, e.categoryId)).limit(1);
   const [prop] = e.propertyId ? await db.select({ name: properties.name, investorId: properties.investorId }).from(properties).where(eq(properties.id, e.propertyId)).limit(1) : [];
   const [txn] = e.bankTransactionId ? await db.select().from(bankTransactions).where(eq(bankTransactions.id, e.bankTransactionId)).limit(1) : [];
+  // Các khoản cùng dòng sao kê (chia nhiều tháng hạch toán) — xóa một khoản là xóa cả nhóm
+  const bankParts = e.bankTransactionId
+    ? await db.select({ id: expenses.id, month: expenses.month, amount: expenses.amount }).from(expenses).where(eq(expenses.bankTransactionId, e.bankTransactionId)).orderBy(asc(expenses.month))
+    : [];
   let canApprove = false;
   if (e.approvalStatus === "PENDING" && can(user, "approveExpense")) {
     canApprove = await assertCanApprove(db, user, e).then(() => true, () => false);
   }
   return {
-    ...e, categoryName: cat?.name ?? "", propertyName: prop?.name ?? "Chi phí chung", bankTxn: txn ?? null, canApprove,
+    ...e, categoryName: cat?.name ?? "", propertyName: prop?.name ?? "Chi phí chung", bankTxn: txn ?? null, bankParts, canApprove,
     canModify: can(user, "editExpense") && (user.role === "ADMIN" || e.approvalStatus !== "APPROVED"),
   };
 }

@@ -80,7 +80,14 @@ export default async function ExpensePage({ params }: { params: Promise<{ id: st
             <div className="kv"><span>Hóa đơn</span><Receipts urls={e.receiptUrls} /></div>
             {e.bankTxn && (
               <div className="banner info" style={{ margin: 0 }}>
-                <span>Sao kê {D.formatDateVN(e.bankTxn.bookedOn)} · bút toán <b>{e.bankTxn.ref}</b><br />{e.bankTxn.counterparty} — {e.bankTxn.content}</span>
+                <span>
+                  Sao kê {D.formatDateVN(e.bankTxn.bookedOn)} · bút toán <b>{e.bankTxn.ref}</b><br />{e.bankTxn.counterparty} — {e.bankTxn.content}
+                  {e.bankParts.length > 1 && (
+                    <><br />Chia {e.bankParts.length} tháng hạch toán: {e.bankParts.map((p, i) => (
+                      <span key={p.id}>{i ? ", " : ""}{p.id === e.id ? <b>T{Number(p.month.slice(5))}/{p.month.slice(0, 4)}</b> : <Link href={`/expenses/${p.id}`}>T{Number(p.month.slice(5))}/{p.month.slice(0, 4)}</Link>} ({vnd(p.amount)})</span>
+                    ))}</>
+                  )}
+                </span>
               </div>
             )}
           </div>
@@ -107,7 +114,9 @@ export default async function ExpensePage({ params }: { params: Promise<{ id: st
                 <PhotoInput name="receipt" label="Thêm ảnh hóa đơn" />
               </ActionForm>
               <div className="danger-zone">
-                <ActionForm action={deleteExpenseAction} submit="Xóa khoản chi" submitClass="btn danger" className="row" confirmText={`Xóa khoản chi ${vnd(e.amount)} "${e.description}"?${e.bankTransactionId ? " Dòng sao kê sẽ trở lại chưa phân loại." : ""}`}>
+                <ActionForm action={deleteExpenseAction} submit={e.bankParts.length > 1 ? `Xóa cả ${e.bankParts.length} tháng` : "Xóa khoản chi"} submitClass="btn danger" className="row" confirmText={e.bankParts.length > 1
+                  ? `Khoản này chia ${e.bankParts.length} tháng hạch toán từ một dòng sao kê. Xóa cả ${e.bankParts.length} khoản (tổng ${vnd(e.bankParts.reduce((s, p) => s + p.amount, 0))})? Dòng sao kê sẽ trở lại chưa phân loại.`
+                  : `Xóa khoản chi ${vnd(e.amount)} "${e.description}"?${e.bankTransactionId ? " Dòng sao kê sẽ trở lại chưa phân loại." : ""}`}>
                   <input type="hidden" name="id" value={e.id} />
                   <input type="hidden" name="back" value={`/expenses?month=${e.month}`} />
                 </ActionForm>

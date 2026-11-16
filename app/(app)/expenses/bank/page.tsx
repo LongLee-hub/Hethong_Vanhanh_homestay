@@ -29,7 +29,7 @@ export default async function Bank({ searchParams }: { searchParams: Promise<Rec
       <div className="topbar">
         <h1>Sao kê ngân hàng</h1>
         <ExpenseTabs current="bank" pending={pending.length} bank />
-        <p className="sub">Tải sao kê Excel, chọn cơ sở – loại – tháng cho từng khoản tiền ra rồi ghi nhận. Khoản ghi nhận được đánh dấu đã chi và gửi chủ đầu tư duyệt như kê khai tay.</p>
+        <p className="sub">Tải sao kê Excel, chọn cơ sở – loại – tháng hạch toán cho từng khoản tiền ra rồi ghi nhận. Khoản trả trước nhiều tháng bấm "+ Thêm tháng" để chia đều. Khoản ghi nhận được đánh dấu đã chi và gửi chủ đầu tư duyệt như kê khai tay.</p>
       </div>
 
       {sp.added !== undefined && (
@@ -79,7 +79,7 @@ export default async function Bank({ searchParams }: { searchParams: Promise<Rec
           txns={txns.map((t) => ({
             id: t.id, ref: t.ref, bookedOn: t.bookedOn, debit: t.debit, credit: t.credit, counterparty: t.counterparty, content: t.content, status: t.status, note: t.note,
             suggestion: t.suggestion ? { propertyId: t.suggestion.propertyId, categoryId: t.suggestion.categoryId ?? null, month: t.suggestion.month, description: t.suggestion.description, hints: t.suggestion.hints, confident: t.suggestion.confident } : null,
-            expense: t.expense,
+            expense: t.expense, expenseParts: t.expenseParts,
           }))}
           props={props.map((p) => ({ id: p.id, name: p.name }))}
           cats={cats.map((c) => ({ id: c.id, name: c.name }))}

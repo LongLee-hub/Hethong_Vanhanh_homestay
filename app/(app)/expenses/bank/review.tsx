@@ -2,6 +2,7 @@
 // Bảng phân loại sao kê: mỗi khoản tiền ra chọn cơ sở, loại, tháng, mô tả (đã gợi ý sẵn) rồi ghi nhận hàng loạt.
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
+import { MonthList } from "@/components/MonthsField";
 import { ignoreTxnsAction, recordTxnsAction } from "../actions";
 
 type Txn = {
@@ -9,9 +10,11 @@ type Txn = {
   status: "NEW" | "RECORDED" | "IGNORED" | "INCOME"; note: string | null;
   suggestion: { propertyId: string | null | undefined; categoryId: string | null; month: string; description: string; hints: string[]; confident: boolean } | null;
   expense: { id: string; propertyId: string | null; categoryId: string; month: string; approvalStatus: string } | null;
+  expenseParts?: { id: string; month: string; amount: number; approvalStatus: string }[];
 };
 type Opt = { id: string; name: string };
-type Draft = { property: string; category: string; month: string; description: string; checked: boolean };
+/** months: tháng hạch toán; nhiều tháng thì số tiền chia đều (phần lẻ dồn vào tháng đầu). */
+type Draft = { property: string; category: string; months: string[]; description: string; checked: boolean };
 
 const COMMON = "__common";
 const vnd = (n: number) => n.toLocaleString("vi-VN") + " ₫";
@@ -26,13 +29,13 @@ export function StatementReview({ txns, props, cats, allowCommon }: { txns: Txn[
         const s = t.suggestion;
         const property = s?.propertyId === undefined ? "" : s.propertyId === null ? (allowCommon ? COMMON : "") : s.propertyId;
         const category = s?.categoryId ?? "";
-        return [t.id, { property, category, month: s?.month ?? t.bookedOn.slice(0, 7), description: s?.description ?? t.content, checked: !!property && !!category && !!s?.confident }];
+        return [t.id, { property, category, months: [s?.month ?? t.bookedOn.slice(0, 7)], description: s?.description ?? t.content, checked: !!property && !!category && !!s?.confident }];
       }),
     ),
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [bulk, setBulk] = useState({ property: "", category: "" });
+  const [bulk, setBulk] = useState({ property: "", category: "", month: "" });
   const [ignoreNote, setIgnoreNote] = useState("");
   const [pending, start] = useTransition();
 
@@ -46,13 +49,22 @@ export function StatementReview({ txns, props, cats, allowCommon }: { txns: Txn[
   function record() {
     const missing = selected.filter((t) => !drafts[t.id].property || !drafts[t.id].category);
     if (!selected.length) return setMsg({ ok: false, text: "Chọn ít nhất một dòng" });
+    const badMonths = selected.filter((t) => {
+      const m = drafts[t.id].months;
+      return m.some((x) => !/^\d{4}-\d{2}$/.test(x)) || new Set(m).size !== m.length;
+    });
+    if (badMonths.length) {
+      setErrors(Object.fromEntries(badMonths.map((t) => [t.id, "Tháng hạch toán bị trống hoặc trùng"])));
+      return setMsg({ ok: false, text: `${badMonths.length} dòng có tháng hạch toán bị trống hoặc trùng` });
+    }
     if (missing.length) {
       setErrors(Object.fromEntries(missing.map((t) => [t.id, "Chọn cơ sở và loại"])));
       return setMsg({ ok: false, text: `${missing.length} dòng chưa chọn cơ sở hoặc loại` });
     }
     const items = selected.map((t) => {
       const d = drafts[t.id];
-      return { txnId: t.id, propertyId: d.property === COMMON ? null : d.property, categoryId: d.category, month: d.month, description: d.description };
+      const months = [...d.months].sort();
+      return { txnId: t.id, propertyId: d.property === COMMON ? null : d.property, categoryId: d.category, month: months[0], months, description: d.description };
     });
     start(async () => {
       const r = await recordTxnsAction(items);
@@ -97,15 +109,16 @@ export function StatementReview({ txns, props, cats, allowCommon }: { txns: Txn[
             <span className="spacer" />
             <select aria-label="Cơ sở cho các dòng đã chọn" value={bulk.property} onChange={(e) => setBulk({ ...bulk, property: e.target.value })}>{propOptions}</select>
             <select aria-label="Loại cho các dòng đã chọn" value={bulk.category} onChange={(e) => setBulk({ ...bulk, category: e.target.value })}>{catOptions}</select>
-            <button type="button" className="btn sm" disabled={!bulk.property && !bulk.category}
-              onClick={() => selected.forEach((t) => set(t.id, { ...(bulk.property ? { property: bulk.property } : {}), ...(bulk.category ? { category: bulk.category } : {}) }))}>
+            <input type="month" aria-label="Tháng hạch toán cho các dòng đã chọn" title="Tháng hạch toán" value={bulk.month} onChange={(e) => setBulk({ ...bulk, month: e.target.value })} />
+            <button type="button" className="btn sm" disabled={!bulk.property && !bulk.category && !bulk.month}
+              onClick={() => selected.forEach((t) => set(t.id, { ...(bulk.property ? { property: bulk.property } : {}), ...(bulk.category ? { category: bulk.category } : {}), ...(bulk.month ? { months: [bulk.month] } : {}) }))}>
               Áp dụng cho dòng đã chọn
             </button>
           </div>
           <div className="tbl-wrap"><table className="statement">
             <thead><tr>
               <th><input type="checkbox" aria-label="Chọn tất cả" checked={allChecked} onChange={(e) => live.forEach((t) => set(t.id, { checked: e.target.checked }))} /></th>
-              <th>Ngày</th><th className="n">Tiền ra</th><th>Nội dung chuyển khoản</th><th>Cơ sở</th><th>Loại</th><th>Tháng</th><th>Mô tả chi phí</th>
+              <th>Ngày</th><th className="n">Tiền ra</th><th>Nội dung chuyển khoản</th><th>Cơ sở</th><th>Loại</th><th>Tháng hạch toán</th><th>Mô tả chi phí</th>
             </tr></thead>
             <tbody>
               {live.map((t) => {
@@ -122,7 +135,7 @@ export function StatementReview({ txns, props, cats, allowCommon }: { txns: Txn[
                     </td>
                     <td><select aria-label="Cơ sở" value={d.property} onChange={(e) => set(t.id, { property: e.target.value, checked: true })}>{propOptions}</select></td>
                     <td><select aria-label="Loại" value={d.category} onChange={(e) => set(t.id, { category: e.target.value, checked: true })}>{catOptions}</select></td>
-                    <td><input type="month" aria-label="Tháng hạch toán" value={d.month} onChange={(e) => set(t.id, { month: e.target.value })} /></td>
+                    <td><MonthList months={d.months} onChange={(months) => set(t.id, { months })} amount={t.debit} idPrefix={`m-${t.id}`} /></td>
                     <td><input type="text" aria-label="Mô tả" value={d.description} onChange={(e) => set(t.id, { description: e.target.value })} /></td>
                   </tr>
                 );
@@ -152,7 +165,8 @@ export function StatementReview({ txns, props, cats, allowCommon }: { txns: Txn[
                     <td className="num">{dmy(t.bookedOn)}</td><td className="n">{vnd(t.debit)}</td>
                     <td className="small">{t.content}<div className="hint">{t.counterparty}</div></td>
                     <td>
-                      {t.status === "RECORDED" && t.expense && <><Link href={`/expenses/${t.expense.id}`}>Chi phí</Link> {a && <span className={`pill ${a[1]}`}>{a[0]}</span>}</>}
+                      {t.status === "RECORDED" && t.expense && <><Link href={`/expenses/${t.expense.id}`}>Chi phí</Link> {a && <span className={`pill ${a[1]}`}>{a[0]}</span>}
+                        {(t.expenseParts?.length ?? 0) > 1 && <div className="hint">Chia {t.expenseParts!.length} tháng: {t.expenseParts!.map((p) => `T${Number(p.month.slice(5))}/${p.month.slice(0, 4)}`).join(", ")}</div>}</>}
                       {t.status === "IGNORED" && <><span className="pill">Không phải chi phí</span>{t.note && <span className="hint"> {t.note}</span>} <button type="button" className="btn sm" disabled={pending} onClick={() => ignore([t.id], false)}>Phân loại lại</button></>}
                     </td>
                   </tr>

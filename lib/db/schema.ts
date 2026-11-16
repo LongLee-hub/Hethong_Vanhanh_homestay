@@ -263,10 +263,10 @@ export const expenses = pgTable(
     rejectReason: text("reject_reason"),
     updatedById: text("updated_by_id"),
     updatedAt: ts("updated_at"),
-    /** Dòng sao kê sinh ra khoản chi này (nếu ghi nhận từ sao kê). */
-    bankTransactionId: text("bank_transaction_id").unique(),
+    /** Dòng sao kê sinh ra khoản chi này (nếu ghi nhận từ sao kê). Một dòng chia nhiều tháng hạch toán → nhiều khoản cùng id. */
+    bankTransactionId: text("bank_transaction_id"),
   },
-  (t) => [index("expenses_month_prop").on(t.month, t.propertyId), index("expenses_approval").on(t.approvalStatus)],
+  (t) => [index("expenses_month_prop").on(t.month, t.propertyId), index("expenses_approval").on(t.approvalStatus), index("expenses_bank_txn").on(t.bankTransactionId)],
 );
 
 // ---------- Sao kê ngân hàng ----------

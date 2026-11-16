@@ -244,6 +244,26 @@ describe("Sao kê ngân hàng", () => {
     expect((await statementTransactions(db, acc, null)).map((t) => t.ref).sort()).toEqual(["FT1", "FT3", "FT4"]);
   });
 
+  it("một dòng sao kê chia nhiều tháng hạch toán; xóa một tháng là xóa cả nhóm", async () => {
+    const ft1 = (await statementTransactions(db, acc, null)).find((t) => t.ref === "FT1")!;
+    const res = await recordTransactions(db, acc, [
+      { txnId: ft1.id, propertyId: "X", categoryId: "supplies", month: "2026-10", months: ["2026-11", "2026-10", "2026-12"], description: "Wifi 3 tháng" },
+    ]);
+    expect(res.errors).toEqual([]);
+    expect(res.created).toHaveLength(3);
+    const parts = (await statementTransactions(db, acc, ft1.statementId)).find((t) => t.id === ft1.id)!.expenseParts;
+    expect(parts.map((p) => p.month)).toEqual(["2026-10", "2026-11", "2026-12"]);
+    expect(parts.reduce((s, p) => s + p.amount, 0)).toBe(403_000);
+    expect(parts[0].amount).toBe(134_334); // phần lẻ dồn vào tháng đầu
+    const mid = await expenseDetail(db, acc, parts[1].id);
+    expect(mid.bankParts).toHaveLength(3);
+    expect(mid.description).toMatch(/2\/3/);
+
+    await deleteExpense(db, acc, parts[1].id);
+    expect(await db.select().from(schema.expenses).where(eq(schema.expenses.bankTransactionId, ft1.id))).toHaveLength(0);
+    expect((await statementTransactions(db, acc, null)).some((t) => t.id === ft1.id)).toBe(true);
+  });
+
   it("đánh dấu không phải chi phí", async () => {
     const ft4 = (await statementTransactions(db, acc, null)).find((t) => t.ref === "FT4")!;
     expect(await setTransactionsIgnored(db, acc, [ft4.id], true, "Chuyển nhầm, đã hoàn")).toBe(1);
