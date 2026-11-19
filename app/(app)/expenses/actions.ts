@@ -39,8 +39,10 @@ async function notify(ids: string[], resubmit = false) {
   }
 }
 
-const notifyText = (r: { sent: number; skipped: number; failed?: number }) =>
-  r.failed
+const notifyText = (r: { sent: number; skipped: number; failed?: number; disabled?: boolean }) =>
+  r.disabled
+    ? "chờ chủ đầu tư duyệt trong app"
+    : r.failed
     ? `gửi Lark lỗi ${r.failed} nhóm (kiểm tra webhook)${r.sent ? `, đã nhắn ${r.sent} nhóm` : ""}`
     : r.sent ? `đã nhắn ${r.sent} nhóm Lark để chủ nhà duyệt` : "chưa cài nhóm Lark nên chưa gửi nhắc duyệt";
 

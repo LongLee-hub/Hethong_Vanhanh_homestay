@@ -5,7 +5,7 @@
 import { eq, inArray } from "drizzle-orm";
 import type { DB } from "../db";
 import { expenseCategories, expenses, investors, properties, users } from "../db/schema";
-import { getSetting, postLark, type LarkSender } from "./settings";
+import { getSetting, larkEnabled, postLark, type LarkSender } from "./settings";
 
 const vnd = (n: number) => n.toLocaleString("vi-VN") + " ₫";
 const dmy = (d: string) => d.split("-").reverse().join("/");
@@ -14,6 +14,7 @@ export interface NotifyResult {
   sent: number; // số tin đã gửi
   skipped: number; // số khoản không có nhóm nào để gửi
   failed?: number; // số tin gửi lỗi (webhook sai, mạng)
+  disabled?: boolean; // Lark đang tắt (LARK_ENABLED), không gửi gì
 }
 
 /** Webhook Lark hợp lệ: chỉ nhận địa chỉ bot của Lark/Feishu để không gửi dữ liệu chi phí ra nơi khác. */
@@ -31,6 +32,7 @@ export function isLarkWebhook(url: string): boolean {
  * `baseUrl`: địa chỉ web app (vd https://app.loci.vn) để dựng link duyệt.
  */
 export async function notifyPendingExpenses(db: DB, ids: string[], baseUrl: string, opts: { resubmit?: boolean; send?: LarkSender } = {}): Promise<NotifyResult> {
+  if (!opts.send && !larkEnabled()) return { sent: 0, skipped: 0, disabled: true };
   const send = opts.send ?? postLark;
   if (!ids.length) return { sent: 0, skipped: 0 };
   const rows = await db

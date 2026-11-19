@@ -169,7 +169,7 @@ export default async function Reviews({ searchParams }: { searchParams: Promise<
 
           {low.length > 0 && (
             <section className="panel" style={{ marginBottom: 24 }}>
-              <header><div><h2>Cần xử lý</h2><p>Đánh giá dưới {LOW_REVIEW_SCORE}★ trong {monthLow}. Mỗi đánh giá thấp mới tự tạo việc "Xử lý đánh giá" cho quản lý cơ sở, hạn 2 ngày, và báo Lark.</p></div></header>
+              <header><div><h2>Cần xử lý</h2><p>Đánh giá dưới {LOW_REVIEW_SCORE}★ trong {monthLow}. Mỗi đánh giá thấp mới tự tạo việc "Xử lý đánh giá" cho quản lý cơ sở, hạn 2 ngày.</p></div></header>
               <div className={css.list}>{low.map((r) => <ReviewCard key={r.id} r={r} />)}</div>
             </section>
           )}

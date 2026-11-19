@@ -34,13 +34,15 @@ const ALERT_LABEL: Record<string, [string, string]> = {
 };
 const ALERTS_SHOWN = 8;
 
-export function DayladauPanel({ investors, properties, runs, bookingCount, alerts, defaultFeePct }: {
+export function DayladauPanel({ investors, properties, runs, bookingCount, alerts, defaultFeePct, larkEnabled = false }: {
   investors: Investor[];
   properties: Prop[];
   runs: Run[];
   bookingCount: Record<string, number>; // theo tài khoản Dayladau
   alerts: Alert[];
   defaultFeePct: number;
+  /** Lark đang tắt thì ẩn ô webhook (vẫn gửi lại giá trị cũ để lưu không xóa mất). */
+  larkEnabled?: boolean;
 }) {
   const [editing, setEditing] = useState<string | "new" | null>(investors.length ? null : "new");
   const [allAlerts, setAllAlerts] = useState(false);
@@ -58,12 +60,12 @@ export function DayladauPanel({ investors, properties, runs, bookingCount, alert
       )}
       {investors.map((inv) =>
         editing === inv.id ? (
-          <InvestorForm key={inv.id} inv={inv} defaultFeePct={defaultFeePct} onDone={() => setEditing(null)} />
+          <InvestorForm key={inv.id} inv={inv} defaultFeePct={defaultFeePct} larkEnabled={larkEnabled} onDone={() => setEditing(null)} />
         ) : (
           <InvestorCard key={inv.id} inv={inv} props={properties.filter((p) => p.investorId === inv.id)} bookingCount={bookingCount} defaultFeePct={defaultFeePct} onEdit={() => setEditing(inv.id)} />
         ),
       )}
-      {editing === "new" ? <InvestorForm defaultFeePct={defaultFeePct} onDone={() => setEditing(null)} /> : <div><button className="btn primary" onClick={() => setEditing("new")}>+ Thêm nhà đầu tư</button></div>}
+      {editing === "new" ? <InvestorForm defaultFeePct={defaultFeePct} larkEnabled={larkEnabled} onDone={() => setEditing(null)} /> : <div><button className="btn primary" onClick={() => setEditing("new")}>+ Thêm nhà đầu tư</button></div>}
       <section className="panel">
         <header><h2>Nhật ký đồng bộ</h2></header>
         <div className="tbl-wrap"><table>
@@ -198,7 +200,7 @@ function FeeField({ inv, defaultFeePct, id }: { inv?: Investor; defaultFeePct: n
   );
 }
 
-function InvestorForm({ inv, defaultFeePct, onDone }: { inv?: Investor; defaultFeePct: number; onDone: () => void }) {
+function InvestorForm({ inv, defaultFeePct, larkEnabled, onDone }: { inv?: Investor; defaultFeePct: number; larkEnabled: boolean; onDone: () => void }) {
   const f = (k: string) => `inv-${k}-${inv?.id ?? "new"}`;
   return (
     <section className="panel">
@@ -233,9 +235,13 @@ function InvestorForm({ inv, defaultFeePct, onDone }: { inv?: Investor; defaultF
         <label className="field full"><span>Link hợp đồng</span><input type="text" inputMode="url" name="contractUrl" id={f("cUrl")} defaultValue={inv?.contractUrl ?? ""} placeholder="https://…" /></label>
         <label className="field full"><span>Ghi chú</span><textarea name="note" id={f("note")} defaultValue={inv?.note ?? ""} /></label>
 
-        <h3 className="full sub-title">Nhóm chat duyệt chi phí</h3>
-        <label className="field full"><span>Webhook bot Lark của nhóm có chủ nhà</span><input type="text" inputMode="url" name="larkWebhookUrl" id={f("lark")} defaultValue={inv?.larkWebhookUrl ?? ""} placeholder="https://open.larksuite.com/open-apis/bot/v2/hook/…" /></label>
-        <p className="hint full">Trong nhóm chat Lark có chủ nhà: Cài đặt nhóm → Bot → Thêm bot → Custom Bot, copy webhook dán vào đây. Kế toán kê khai chi phí, nhóm sẽ nhận tin kèm nút mở trang duyệt. Để trống thì gửi nhóm Lark chung.</p>
+        {larkEnabled ? (
+          <>
+            <h3 className="full sub-title">Nhóm chat duyệt chi phí</h3>
+            <label className="field full"><span>Webhook bot Lark của nhóm có chủ nhà</span><input type="text" inputMode="url" name="larkWebhookUrl" id={f("lark")} defaultValue={inv?.larkWebhookUrl ?? ""} placeholder="https://open.larksuite.com/open-apis/bot/v2/hook/…" /></label>
+            <p className="hint full">Trong nhóm chat Lark có chủ nhà: Cài đặt nhóm → Bot → Thêm bot → Custom Bot, copy webhook dán vào đây. Kế toán kê khai chi phí, nhóm sẽ nhận tin kèm nút mở trang duyệt. Để trống thì gửi nhóm Lark chung.</p>
+          </>
+        ) : <input type="hidden" name="larkWebhookUrl" value={inv?.larkWebhookUrl ?? ""} />}
         <p className="hint full">Tài khoản Dayladau (host ID, access token) thêm riêng cho từng cơ sở ở thẻ nhà đầu tư sau khi lưu.</p>
       </ActionForm>
     </section>

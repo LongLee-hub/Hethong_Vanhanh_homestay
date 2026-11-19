@@ -70,10 +70,17 @@ export function decryptSecret(payload: string): string {
 }
 
 // ---- Lark ----
+/**
+ * Gửi tin Lark đang TẮT toàn bộ (cảnh báo hệ thống, lỗi đồng bộ, đánh giá thấp, nhắc duyệt chi phí, dọn phòng).
+ * Bật lại: đặt biến môi trường LARK_ENABLED=1. Code gửi và webhook đã lưu giữ nguyên.
+ */
+export const larkEnabled = () => process.env.LARK_ENABLED === "1";
+
 export type LarkSender = (url: string, body: unknown) => Promise<boolean | void>;
 
 /** Gửi tới webhook bot Lark. Lỗi mạng chỉ ghi log, không làm hỏng thao tác chính. */
 export const postLark: LarkSender = async (url, body) => {
+  if (!larkEnabled()) return false;
   try {
     const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const text = await r.text().catch(() => "");
@@ -91,6 +98,7 @@ export const postLark: LarkSender = async (url, body) => {
 };
 
 export async function notifyLark(db: DB, text: string) {
+  if (!larkEnabled()) return;
   const url = await getSetting(db, "larkWebhookUrl");
   if (!url) return;
   await postLark(url, { msg_type: "text", content: { text } });

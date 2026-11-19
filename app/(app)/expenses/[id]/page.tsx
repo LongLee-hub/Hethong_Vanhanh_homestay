@@ -9,6 +9,7 @@ import { categories, visibleProperties } from "@/lib/queries";
 import { expenseDetail } from "@/lib/services/expenses";
 import { vnd } from "@/components/MonthNav";
 import { ActionForm } from "@/components/ActionForm";
+import { larkEnabled } from "@/lib/services/settings";
 import { PhotoInput } from "@/components/PhotoInput";
 import { approveAction, deleteExpenseAction, rejectAction, remindAction, updateExpenseAction } from "../actions";
 import { ApprovalPill, ExpenseFields, Receipts } from "../shared";
@@ -96,8 +97,8 @@ export default async function ExpensePage({ params }: { params: Promise<{ id: st
         <div className="stack">
           {e.approvalStatus === "PENDING" && !e.canApprove && (
             <section className="panel">
-              <header><div><h2>Đang chờ chủ đầu tư duyệt</h2><p>{e.propertyId ? "Chủ đầu tư nhận tin trong nhóm Lark của cơ sở." : "Chi phí chung do Admin duyệt."}</p></div></header>
-              {e.canModify && (
+              <header><div><h2>Đang chờ chủ đầu tư duyệt</h2><p>{e.propertyId ? (larkEnabled() ? "Chủ đầu tư nhận tin trong nhóm Lark của cơ sở." : "Chủ đầu tư duyệt ở trang Chờ duyệt trong app.") : "Chi phí chung do Admin duyệt."}</p></div></header>
+              {e.canModify && larkEnabled() && (
                 <ActionForm action={remindAction} submit="Nhắc lại trong nhóm Lark" submitClass="btn" className="row">
                   <input type="hidden" name="ids" value={e.id} />
                 </ActionForm>

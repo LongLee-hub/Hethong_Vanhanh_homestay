@@ -7,6 +7,7 @@ import { listConnections } from "@/lib/dayladau/admin";
 import { feePct } from "@/lib/services/settings";
 import { NoAccess } from "@/components/NoAccess";
 import { DayladauPanel } from "./panel";
+import { larkEnabled } from "@/lib/services/settings";
 
 // Cảnh báo do đồng bộ sinh ra; SYNC_FAILED không tự đóng nên chỉ lấy vài ngày gần đây
 const SYNC_ALERTS = ["UNMAPPED_ROOM", "BOOKING_MISSING", "LOCKED_MONTH_CHANGED"];
@@ -48,6 +49,7 @@ export default async function DayladauPage() {
       <DayladauPanel
         investors={investors.map((i) => ({ ...i, accounts: i.accounts.map((a) => ({ ...a, lastSyncedAt: a.lastSyncedAt?.toISOString() ?? null })) }))}
         defaultFeePct={defaultFeePct}
+        larkEnabled={larkEnabled()}
         properties={props.map((p) => ({ id: p.id, name: p.name, investorId: p.investorId, accountId: p.dayladauAccountId, rooms: rs.filter((r) => r.propertyId === p.id).map((r) => ({ id: r.id, name: r.name, listingKey: r.dayladauRoomId })) }))}
         runs={runs.map((r) => ({ id: r.id, startedAt: r.startedAt.toISOString(), finishedAt: r.finishedAt?.toISOString() ?? null, created: r.created, updated: r.updated, skipped: r.skipped, errors: (r.errors as { message: string }[] | null) ?? [] }))}
         bookingCount={bookingCount}

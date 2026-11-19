@@ -11,6 +11,7 @@ import { pendingExpenses } from "@/lib/services/expenses";
 import { vnd } from "@/components/MonthNav";
 import { ExpenseTabs, Receipts } from "../shared";
 import { PendingActions } from "./pending-actions";
+import { larkEnabled } from "@/lib/services/settings";
 
 export default async function Pending({ searchParams }: { searchParams: Promise<Record<string, string>> }) {
   const user = await requireUser();
@@ -30,7 +31,8 @@ export default async function Pending({ searchParams }: { searchParams: Promise<
   // NĐT không duyệt chi phí chung
   const approver = can(user, "approveExpense");
   const mayApprove = (propertyId: string | null) => approver && (propertyId !== null || user.role === "ADMIN");
-  const mode = approver ? "approve" : can(user, "editExpense") ? "remind" : null;
+  // "Nhắc lại" chỉ gửi qua Lark: Lark tắt thì không hiện
+  const mode = approver ? "approve" : can(user, "editExpense") && larkEnabled() ? "remind" : null;
   const total = rows.reduce((s, e) => s + e.amount, 0);
   return (
     <>

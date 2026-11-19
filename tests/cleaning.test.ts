@@ -225,3 +225,23 @@ describe("Việc dọn tồn cũ không thành Dọn ngay", () => {
     expect(sent.some((t) => t.includes("P501"))).toBe(false);
   });
 });
+
+describe("Lark đang tắt", () => {
+  it("không gửi nhắc duyệt chi phí, không gọi webhook khi chưa đặt LARK_ENABLED=1", async () => {
+    const { notifyPendingExpenses } = await import("../lib/services/expense-notify");
+    const { notifyLark, postLark, larkEnabled } = await import("../lib/services/settings");
+    expect(larkEnabled()).toBe(false);
+    const realFetch = globalThis.fetch;
+    let called = 0;
+    globalThis.fetch = (async () => { called++; return new Response("{}"); }) as typeof fetch;
+    try {
+      await db.insert(schema.settings).values({ key: "larkWebhookUrl", value: "https://open.larksuite.com/open-apis/bot/v2/hook/x" }).onConflictDoNothing();
+      expect(await notifyPendingExpenses(db, ["x"], "https://www.baocaodau.com")).toEqual({ sent: 0, skipped: 0, disabled: true });
+      await notifyLark(db, "thử");
+      expect(await postLark("https://open.larksuite.com/open-apis/bot/v2/hook/x", {})).toBe(false);
+      expect(called).toBe(0);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
