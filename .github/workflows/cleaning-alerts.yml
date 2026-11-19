@@ -5,7 +5,8 @@
 name: Cảnh báo dọn phòng
 
 on:
-  # Tạm tắt lịch 5 phút trong lúc sửa lỗi việc dọn tồn cũ bị tính là "Dọn ngay"
+  schedule:
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions: {}
