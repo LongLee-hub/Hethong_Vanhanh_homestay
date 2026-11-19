@@ -1,0 +1,30 @@
+# Cảnh báo dọn phòng 5 phút/lần: phòng sắp có khách mà chưa dọn xong → đẩy thông báo tới điện thoại
+# nhân viên dọn dẹp chính của cơ sở; sự cố mở quá 24 giờ → nhắc lại. Vercel gói Hobby chỉ cho cron 1 lần/ngày
+# nên lịch dày chạy ở đây. GitHub có thể chạy trễ vài phút so với lịch khi máy chủ của họ bận.
+# Cần secret CLEANING_CRON_TOKEN (Settings → Secrets and variables → Actions), trùng giá trị biến cùng tên trên Vercel.
+name: Cảnh báo dọn phòng
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: cleaning-alerts
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Gọi /api/cron/cleaning
+        env:
+          TOKEN: ${{ secrets.CLEANING_CRON_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then echo "Chưa đặt secret CLEANING_CRON_TOKEN"; exit 1; fi
+          curl --fail-with-body -sS -m 90 --retry 2 --retry-delay 10 \
+            -H "Authorization: Bearer $TOKEN" \
+            https://www.baocaodau.com/api/cron/cleaning
