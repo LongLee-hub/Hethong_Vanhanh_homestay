@@ -206,3 +206,22 @@ describe("Thông báo tới tài khoản nhân viên dọn dẹp", () => {
     expect(sent.at(-1)).toMatch(/quan\|Bạn được giao xử lý sự cố/);
   });
 });
+
+describe("Việc dọn tồn cũ không thành Dọn ngay", () => {
+  it("việc mở từ nhiều ngày trước không hiện và không cảnh báo; khách đến quá 2 giờ thì không đẩy nữa", async () => {
+    const s = schema;
+    await db.insert(s.rooms).values({ id: "P501", propertyId: "KT", name: "P501", openedOn: "2026-01-01" });
+    await db.insert(s.bookings).values({ id: "old-in", source: "DAYLADAU", propertyId: "KT", roomId: "P501", channel: "Direct", guestName: "Khách nay", checkIn: today, checkOut: D.addDays(today, 1), checkInAt: vn("10:00"), checkOutAt: vn("12:00", D.addDays(today, 1)), status: "CONFIRMED" });
+    // Việc dọn từ 40 ngày trước chưa ai đóng
+    const old = await createTask(db, mgr, { propertyId: "KT", roomId: "P501", type: "CLEANING", title: "Dọn P501 cũ", assigneeId: quan.id, dueAt: vn("12:00", D.addDays(today, -40)), recurrenceRule: null });
+    expect((await cleaningBoard(db, mgr, "KT", today, vn("09:50"))).some((r) => r.taskId === old.id)).toBe(false);
+    // Việc của hôm qua còn dở thì vẫn mang sang và cảnh báo khi khách sắp đến
+    const y = await createTask(db, mgr, { propertyId: "KT", roomId: "P501", type: "CLEANING", title: "Dọn P501 hôm qua", assigneeId: quan.id, dueAt: vn("12:00", D.addDays(today, -1)), recurrenceRule: null });
+    const room = (await cleaningBoard(db, mgr, "KT", today, vn("09:50"))).find((r) => r.taskId === y.id);
+    expect(room?.state).toBe("urgent");
+    // 3 giờ sau khi khách đến: vẫn hiện "Dọn ngay" trên bảng nhưng không đẩy thông báo mới
+    const sent: string[] = [];
+    await computeCleaningAlerts(db, vn("13:05"), async (_t, p) => { sent.push(JSON.parse(p).title); });
+    expect(sent.some((t) => t.includes("P501"))).toBe(false);
+  });
+});

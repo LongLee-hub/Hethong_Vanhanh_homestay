@@ -48,6 +48,13 @@ function nextArrival(list: Arrival[], roomId: string | null, after: Date, exclud
   return list.find((a) => a.roomId === roomId && a.id !== excludeBookingId && a.at >= after && a.at < end) ?? null;
 }
 
+/** Việc dọn còn dở được mang sang bảng phòng tối đa chừng này ngày. */
+export const BACKLOG_DAYS = 1;
+/** Khách đã đến quá chừng này phút mà việc vẫn mở thì không đẩy thông báo nữa (đã muộn, quản lý xem ở Daily report). */
+export const NOTIFY_LATE_LIMIT_MIN = 120;
+/** Mỗi lần chạy gửi Lark tối đa chừng này dòng; nhiều hơn thì tóm tắt. */
+const LARK_MAX_LINES = 10;
+
 /** Phút trước giờ khách đến thì phòng chưa dọn xong bị báo "Dọn ngay". */
 export async function urgentMinutes(db: DB) {
   const n = Number(await getSetting(db, "cleaning.urgentMinutes"));
@@ -128,10 +135,17 @@ async function boardFor(db: DB, propertyIds: string[], date: string, now: Date):
   if (!propertyIds.length) return out;
   const dayStart = at(date, "00:00");
   const dayEnd = at(D.addDays(date, 1), "00:00");
-  const list = await db.select().from(tasks).where(and(
+  // Việc dở dang chỉ mang sang từ hôm trước (BACKLOG_DAYS). Việc tồn lâu hơn là dữ liệu cũ chưa ai đóng
+  // (trước khi dùng app dọn phòng), không phải phòng đang chờ dọn: không hiện, không cảnh báo.
+  const backlogFrom = at(D.addDays(date, -BACKLOG_DAYS), "00:00");
+  const rows = await db.select().from(tasks).where(and(
     inArray(tasks.propertyId, propertyIds), eq(tasks.type, "CLEANING"), ne(tasks.status, "CANCELLED"),
-    or(and(gte(tasks.dueAt, dayStart), lt(tasks.dueAt, dayEnd)), and(lt(tasks.dueAt, dayStart), inArray(tasks.status, ["TODO", "IN_PROGRESS"]))),
+    or(and(gte(tasks.dueAt, dayStart), lt(tasks.dueAt, dayEnd)), and(gte(tasks.dueAt, backlogFrom), lt(tasks.dueAt, dayStart), inArray(tasks.status, ["TODO", "IN_PROGRESS"]))),
   ));
+  // Một phòng có nhiều việc còn mở (hôm qua chưa đóng, hôm nay lại có việc mới): chỉ giữ việc mới nhất
+  const latestOpen = new Map<string, Date>();
+  for (const t of rows) if (t.roomId && t.status !== "DONE" && t.dueAt > (latestOpen.get(t.roomId) ?? new Date(0))) latestOpen.set(t.roomId, t.dueAt);
+  const list = rows.filter((t) => t.status === "DONE" || !t.roomId || latestOpen.get(t.roomId)?.getTime() === t.dueAt.getTime());
   if (!list.length) return out;
   const h = await stayHours(db);
   const bookingIds = [...new Set(list.map((t) => t.bookingId).filter(Boolean) as string[])];
@@ -606,7 +620,8 @@ export async function computeCleaningAlerts(db: DB, now = new Date(), sender: Pu
   const props = await db.select({ id: properties.id, name: properties.name }).from(properties).where(eq(properties.active, true));
   const board = await boardFor(db, props.map((p) => p.id), today, now);
   for (const p of props) {
-    const urgentRooms = (board.get(p.id) ?? []).filter((x) => x.state === "urgent");
+    // Chỉ cảnh báo phòng còn kịp xử lý: khách sắp đến, hoặc mới đến chưa quá NOTIFY_LATE_LIMIT_MIN phút
+    const urgentRooms = (board.get(p.id) ?? []).filter((x) => x.state === "urgent" && (x.minutesToCheckIn ?? 0) >= -NOTIFY_LATE_LIMIT_MIN);
     const main = urgentRooms.length ? await mainHousekeepers(db, p.id) : [];
     for (const r of urgentRooms) {
       const key = `CLEANING_URGENT:${r.taskId}:${today}`;
@@ -633,6 +648,10 @@ export async function computeCleaningAlerts(db: DB, now = new Date(), sender: Pu
   await db.update(alerts).set({ resolvedAt: new Date() }).where(and(
     inArray(alerts.type, CLEANING_ALERT_TYPES), isNull(alerts.resolvedAt), active.size ? notInArray(alerts.key, [...active]) : undefined,
   ));
-  if (fresh.length) await notifyLark(db, `LOCI – cảnh báo dọn phòng:\n• ${fresh.join("\n• ")}`).catch(() => {});
+  if (fresh.length) {
+    const lines = fresh.slice(0, LARK_MAX_LINES);
+    const more = fresh.length > LARK_MAX_LINES ? `\n… và ${fresh.length - LARK_MAX_LINES} cảnh báo khác, xem Daily report` : "";
+    await notifyLark(db, `LOCI – cảnh báo dọn phòng:\n• ${lines.join("\n• ")}${more}`).catch(() => {});
+  }
   return { opened: fresh.length, active: active.size, notified, pushed };
 }

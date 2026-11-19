@@ -169,6 +169,13 @@
       "when": 1795084535424,
       "tag": "0022_push_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795085590461,
+      "tag": "0023_cleanup_cleaning_alerts",
+      "breakpoints": true
     }
   ]
 }
