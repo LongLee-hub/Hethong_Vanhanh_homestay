@@ -4,6 +4,7 @@ import * as D from "../domain";
 import type { DB } from "../db";
 import { alerts, bookingNights, properties, rooms, tasks } from "../db/schema";
 import { notifyLark } from "./settings";
+import { computeCleaningAlerts } from "./cleaning";
 
 export async function computeAlerts(db: DB, today = D.todayVN()) {
   const month = D.monthOf(today);
@@ -50,5 +51,7 @@ export async function computeAlerts(db: DB, today = D.todayVN()) {
     .where(and(inArray(alerts.type, managed), isNull(alerts.resolvedAt), active.size ? notInArray(alerts.key, [...active]) : undefined));
 
   if (fresh.length) await notifyLark(db, `LOCI – cảnh báo mới:\n• ${fresh.join("\n• ")}`);
-  return { opened: fresh.length, active: active.size };
+  // Cảnh báo dọn phòng (phòng sắp có khách chưa dọn, sự cố để lâu) tự quản lý danh sách của mình
+  const cleaning = await computeCleaningAlerts(db).catch((e: Error) => ({ error: e.message }));
+  return { opened: fresh.length, active: active.size, cleaning };
 }

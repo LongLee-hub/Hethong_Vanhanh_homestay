@@ -93,13 +93,17 @@ describe("tính lương", () => {
 });
 
 describe("chấm công theo ca", () => {
-  it("buồng phòng phải có ảnh; mỗi ca mỗi ngày một lần; chỉ cơ sở được giao", async () => {
+  it("buồng phòng phải có ảnh; mỗi ca mỗi ngày một lần; cơ sở khác thì tính ca hỗ trợ", async () => {
     await expect(clockIn(db, hk2, { propertyId: "KT", shift: "MORNING" })).rejects.toThrow(/Chụp ảnh/);
-    await expect(clockIn(db, hk2, { propertyId: "VP", shift: "MORNING", photoUrl: "loci-photos/attendance/x.jpg" })).rejects.toThrow();
+    await expect(clockIn(db, hk2, { propertyId: "KHONG-CO", shift: "MORNING", photoUrl: "loci-photos/attendance/x.jpg" })).rejects.toMatchObject({ status: 404 });
+    // Sang cơ sở không được giao: vào được, luôn ghi là ca hỗ trợ
+    const sup = await clockIn(db, hk2, { propertyId: "VP", shift: "EVENING", photoUrl: "loci-photos/attendance/x.jpg" });
+    expect(sup.support).toBe(true);
     const row = await clockIn(db, hk2, { propertyId: "KT", shift: "MORNING", photoUrl: "loci-photos/attendance/a.jpg", lat: 21.0012, lng: 105.8201, accuracyM: 12.4 });
-    expect(row).toMatchObject({ shift: "MORNING", date: D.todayVN(), lat: 21.0012, lng: 105.8201, accuracyM: 12 });
+    expect(row).toMatchObject({ shift: "MORNING", date: D.todayVN(), lat: 21.0012, lng: 105.8201, accuracyM: 12, support: false });
     await expect(clockIn(db, hk2, { propertyId: "KT", shift: "MORNING", photoUrl: "loci-photos/attendance/b.jpg" })).rejects.toThrow(/đã vào ca/);
     await clockIn(db, hk2, { propertyId: "KT", shift: "OVERTIME", photoUrl: "loci-photos/attendance/c.jpg" });
+    await clockOut(db, hk2);
     await clockOut(db, hk2);
     await clockOut(db, hk2);
     await expect(clockOut(db, hk2)).rejects.toThrow(/Không có ca/);

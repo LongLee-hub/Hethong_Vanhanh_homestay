@@ -1,6 +1,6 @@
-import { inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, notInArray } from "drizzle-orm";
 import * as D from "@/lib/domain";
-import { users } from "@/lib/db/schema";
+import { properties, users } from "@/lib/db/schema";
 import { getDb } from "@/lib/db";
 import { can } from "@/lib/auth/access";
 import { NoAccess } from "@/components/NoAccess";
@@ -29,6 +29,11 @@ export default async function Attendance({ searchParams }: { searchParams: Promi
   const ids = [...new Set(rows.map((r) => r.userId))];
   const names = Object.fromEntries((ids.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, ids)) : []).map((u) => [u.id, u.name]));
   const today = D.todayVN();
+  // Buồng phòng vào ca hỗ trợ được ở cơ sở khác đang hoạt động (sang dọn giúp)
+  const others = user.role === "HOUSEKEEPER"
+    ? await db.select({ id: properties.id, name: properties.name, address: properties.address }).from(properties)
+      .where(and(eq(properties.active, true), props.length ? notInArray(properties.id, props.map((p) => p.id)) : undefined)).orderBy(asc(properties.name))
+    : [];
   const mineToday = rows.filter((r) => r.userId === user.id && r.date === today).sort((a, b) => a.checkInAt.getTime() - b.checkInAt.getTime());
   const open = mineToday.find((r) => !r.checkOutAt);
   const freeShifts = SHIFTS.filter((s) => !mineToday.some((r) => r.shift === s));
@@ -46,7 +51,7 @@ export default async function Attendance({ searchParams }: { searchParams: Promi
           <header>
             <div>
               <h2>{user.name}, {D.formatDateVN(today)}</h2>
-              <p>{mineToday.length ? mineToday.map((r) => `${SHIFT_LABEL[r.shift]} vào ${hm(r.checkInAt)}${r.checkOutAt ? `, ra ${hm(r.checkOutAt)}` : ""}`).join(". ") : "Hôm nay chưa vào ca nào."}</p>
+              <p>{mineToday.length ? mineToday.map((r) => `${SHIFT_LABEL[r.shift]}${r.support ? " (hỗ trợ)" : ""} vào ${hm(r.checkInAt)}${r.checkOutAt ? `, ra ${hm(r.checkOutAt)}` : ""}`).join(". ") : "Hôm nay chưa vào ca nào."}</p>
             </div>
             {open ? <span className="pill fc">Đang trong {SHIFT_LABEL[open.shift].toLowerCase()}</span> : <span className="pill">Chưa vào ca</span>}
           </header>
@@ -56,14 +61,24 @@ export default async function Attendance({ searchParams }: { searchParams: Promi
               <input type="hidden" name="action" value="out" />
               <input type="hidden" name="attendanceId" value={open.id} />
             </ActionForm>
-          ) : !props.length ? (
+          ) : !props.length && !others.length ? (
             <p className="small muted">Bạn chưa được giao cơ sở nào. Nhờ admin giao cơ sở ở trang Tài khoản.</p>
           ) : freeShifts.length ? (
             <ActionForm action={clockAction} submit="Vào ca" okText="Đã vào ca">
               <input type="hidden" name="action" value="in" />
+              {user.role === "HOUSEKEEPER" && (
+                <fieldset className="full clean-cats">
+                  <legend>Loại ca</legend>
+                  <label className="chip"><input type="radio" name="kind" value="MAIN" defaultChecked className="sr-only" />Ca chính: cơ sở mình phụ trách</label>
+                  <label className="chip"><input type="radio" name="kind" value="SUPPORT" className="sr-only" />Ca hỗ trợ: sang dọn giúp</label>
+                </fieldset>
+              )}
               <CameraStamp
                 userName={user.name}
-                properties={props.map((p) => ({ id: p.id, name: p.name, address: p.address }))}
+                properties={[
+                  ...props.map((p) => ({ id: p.id, name: p.name, address: p.address })),
+                  ...others.map((p) => ({ id: p.id, name: `${p.name} (hỗ trợ)`, address: p.address })),
+                ]}
                 shifts={freeShifts.map((s) => ({ value: s, label: SHIFT_LABEL[s], hint: SHIFT_HINT[s] }))}
               />
             </ActionForm>
@@ -96,8 +111,8 @@ export default async function Attendance({ searchParams }: { searchParams: Promi
               <tr key={r.id}>
                 <td className="num">{D.formatDateVN(r.date)}</td>
                 <td>{names[r.userId] ?? "—"}</td>
-                <td>{props.find((p) => p.id === r.propertyId)?.name}</td>
-                <td>{SHIFT_LABEL[r.shift]}</td>
+                <td>{props.find((p) => p.id === r.propertyId)?.name ?? others.find((p) => p.id === r.propertyId)?.name}</td>
+                <td>{SHIFT_LABEL[r.shift]}{r.support ? <span className="pill warn" style={{ marginLeft: 6 }}>Hỗ trợ</span> : null}</td>
                 <td className="num">{hm(r.checkInAt)}</td>
                 <td className="num">{hm(r.checkOutAt)}</td>
                 <td>{r.photoUrl ? <a href={photoHref(r.photoUrl)} target="_blank" rel="noreferrer">Xem ảnh</a> : <span className="muted">—</span>}</td>

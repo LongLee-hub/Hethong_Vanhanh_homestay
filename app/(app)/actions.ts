@@ -115,10 +115,11 @@ export async function clockAction(_: State, f: FormData): Promise<State> {
     // Buồng phòng bắt buộc có ảnh; service kiểm tra lại, ở đây chặn sớm để khỏi tải ảnh vô ích khi thiếu
     if (user.role === "HOUSEKEEPER" && !file) throw badRequest("Chụp ảnh tại cơ sở để vào ca");
     await clockIn(db, user, {
-      propertyId: String(f.get("propertyId")), shift, photoUrl: file ? await uploadPhoto(file, "attendance") : undefined,
+      propertyId: String(f.get("propertyId")), shift, support: f.get("kind") === "SUPPORT", photoUrl: file ? await uploadPhoto(file, "attendance") : undefined,
       lat: coord("lat"), lng: coord("lng"), accuracyM: coord("accuracy"),
     });
   });
   revalidatePath("/attendance");
+  revalidatePath("/don-dep");
   return r;
 }

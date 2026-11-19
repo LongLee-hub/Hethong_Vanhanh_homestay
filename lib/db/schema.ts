@@ -418,6 +418,8 @@ export const tasks = pgTable(
     priority: priorityEnum("priority").notNull().default("MEDIUM"),
     status: taskStatusEnum("status").notNull().default("TODO"),
     completedAt: ts("completed_at"),
+    /** Người bấm hoàn thành (có thể là người ca hỗ trợ, khác người được giao). */
+    completedById: text("completed_by_id"),
     photoUrls: text("photo_urls").array().notNull().default(sql`'{}'::text[]`),
     recurrenceRule: text("recurrence_rule"),
     templateId: text("template_id"),
@@ -434,8 +436,29 @@ export const checklistTemplates = pgTable("checklist_templates", {
 export const checklistResults = pgTable("checklist_results", {
   id: id(),
   taskId: text("task_id").notNull().unique().references(() => tasks.id, { onDelete: "cascade" }),
-  results: jsonb("results").notNull(), // [{ item, done, note }]
+  // [{ item, done, note, needPhoto, photo }]: needPhoto = mục bắt buộc chụp ảnh, photo = ảnh đã chụp cho mục đó
+  results: jsonb("results").notNull(),
 });
+
+/** Sự cố cơ sở vật chất do nhân viên báo (thiếu chìa khoá, thiếu đồ, hỏng thiết bị…). Mở cho tới khi quản lý đóng. */
+export const facilityIssues = pgTable(
+  "facility_issues",
+  {
+    id: id(),
+    propertyId: text("property_id").notNull().references(() => properties.id),
+    roomId: text("room_id"),
+    category: text("category").notNull(), // KEY, SUPPLY, BROKEN, OTHER
+    description: text("description").notNull(),
+    photoUrl: text("photo_url"),
+    reportedById: text("reported_by_id").notNull().references(() => users.id),
+    reportedAt: ts("reported_at").notNull().defaultNow(),
+    assigneeId: text("assignee_id").references(() => users.id),
+    resolvedAt: ts("resolved_at"),
+    resolvedById: text("resolved_by_id"),
+    resolutionNote: text("resolution_note"),
+  },
+  (t) => [index("facility_issues_prop_open").on(t.propertyId, t.resolvedAt)],
+);
 
 /** Ca làm của buồng phòng: sáng, tối tính công theo lương tháng; tăng ca tính theo lần. */
 export const shiftEnum = pgEnum("attendance_shift", ["MORNING", "EVENING", "OVERTIME"]);
@@ -448,6 +471,8 @@ export const attendance = pgTable(
     propertyId: text("property_id").notNull(),
     date: day("date").notNull(),
     shift: shiftEnum("shift").notNull().default("MORNING"),
+    /** Ca hỗ trợ: sang dọn cơ sở khác (hoặc cơ sở của mình nhưng không phải người phụ trách chính). */
+    support: boolean("support").notNull().default(false),
     checkInAt: ts("check_in_at").notNull(),
     checkOutAt: ts("check_out_at"),
     /** Ảnh vào ca đã in ngày giờ, cơ sở, tọa độ lên ảnh (components/CameraStamp.tsx). */

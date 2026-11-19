@@ -313,13 +313,19 @@ describe("Đồng bộ Dayladau (giả lập API)", () => {
 });
 
 describe("Công việc (giai đoạn 4)", () => {
-  it("dọn phòng: cần checklist đủ và ảnh trước khi hoàn thành; buồng phòng chỉ làm việc của mình", async () => {
+  it("dọn phòng: cần tick đủ và ảnh riêng cho từng mục bắt buộc trước khi hoàn thành", async () => {
     const t = await createTask(db, mgr, { propertyId: "X", roomId: "X1", type: "CLEANING", title: "Dọn P101", assigneeId: hk.id, dueAt: new Date("2026-09-30T07:00:00Z"), recurrenceRule: null });
-    await expect(setTaskStatus(db, hk, t.id, "DONE")).rejects.toThrow(/ảnh/);
+    await expect(setTaskStatus(db, hk, t.id, "DONE")).rejects.toThrow(/ảnh bắt buộc/);
+    // Một ảnh nghiệm thu chung không thay được ảnh của từng mục
     await addTaskPhoto(db, hk, t.id, "https://img/1.jpg");
-    await expect(setTaskStatus(db, hk, t.id, "DONE")).rejects.toThrow(/checklist/);
     const [cl] = await db.select().from(schema.checklistResults).where(eq(schema.checklistResults.taskId, t.id));
     await updateChecklist(db, hk, t.id, (cl.results as { item: string }[]).map((r) => ({ item: r.item, done: true })));
+    await expect(setTaskStatus(db, hk, t.id, "DONE")).rejects.toThrow(/ảnh bắt buộc/);
+    // Form tick ở trang Công việc không làm mất cờ bắt buộc ảnh
+    const [after] = await db.select().from(schema.checklistResults).where(eq(schema.checklistResults.taskId, t.id));
+    const items = after.results as { needPhoto?: boolean }[];
+    expect(items.filter((r) => r.needPhoto).length).toBe(4);
+    await db.update(schema.checklistResults).set({ results: items.map((r) => ({ ...r, photo: r.needPhoto ? "loci-photos/x.jpg" : undefined })) }).where(eq(schema.checklistResults.taskId, t.id));
     await setTaskStatus(db, hk, t.id, "DONE");
     const [done] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, t.id));
     expect(done.status).toBe("DONE");

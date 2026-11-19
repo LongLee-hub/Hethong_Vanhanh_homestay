@@ -2,7 +2,7 @@
 import { and, asc, eq, gte, inArray, lte, or } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
-import { attendance, bookings, checklistResults, rooms, tasks, userPropertyAccess, users } from "../db/schema";
+import { attendance, bookings, checklistResults, properties, rooms, tasks, userPropertyAccess, users } from "../db/schema";
 import { allowedPropertyIds, assertPropertyAccess, badRequest, can, forbidden, notFound, requirePermission, type SessionUser } from "../auth/access";
 import { getSetting } from "./settings";
 
@@ -15,6 +15,51 @@ export const DEFAULT_CHECKLIST = [
   "Đổ rác, thay túi rác",
   "Chụp ảnh phòng sau khi dọn",
 ];
+
+/** Một mục checklist. needPhoto: mục bắt buộc có ảnh; photo: ảnh đã chụp cho mục đó (dạng "bucket/đường-dẫn"). */
+export interface ChecklistItem {
+  item: string;
+  done: boolean;
+  note?: string;
+  needPhoto?: boolean;
+  photo?: string | null;
+}
+
+/**
+ * Checklist dọn phòng. Các mục có máy ảnh bắt buộc chụp, thiếu ảnh thì không hoàn thành được:
+ * quản lý xem lại được từng phòng, kể cả chìa khoá/thẻ từ (sự cố mất chìa khoá phát hiện ngay trong ca).
+ */
+export const CLEANING_CHECKLIST: ChecklistItem[] = [
+  { item: "Thay ga, vỏ gối, khăn tắm", done: false, needPhoto: true },
+  { item: "Vệ sinh nhà tắm, bồn cầu", done: false, needPhoto: true },
+  { item: "Hút bụi, lau sàn", done: false, needPhoto: true },
+  { item: "Bổ sung nước, trà, đồ vệ sinh cá nhân", done: false },
+  { item: "Kiểm tra điều hòa, đèn, remote", done: false },
+  { item: "Đổ rác, thay túi rác", done: false },
+  { item: "Kiểm tra chìa khoá / thẻ từ đủ và đúng chỗ", done: false, needPhoto: true },
+];
+
+/** Checklist mới cho việc vừa tạo: dọn phòng dùng checklist có ảnh, loại khác dùng danh sách cũ. */
+export const newChecklist = (type: string): ChecklistItem[] =>
+  type === "CLEANING" ? CLEANING_CHECKLIST.map((c) => ({ ...c })) : DEFAULT_CHECKLIST.map((item) => ({ item, done: false }));
+
+/**
+ * Lý do chưa hoàn thành được (null = đủ điều kiện). Checklist có mục bắt buộc ảnh thì mỗi mục đó phải có ảnh riêng;
+ * checklist cũ (không đánh dấu mục ảnh) giữ quy tắc cũ: dọn phòng/bảo trì cần ít nhất một ảnh nghiệm thu.
+ */
+export function completionBlocker(type: string, photoUrls: string[], results: ChecklistItem[] | null | undefined): string | null {
+  const list = results ?? [];
+  const missingTicks = list.filter((r) => !r.done).length;
+  const photoItems = list.filter((r) => r.needPhoto);
+  if (photoItems.length) {
+    const missingPhotos = photoItems.filter((r) => !r.photo).length;
+    if (!missingTicks && !missingPhotos) return null;
+    return `Còn thiếu ${[missingTicks ? `${missingTicks} việc chưa tick` : "", missingPhotos ? `${missingPhotos} ảnh bắt buộc` : ""].filter(Boolean).join(", ")}`;
+  }
+  if (["CLEANING", "MAINTENANCE"].includes(type) && !photoUrls.length) return "Cần ít nhất một ảnh nghiệm thu trước khi hoàn thành";
+  if (missingTicks) return "Tick đủ các mục checklist trước khi hoàn thành";
+  return null;
+}
 
 type TaskInsert = typeof tasks.$inferInsert;
 
@@ -43,21 +88,44 @@ export async function createTask(db: DB, user: SessionUser, input: Omit<TaskInse
     if (!a) throw badRequest("Người làm không được gán cơ sở này");
   }
   const [t] = await db.insert(tasks).values({ ...input, assignedById: user.id, status: "TODO" }).returning();
-  if (t.type === "CLEANING") await db.insert(checklistResults).values({ taskId: t.id, results: DEFAULT_CHECKLIST.map((item) => ({ item, done: false })) });
+  if (t.type === "CLEANING") await db.insert(checklistResults).values({ taskId: t.id, results: newChecklist(t.type) });
   return t;
 }
 
-async function loadTaskForWork(db: DB, user: SessionUser, id: string) {
+/**
+ * Buồng phòng đang có ca hôm nay tại cơ sở (ca chính hoặc ca hỗ trợ). Nhiều người cùng dọn một cơ sở,
+ * hoặc người sang hỗ trợ, đều làm được việc dọn phòng của cơ sở đó dù việc giao cho người khác.
+ */
+export async function onShiftAt(db: DB, userId: string, propertyId: string, today = D.todayVN()) {
+  const [a] = await db.select({ id: attendance.id }).from(attendance)
+    .where(and(eq(attendance.userId, userId), eq(attendance.date, today), eq(attendance.propertyId, propertyId))).limit(1);
+  return !!a;
+}
+
+export async function loadTaskForWork(db: DB, user: SessionUser, id: string) {
   const [t] = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);
   if (!t) throw notFound("Không tìm thấy việc");
-  await assertPropertyAccess(db, user, t.propertyId);
-  if (!can(user, "assignTask") && t.assigneeId !== user.id) throw forbidden("Việc này không giao cho bạn");
-  return t;
+  if (can(user, "assignTask")) {
+    await assertPropertyAccess(db, user, t.propertyId);
+    return t;
+  }
+  if (t.assigneeId === user.id) {
+    // Người được giao: cơ sở của mình, hoặc đang có ca hỗ trợ ở đó
+    if (!(await allowedPropertyIds(db, user)).includes(t.propertyId) && !(await onShiftAt(db, user.id, t.propertyId))) throw notFound("Không tìm thấy việc");
+    return t;
+  }
+  if (t.type === "CLEANING" && (await onShiftAt(db, user.id, t.propertyId))) return t;
+  if (!(await allowedPropertyIds(db, user)).includes(t.propertyId)) throw notFound("Không tìm thấy việc");
+  throw forbidden("Việc này không giao cho bạn");
 }
 
-export async function updateChecklist(db: DB, user: SessionUser, taskId: string, results: { item: string; done: boolean; note?: string }[]) {
+export async function updateChecklist(db: DB, user: SessionUser, taskId: string, input: { item: string; done: boolean; note?: string }[]) {
   const t = await loadTaskForWork(db, user, taskId);
   if (t.status === "DONE") throw badRequest("Việc đã hoàn thành");
+  // Giữ cờ bắt buộc ảnh và ảnh đã chụp của từng mục: form ở trang Công việc chỉ gửi tên mục và trạng thái tick
+  const [cur] = await db.select().from(checklistResults).where(eq(checklistResults.taskId, taskId)).limit(1);
+  const prev = new Map(((cur?.results ?? []) as ChecklistItem[]).map((r) => [r.item, r]));
+  const results = input.map((r) => ({ ...prev.get(r.item), ...r }));
   await db.insert(checklistResults).values({ taskId, results }).onConflictDoUpdate({ target: checklistResults.taskId, set: { results } });
   if (t.status === "TODO") await db.update(tasks).set({ status: "IN_PROGRESS" }).where(eq(tasks.id, taskId));
 }
@@ -71,11 +139,12 @@ export async function setTaskStatus(db: DB, user: SessionUser, taskId: string, s
   const t = await loadTaskForWork(db, user, taskId);
   if (status === "CANCELLED" && !can(user, "assignTask")) throw forbidden("Chỉ người giao việc được hủy");
   if (status === "DONE") {
-    if (["CLEANING", "MAINTENANCE"].includes(t.type) && !t.photoUrls.length) throw badRequest("Cần ít nhất một ảnh nghiệm thu trước khi hoàn thành");
     const [cl] = await db.select().from(checklistResults).where(eq(checklistResults.taskId, taskId)).limit(1);
-    if (cl && (cl.results as { done: boolean }[]).some((r) => !r.done)) throw badRequest("Tick đủ các mục checklist trước khi hoàn thành");
+    const why = completionBlocker(t.type, t.photoUrls, cl?.results as ChecklistItem[] | undefined);
+    if (why) throw badRequest(why);
   }
-  await db.update(tasks).set({ status, completedAt: status === "DONE" ? new Date() : null }).where(eq(tasks.id, taskId));
+  const done = status === "DONE";
+  await db.update(tasks).set({ status, completedAt: done ? new Date() : null, completedById: done ? user.id : null }).where(eq(tasks.id, taskId));
   // Việc định kỳ: hoàn thành thì sinh lần kế tiếp
   if (status === "DONE" && t.recurrenceRule?.startsWith("monthly:")) {
     const dueVN = new Date(t.dueAt.getTime() + 7 * 3600_000).toISOString();
@@ -112,7 +181,7 @@ export async function generateCleaningTasks(db: DB, fromDate: string, toDate: st
         assignedById: createdBy, assigneeId: hk?.id ?? null, dueAt: new Date(`${b.checkOut}T${hour}:00+07:00`), status: "TODO",
       })
       .returning();
-    await db.insert(checklistResults).values({ taskId: t.id, results: DEFAULT_CHECKLIST.map((item) => ({ item, done: false })) });
+    await db.insert(checklistResults).values({ taskId: t.id, results: newChecklist("CLEANING") });
     n++;
   }
   return n;
@@ -121,6 +190,8 @@ export async function generateCleaningTasks(db: DB, fromDate: string, toDate: st
 // ---- Chấm công ----
 export interface ClockInInput {
   propertyId: string;
+  /** Ca hỗ trợ: sang dọn cơ sở khác. Vào ca ở cơ sở không được giao thì luôn tính là ca hỗ trợ. */
+  support?: boolean;
   shift?: "MORNING" | "EVENING" | "OVERTIME";
   photoUrl?: string;
   lat?: number | null;
@@ -132,7 +203,13 @@ export interface ClockInInput {
 export async function clockIn(db: DB, user: SessionUser, i: ClockInInput) {
   requirePermission(user, "clock");
   const shift = i.shift ?? "MORNING";
-  await assertPropertyAccess(db, user, i.propertyId);
+  let support = !!i.support;
+  if (!(await allowedPropertyIds(db, user)).includes(i.propertyId)) {
+    // Buồng phòng được vào ca hỗ trợ ở cơ sở đang hoạt động bất kỳ; vai trò khác chỉ chấm ở cơ sở được giao
+    const [p] = user.role === "HOUSEKEEPER" ? await db.select({ id: properties.id }).from(properties).where(and(eq(properties.id, i.propertyId), eq(properties.active, true))).limit(1) : [];
+    if (!p) throw notFound("Không tìm thấy cơ sở");
+    support = true;
+  }
   if (user.role === "HOUSEKEEPER" && !i.photoUrl) throw badRequest("Chụp ảnh tại cơ sở để vào ca");
   const today = D.todayVN();
   const [ex] = await db.select().from(attendance).where(and(eq(attendance.userId, user.id), eq(attendance.date, today), eq(attendance.shift, shift))).limit(1);
@@ -141,7 +218,7 @@ export async function clockIn(db: DB, user: SessionUser, i: ClockInInput) {
   const [row] = await db
     .insert(attendance)
     .values({
-      userId: user.id, propertyId: i.propertyId, date: today, shift, checkInAt: new Date(), photoUrl: i.photoUrl,
+      userId: user.id, propertyId: i.propertyId, date: today, shift, support, checkInAt: new Date(), photoUrl: i.photoUrl,
       lat: num(i.lat), lng: num(i.lng), accuracyM: num(i.accuracyM) === null ? null : Math.round(i.accuracyM!),
     })
     .returning();

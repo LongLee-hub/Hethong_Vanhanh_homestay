@@ -43,6 +43,7 @@ export default async function Tasks() {
                 <span className={`pill ${overdue ? "bad" : t.status === "DONE" ? "ok" : ""}`}>{overdue ? "Quá hạn" : STATUS[t.status]}</span>
               </summary>
               {t.description && <p className="small">{t.description}</p>}
+              {t.type === "CLEANING" && <p><a className="btn sm" href={`/don-dep/${t.id}`}>Mở checklist dọn phòng (chụp ảnh từng mục)</a></p>}
               {cl && (
                 <form action={checklistAction} className="stack" style={{ gap: 6 }}>
                   <input type="hidden" name="taskId" value={t.id} />

@@ -12,8 +12,8 @@ const MOBILE_PRIMARY = {
   ADMIN: ["/", "/bookings", "/expenses", "/settlements"],
   ACCOUNTANT: ["/", "/bookings", "/expenses", "/settlements"],
   INVESTOR: ["/", "/bookings", "/settlements", "/reports"],
-  MANAGER: ["/", "/bookings", "/tasks", "/attendance"],
-  HOUSEKEEPER: ["/attendance", "/tasks", "/reviews", "/bookings"],
+  MANAGER: ["/", "/daily-report", "/tasks", "/attendance"],
+  HOUSEKEEPER: ["/don-dep", "/attendance", "/tasks", "/reviews"],
 };
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -28,6 +28,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     ["/reports", "Báo cáo NĐT", can(user, "viewFee")],
     ["/reviews", "Đánh giá", can(user, "viewReviews")],
     ["/targets", "Chỉ tiêu", can(user, "admin")],
+    ["/don-dep", "Dọn phòng", can(user, "workTask") && user.role !== "ACCOUNTANT"],
+    ["/daily-report", "Daily report", can(user, "assignTask")],
     ["/tasks", "Công việc", can(user, "workTask")],
     ["/attendance", "Chấm công", can(user, "clock") || can(user, "viewAllAttendance")],
     ["/payroll", "Lương buồng phòng", can(user, "admin")],

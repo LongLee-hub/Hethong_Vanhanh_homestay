@@ -15,6 +15,10 @@ export const DEFAULTS: Record<string, string> = {
   "commission.Agoda": "18",
   "commission.Direct": "0",
   cleaningDueHour: "14:00",
+  // Giờ nhận / trả phòng chuẩn (Dayladau chỉ có ngày): dùng cho cảnh báo "Dọn ngay" và lịch dọn phòng
+  checkInHour: "14:00",
+  checkOutHour: "12:00",
+  "cleaning.urgentMinutes": "30", // phòng chưa xong khi khách đến trong chừng này phút thì báo dọn ngay
   // Lương buồng phòng (lib/services/payroll.ts)
   "payroll.daysOff": "2", // công chuẩn = số ngày trong tháng − ngày nghỉ
   "payroll.overtimeRate": "31000", // VND / lần tăng ca
