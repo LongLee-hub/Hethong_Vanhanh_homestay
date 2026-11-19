@@ -124,7 +124,7 @@ export async function syncBookings(
         const { commission, net } = netOf(m, Number(cfg[`commission.${m.channel}`] ?? 0));
         todo.push({
           source: "DAYLADAU", externalId: m.externalId, propertyId: room.propertyId, roomId: room.id, channel: m.channel, guestName: m.guestName,
-          bookedAt: m.bookedAt, checkIn: m.checkIn, checkOut: m.checkOut, grossAmount: m.grossAmount, commissionAmount: commission,
+          bookedAt: m.bookedAt, checkIn: m.checkIn, checkOut: m.checkOut, checkInAt: m.checkInAt, checkOutAt: m.checkOutAt, grossAmount: m.grossAmount, commissionAmount: commission,
           netAmount: net, status: m.status, rentalType: m.rentalType, rawPayload: raw, lastSyncedAt: new Date(),
         });
       }

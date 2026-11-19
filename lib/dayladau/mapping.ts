@@ -13,6 +13,9 @@ export interface MappedBooking {
   bookedAt: string | null;
   checkIn: string;
   checkOut: string;
+  /** Giờ nhận / trả phòng thật; null khi API chỉ có ngày. */
+  checkInAt: Date | null;
+  checkOutAt: Date | null;
   rentalType: string | null;
   grossAmount: number; // total_billed
   hostAmount: number; // "Amount host" = Σ item.amount × tỷ lệ host
@@ -37,6 +40,24 @@ export function toVNDate(v: unknown): string | null {
   if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) return s.slice(0, 10);
   const d = new Date(s);
   return isNaN(+d) ? null : new Date(d.getTime() + 7 * 3600_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Thời điểm cụ thể (có giờ) từ API: Unix giây/mili-giây, hoặc ISO có giờ (không ghi múi giờ thì coi là giờ Việt Nam).
+ * Chỉ có ngày ("2026-09-20", "20/09/2026") thì trả null: không đoán giờ.
+ */
+export function toInstant(v: unknown): Date | null {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number" || /^\d{9,13}$/.test(String(v))) {
+    const n = Number(v);
+    const d = new Date(n < 1e12 ? n * 1000 : n);
+    return isNaN(+d) ? null : d;
+  }
+  const s = String(v).trim();
+  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s)) return null;
+  const withZone = /(Z|[+-]\d{2}:?\d{2})$/i.test(s) ? s : `${s}+07:00`;
+  const d = new Date(withZone.replace(" ", "T"));
+  return isNaN(+d) ? null : d;
 }
 
 function addDay(d: string): string {
@@ -91,6 +112,8 @@ export function mapDayladauOrder(o: RawOrder): MappedBooking {
     bookedAt: toVNDate(o?.created_at ?? o?.createdAt ?? o?.booked_at),
     checkIn,
     checkOut,
+    checkInAt: toInstant(o?.reservation?.start_time),
+    checkOutAt: toInstant(o?.reservation?.end_time),
     rentalType: o?.reservation?.subtotal_detail_v2?.type_rental ?? null,
     grossAmount: gross,
     hostAmount,

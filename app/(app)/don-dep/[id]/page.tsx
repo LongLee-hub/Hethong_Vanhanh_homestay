@@ -34,8 +34,8 @@ export default async function CleaningChecklist({ params }: { params: Promise<{ 
         <div className="clean-head-title">
           <h1>Phòng {name}</h1>
           <p className="small muted">
-            {propertyName}, hạn dọn {hmVN(task.dueAt)} {D.formatDateVN(room?.checkoutOn ?? D.todayVN())}
-            {room?.nextCheckInAt ? `. Khách đến ${hmVN(room.nextCheckInAt)}` : ". Hôm nay chưa có khách mới"}
+            {propertyName}{room?.checkoutAt ? `, khách trả ${hmVN(room.checkoutAt)}` : ""}, hạn dọn {hmVN(task.dueAt)} {D.formatDateVN(room?.checkoutOn ?? D.todayVN())}.
+            {room?.nextCheckInAt ? ` Khách mới đến ${hmVN(room.nextCheckInAt)}${room.nextGuest ? ` (${room.nextGuest})` : ""}.` : " Hôm nay chưa có khách mới."}
           </p>
         </div>
         <span className={`pill ${state === "done" ? "ok" : state === "urgent" ? "bad" : state === "doing" ? "fc" : ""}`}>{STATE_LABEL[state]}</span>

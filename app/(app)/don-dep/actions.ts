@@ -5,6 +5,7 @@ import { badRequest } from "@/lib/auth/access";
 import { getDb } from "@/lib/db";
 import { action, requireUser } from "@/lib/server";
 import { uploadPhoto } from "@/lib/storage";
+import { defaultSender, markNotificationsRead, notifyUsers } from "@/lib/services/notify";
 import { assignIssue, completeCleaning, reportIssue, resolveIssue, setChecklistPhoto, toggleChecklistItem } from "@/lib/services/cleaning";
 
 type State = { ok: boolean; error?: string } | null;
@@ -74,4 +75,20 @@ export async function resolveIssueAction(_: State, f: FormData): Promise<State> 
   refresh();
   revalidatePath("/don-dep/su-co");
   return r;
+}
+
+export async function markReadAction(f: FormData) {
+  const user = await requireUser();
+  await markNotificationsRead(getDb(), user, String(f.get("id") || "") || undefined);
+  revalidatePath("/don-dep");
+}
+
+/** Gửi một thông báo thử tới các máy đã bật nhận của chính mình. */
+export async function testPushAction(): Promise<{ ok: boolean; error?: string; info?: string }> {
+  const user = await requireUser();
+  const sender = defaultSender();
+  if (!sender) return { ok: false, error: "Máy chủ chưa cấu hình khóa VAPID nên chưa gửi được thông báo đẩy" };
+  const r = await notifyUsers(getDb(), [user.id], { key: `TEST:${Date.now()}`, title: "Thông báo thử", body: "Điện thoại này sẽ nhận cảnh báo dọn phòng.", url: "/don-dep" }, sender);
+  revalidatePath("/don-dep");
+  return r.pushed ? { ok: true, info: "Đã gửi, kiểm tra thông báo trên điện thoại" } : { ok: false, error: "Chưa có máy nào bật nhận thông báo cho tài khoản này" };
 }

@@ -7,10 +7,12 @@ import { and, eq, isNull } from "drizzle-orm";
 import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import type { SessionUser } from "../lib/auth/access";
-import { clockIn, createTask } from "../lib/services/tasks";
+import { clockIn, createTask, generateCleaningTasks } from "../lib/services/tasks";
+import { mapDayladauOrder, toInstant } from "../lib/dayladau/mapping";
+import { myNotifications, notifyUsers, saveSubscription, type PushSender } from "../lib/services/notify";
 import {
   cleaningBoard, cleaningCalendar, cleaningDailyReport, cleaningWeeklyReport, completeCleaning, computeCleaningAlerts, listIssues,
-  reportIssue, resolveIssue, setChecklistPhoto, toggleChecklistItem, weekStart,
+  assignIssue, reportIssue, resolveIssue, setChecklistPhoto, toggleChecklistItem, weekStart,
 } from "../lib/services/cleaning";
 import * as D from "../lib/domain";
 
@@ -141,5 +143,66 @@ describe("Dọn phòng", () => {
   it("lịch tuần: trả phòng và khách đến kèm trạng thái dọn", async () => {
     const ev = await cleaningCalendar(db, quan, "KT", weekStart(today), now);
     expect(ev.some((e) => e.kind === "IN" && e.roomName === "P203" && e.date === today)).toBe(true);
+  });
+});
+
+const vn = (hm: string, d = today) => new Date(`${d}T${hm}:00+07:00`);
+
+describe("Giờ nhận / trả phòng thật từ Dayladau", () => {
+  it("đọc giờ từ reservation.start_time / end_time; chỉ có ngày thì không đoán giờ", () => {
+    expect(toInstant("2026-09-29T14:30:00+07:00")?.toISOString()).toBe("2026-09-29T07:30:00.000Z");
+    expect(toInstant("2026-09-29 09:15:00")?.toISOString()).toBe("2026-09-29T02:15:00.000Z");
+    expect(toInstant(1790000000000)?.getTime()).toBe(1790000000000);
+    expect(toInstant("1790000000")?.getTime()).toBe(1790000000000);
+    expect(toInstant("2026-09-29")).toBeNull();
+    const m = mapDayladauOrder({ id: 9, listing: { id: 1, name: "x" }, status: "confirmed", reservation: { start_time: "2026-09-29T09:00:00+07:00", end_time: "2026-09-29T13:00:00+07:00" } });
+    expect([m.checkIn, m.checkOut, m.checkInAt?.toISOString(), m.checkOutAt?.toISOString()]).toEqual(["2026-09-29", "2026-09-30", "2026-09-29T02:00:00.000Z", "2026-09-29T06:00:00.000Z"]);
+  });
+
+  it("bảng phòng dùng giờ khách đến thật; thuê giờ trả trong ngày vẫn sinh việc dọn với hạn là giờ khách kế tiếp", async () => {
+    const s = schema;
+    await db.insert(s.rooms).values({ id: "P401", propertyId: "KT", name: "P401", openedOn: "2026-01-01" });
+    // Khách thuê giờ 09:00–13:00 (cột ngày trả là hôm sau theo cách ghi đêm), khách kế tiếp đến 13:50
+    await db.insert(s.bookings).values([
+      { id: "h-out", source: "DAYLADAU", propertyId: "KT", roomId: "P401", channel: "Direct", guestName: "Khách giờ", checkIn: today, checkOut: D.addDays(today, 1), checkInAt: vn("09:00"), checkOutAt: vn("13:00"), status: "CONFIRMED" },
+      { id: "h-in", source: "DAYLADAU", propertyId: "KT", roomId: "P401", channel: "Direct", guestName: "Lan Anh", checkIn: today, checkOut: D.addDays(today, 1), checkInAt: vn("13:50"), checkOutAt: vn("12:00", D.addDays(today, 1)), status: "CONFIRMED" },
+    ]);
+    expect(await generateCleaningTasks(db, today, today)).toBeGreaterThanOrEqual(1);
+    const [t] = await db.select().from(s.tasks).where(eq(s.tasks.bookingId, "h-out"));
+    expect(t.dueAt.toISOString()).toBe(vn("13:50").toISOString());
+    const room = (await cleaningBoard(db, mgr, "KT", today, vn("13:30"))).find((r) => r.taskId === t.id)!;
+    expect(room).toMatchObject({ state: "urgent", minutesToCheckIn: 20, nextGuest: "Lan Anh" });
+    expect(room.checkoutAt?.toISOString()).toBe(vn("13:00").toISOString());
+    // Khách đến lúc 13:50 thì 13:00 chưa gấp (còn 50 phút)
+    expect((await cleaningBoard(db, mgr, "KT", today, vn("13:00"))).find((r) => r.taskId === t.id)!.state).toBe("todo");
+  });
+});
+
+describe("Thông báo tới tài khoản nhân viên dọn dẹp", () => {
+  const sent: string[] = [];
+  const fake: PushSender = async (target, payload) => { if (target.endpoint.includes("gone")) throw Object.assign(new Error("gone"), { statusCode: 410 }); sent.push(`${target.endpoint}|${JSON.parse(payload).title}`); };
+
+  it("phòng cần dọn ngay: đẩy tới nhân viên chính của cơ sở, không gửi lặp, không gửi người ca hỗ trợ", async () => {
+    await saveSubscription(db, quan, { endpoint: "https://push.example/quan", keys: { p256dh: "k", auth: "a" } }, "Android");
+    await saveSubscription(db, huong, { endpoint: "https://push.example/huong", keys: { p256dh: "k", auth: "a" } }, "iPhone");
+    await expect(saveSubscription(db, quan, { endpoint: "http://bad" }, null)).rejects.toThrow(/không hợp lệ/);
+    const r = await computeCleaningAlerts(db, vn("13:30"), fake);
+    expect(r.pushed).toBeGreaterThanOrEqual(1);
+    expect(sent.some((x) => x.startsWith("https://push.example/quan|Dọn ngay P401"))).toBe(true);
+    expect(sent.some((x) => x.startsWith("https://push.example/huong"))).toBe(false); // Hương chỉ sang hỗ trợ, không phải nhân viên chính KT
+    const before = sent.length;
+    await computeCleaningAlerts(db, vn("13:35"), fake);
+    expect(sent.length).toBe(before);
+    const inbox = await myNotifications(db, quan, { unreadOnly: true });
+    expect(inbox.find((n) => n.title.startsWith("Dọn ngay P401"))).toMatchObject({ urgent: true, url: expect.stringMatching(/^\/don-dep\//) });
+  });
+
+  it("máy đã gỡ đăng ký (410) thì xóa; giao sự cố thì báo cho người được giao", async () => {
+    await saveSubscription(db, quan, { endpoint: "https://push.example/gone", keys: { p256dh: "k", auth: "a" } }, null);
+    await notifyUsers(db, [quan.id], { key: "T1", title: "Thử", body: "x" }, fake);
+    expect((await db.select().from(schema.pushSubscriptions).where(eq(schema.pushSubscriptions.endpoint, "https://push.example/gone"))).length).toBe(0);
+    const i = await reportIssue(db, quan, { propertyId: "KT", category: "SUPPLY", description: "Hết khăn tắm" });
+    await assignIssue(db, mgr, i.id, quan.id, fake);
+    expect(sent.at(-1)).toMatch(/quan\|Bạn được giao xử lý sự cố/);
   });
 });

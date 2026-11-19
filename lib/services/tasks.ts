@@ -1,5 +1,5 @@
 // Công việc, checklist, chấm công (Đặc tả 7.5, 7.6).
-import { and, asc, eq, gte, inArray, lte, or } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, lte, ne, or } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
 import { attendance, bookings, checklistResults, properties, rooms, tasks, userPropertyAccess, users } from "../db/schema";
@@ -156,10 +156,20 @@ export async function setTaskStatus(db: DB, user: SessionUser, taskId: string, s
   }
 }
 
-/** Sinh việc dọn phòng cho các đơn check-out trong khoảng ngày (job hằng ngày). TODO(CONFIRM): quy tắc hạn chót. */
+/**
+ * Sinh việc dọn phòng cho các đơn trả phòng trong khoảng ngày (job hằng ngày).
+ * Ngày trả phòng theo giờ thật từ Dayladau (thuê giờ trả trong ngày), không có giờ thì theo cột ngày.
+ * Hạn dọn: giờ khách kế tiếp vào phòng đó trong ngày nếu sớm hơn giờ dọn chuẩn (cleaningDueHour);
+ * khách trả phòng muộn hơn giờ chuẩn mà không có khách mới thì hạn là 2 giờ sau khi trả.
+ */
 export async function generateCleaningTasks(db: DB, fromDate: string, toDate: string, createdBy = "SYSTEM") {
-  const hour = await getSetting(db, "cleaningDueHour");
-  const outs = await db.select().from(bookings).where(and(eq(bookings.status, "CONFIRMED"), gte(bookings.checkOut, fromDate), lte(bookings.checkOut, toDate)));
+  const [hour, inH, outH] = await Promise.all([getSetting(db, "cleaningDueHour"), getSetting(db, "checkInHour"), getSetting(db, "checkOutHour")]);
+  const at = (d: string, hm: string) => new Date(`${d}T${hm}:00+07:00`);
+  const vnDay = (d: Date) => new Date(d.getTime() + 7 * 3600_000).toISOString().slice(0, 10);
+  const outs = await db.select().from(bookings).where(and(eq(bookings.status, "CONFIRMED"), or(
+    and(gte(bookings.checkOutAt, at(fromDate, "00:00")), lt(bookings.checkOutAt, at(D.addDays(toDate, 1), "00:00"))),
+    and(isNull(bookings.checkOutAt), gte(bookings.checkOut, fromDate), lte(bookings.checkOut, toDate)),
+  )));
   if (!outs.length) return 0;
   const existing = new Set(
     (await db.select({ b: tasks.bookingId }).from(tasks).where(and(eq(tasks.type, "CLEANING"), inArray(tasks.bookingId, outs.map((b) => b.id))))).map((r) => r.b),
@@ -167,6 +177,18 @@ export async function generateCleaningTasks(db: DB, fromDate: string, toDate: st
   let n = 0;
   for (const b of outs) {
     if (existing.has(b.id)) continue;
+    const leaveAt = b.checkOutAt ?? at(b.checkOut, outH || "12:00");
+    const day = vnDay(leaveAt);
+    const dayEnd = at(D.addDays(day, 1), "00:00");
+    // Khách kế tiếp vào cùng phòng trong ngày, sau khi khách này trả phòng
+    const nexts = await db.select({ checkIn: bookings.checkIn, checkInAt: bookings.checkInAt }).from(bookings).where(and(
+      eq(bookings.roomId, b.roomId), eq(bookings.status, "CONFIRMED"), ne(bookings.id, b.id),
+      or(and(gte(bookings.checkInAt, leaveAt), lt(bookings.checkInAt, dayEnd)), and(isNull(bookings.checkInAt), eq(bookings.checkIn, day))),
+    ));
+    const nextIn = nexts.map((x) => x.checkInAt ?? at(x.checkIn, inH || "14:00")).filter((t) => t >= leaveAt).sort((x, y) => x.getTime() - y.getTime())[0];
+    const standard = at(day, hour || "14:00");
+    let dueAt = nextIn && nextIn < standard ? nextIn : standard;
+    if (dueAt < leaveAt) dueAt = nextIn ?? new Date(leaveAt.getTime() + 2 * 3600_000);
     const [room] = await db.select().from(rooms).where(eq(rooms.id, b.roomId)).limit(1);
     const [hk] = await db
       .select({ id: users.id })
@@ -178,7 +200,7 @@ export async function generateCleaningTasks(db: DB, fromDate: string, toDate: st
       .insert(tasks)
       .values({
         propertyId: b.propertyId, roomId: b.roomId, bookingId: b.id, type: "CLEANING", title: `Dọn ${room?.name ?? "phòng"} sau check-out – ${b.guestName ?? "khách"}`,
-        assignedById: createdBy, assigneeId: hk?.id ?? null, dueAt: new Date(`${b.checkOut}T${hour}:00+07:00`), status: "TODO",
+        assignedById: createdBy, assigneeId: hk?.id ?? null, dueAt, status: "TODO",
       })
       .returning();
     await db.insert(checklistResults).values({ taskId: t.id, results: newChecklist("CLEANING") });

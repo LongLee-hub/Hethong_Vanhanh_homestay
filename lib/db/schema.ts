@@ -155,6 +155,9 @@ export const bookings = pgTable(
     bookedAt: day("booked_at"),
     checkIn: day("check_in").notNull(),
     checkOut: day("check_out").notNull(),
+    /** Giờ nhận / trả phòng thật (reservation.start_time / end_time của Dayladau). null = chỉ biết ngày (đơn nhập tay, dữ liệu cũ). */
+    checkInAt: ts("check_in_at"),
+    checkOutAt: ts("check_out_at"),
     grossAmount: money("gross_amount"),
     commissionAmount: money("commission_amount"),
     netAmount: money("net_amount"),
@@ -165,7 +168,7 @@ export const bookings = pgTable(
     createdById: text("created_by_id"),
     lastSyncedAt: ts("last_synced_at"),
   },
-  (t) => [index("bookings_prop_checkin").on(t.propertyId, t.checkIn)],
+  (t) => [index("bookings_prop_checkin").on(t.propertyId, t.checkIn), index("bookings_room_checkin_at").on(t.roomId, t.checkInAt)],
 );
 
 export const nightKindEnum = pgEnum("night_kind", ["NIGHT", "HOURLY", "CANCEL_FEE"]);
@@ -527,6 +530,41 @@ export const alerts = pgTable("alerts", {
   createdAt: ts("created_at").notNull().defaultNow(),
   resolvedAt: ts("resolved_at"),
 });
+
+/** Điện thoại / trình duyệt đã bật nhận thông báo đẩy (Web Push) của một tài khoản. */
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: id(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull().unique(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    userAgent: text("user_agent"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    lastSentAt: ts("last_sent_at"),
+  },
+  (t) => [index("push_sub_user").on(t.userId)],
+);
+
+/** Hộp thông báo trong app của từng tài khoản; `key` chống gửi trùng cùng một sự việc cho một người. */
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: id(),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    url: text("url"),
+    propertyId: text("property_id"),
+    urgent: boolean("urgent").notNull().default(false),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    pushedAt: ts("pushed_at"),
+    readAt: ts("read_at"),
+  },
+  (t) => [uniqueIndex("notifications_user_key").on(t.userId, t.key), index("notifications_user_unread").on(t.userId, t.readAt)],
+);
 
 export const syncRuns = pgTable("sync_runs", {
   id: id(),

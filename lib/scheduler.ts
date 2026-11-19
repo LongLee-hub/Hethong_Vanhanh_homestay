@@ -9,6 +9,7 @@ import { syncBookings } from "./dayladau/sync";
 import { syncReviews } from "./dayladau/reviews";
 import { sendMonthlyReviewDigest } from "./services/reviews";
 import { computeAlerts } from "./services/alerts";
+import { computeCleaningAlerts } from "./services/cleaning";
 import { generateCleaningTasks } from "./services/tasks";
 import { syncPayouts } from "./airbnb/payouts";
 import { syncDayladauPayouts } from "./dayladau/payouts";
@@ -16,7 +17,10 @@ import { syncDayladauPayouts } from "./dayladau/payouts";
 export const PAYOUT_HOUR_VN = 15;
 const VN_OFFSET_MS = 7 * 3600_000;
 
-const g = globalThis as unknown as { _autoSync?: { timer: NodeJS.Timeout; running: boolean }; _payoutSync?: { timer: NodeJS.Timeout } };
+const g = globalThis as unknown as { _autoSync?: { timer: NodeJS.Timeout; running: boolean }; _payoutSync?: { timer: NodeJS.Timeout }; _cleaning?: NodeJS.Timeout };
+
+/** Cảnh báo dọn phòng cần chạy dày (5 phút) để thông báo "Dọn ngay" tới kịp, tách khỏi vòng đồng bộ đơn. */
+export const CLEANING_ALERT_MINUTES = 5;
 
 async function tick() {
   const state = g._autoSync;
@@ -71,6 +75,12 @@ export function startScheduler() {
   if (!g._payoutSync) {
     schedulePayouts();
     console.log(`[payout-sync] bật: ${PAYOUT_HOUR_VN}:00 hằng ngày`);
+  }
+  if (!g._cleaning) {
+    g._cleaning = setInterval(() => {
+      computeCleaningAlerts(getDb()).catch((e: Error) => console.error("[cleaning-alerts] lỗi:", e.message));
+    }, CLEANING_ALERT_MINUTES * 60_000);
+    console.log(`[cleaning-alerts] bật: ${CLEANING_ALERT_MINUTES} phút/lần`);
   }
   const minutes = Number(process.env.AUTO_SYNC_MINUTES ?? 0);
   if (!(minutes > 0) || g._autoSync) return;

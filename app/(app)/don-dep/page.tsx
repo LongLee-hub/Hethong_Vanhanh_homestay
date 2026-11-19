@@ -7,14 +7,17 @@ import { can } from "@/lib/auth/access";
 import { NoAccess } from "@/components/NoAccess";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { requireUser } from "@/lib/server";
-import { cleaningBoard, hmVN, myShiftsToday, STATE_LABEL, workablePropertyIds, type BoardRoom } from "@/lib/services/cleaning";
+import { cleaningBoard, dayVN, hmVN, myShiftsToday, STATE_LABEL, workablePropertyIds, type BoardRoom } from "@/lib/services/cleaning";
+import { myNotifications, vapidPublicKey } from "@/lib/services/notify";
+import { PushToggle } from "@/components/PushToggle";
 import { CleanNav } from "./nav";
+import { markReadAction, testPushAction } from "./actions";
 
 const PILL = { done: "ok", urgent: "bad", doing: "fc", todo: "" } as const;
 
 function guestLine(r: BoardRoom, today: string) {
-  const parts = [r.checkoutOn < today ? `Tồn từ ${D.formatDateVN(r.checkoutOn)}` : `Hạn ${hmVN(r.dueAt)}`];
-  parts.push(r.nextCheckInAt ? `khách đến ${hmVN(r.nextCheckInAt)}` : "hôm nay chưa có khách mới");
+  const parts = [r.checkoutOn < today ? `Tồn từ ${D.formatDateVN(r.checkoutOn)}` : r.checkoutAt ? `Khách trả ${hmVN(r.checkoutAt)}` : `Hạn ${hmVN(r.dueAt)}`];
+  parts.push(r.nextCheckInAt ? `khách mới đến ${hmVN(r.nextCheckInAt)}` : "hôm nay chưa có khách mới");
   return parts.join(", ");
 }
 
@@ -40,6 +43,8 @@ export default async function CleaningBoard({ searchParams }: { searchParams: Pr
   const shift = shifts.find((s) => s.propertyId === pid);
   const ids = [...new Set(board.map((r) => r.assigneeId).filter(Boolean) as string[])];
   const names = new Map((ids.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, ids)) : []).map((u) => [u.id, u.name]));
+  // Thông báo chưa xem; cảnh báo dọn ngay của cơ sở đang xem đã hiện thành mảng đỏ bên dưới nên không nhắc lại
+  const inbox = (await myNotifications(db, user, { unreadOnly: true, limit: 10 })).filter((n) => !(n.urgent && n.propertyId === pid && n.key.endsWith(`:${today}`)));
   const urgent = board.filter((r) => r.state === "urgent");
   const open = board.filter((r) => r.state !== "done");
   const done = board.filter((r) => r.state === "done");
@@ -75,6 +80,23 @@ export default async function CleaningBoard({ searchParams }: { searchParams: Pr
         </div>
       </div>
       <CleanNav current="board" p={pid} />
+      <PushToggle publicKey={vapidPublicKey()} testAction={testPushAction} />
+
+      {inbox.length > 0 && (
+        <section className="inbox" aria-label="Thông báo chưa xem">
+          <div className="row"><h2 className="clean-h" style={{ margin: 0 }}>Thông báo mới</h2><span className="spacer" />
+            <form action={markReadAction}><button className="btn sm">Đánh dấu đã xem hết</button></form>
+          </div>
+          <ul>
+            {inbox.map((n) => (
+              <li key={n.id} data-urgent={n.urgent || undefined}>
+                <a href={n.url ?? "/don-dep"}><b>{n.title}</b><span className="small">{n.body}</span><span className="small muted">{hmVN(n.createdAt)} {D.formatDateVN(dayVN(n.createdAt))}</span></a>
+                <form action={markReadAction}><input type="hidden" name="id" value={n.id} /><button className="btn sm" aria-label={`Đã xem: ${n.title}`}>Đã xem</button></form>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {props.length > 1 && (
         <nav className="chips clean-props" aria-label="Chọn cơ sở">
