@@ -176,6 +176,13 @@
       "when": 1795085590461,
       "tag": "0023_cleanup_cleaning_alerts",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795145044151,
+      "tag": "0024_cleaning_checklist_upgrade",
+      "breakpoints": true
     }
   ]
 }
