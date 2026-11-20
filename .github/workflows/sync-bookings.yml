@@ -1,0 +1,32 @@
+# Lấy đơn Dayladau 15 phút/lần từ 6h đến 24h giờ VN để đơn đặt trong ngày về app kịp thời.
+# Vercel gói Hobby chỉ cho cron 1 lần/ngày (lượt đầy đủ 6h sáng ở vercel.json) nên lịch dày chạy ở đây.
+# Lịch GitHub tính theo giờ UTC: 23:xx UTC = 6:xx VN, 00:00–16:59 UTC = 7:00–23:59 VN.
+# GitHub có thể chạy trễ vài phút khi máy chủ bận; repo công khai không có commit 60 ngày thì GitHub tự tắt lịch.
+# Khóa: secret SYNC_CRON_TOKEN nếu có, không thì dùng chung CLEANING_CRON_TOKEN (đã đặt cho cảnh báo dọn phòng).
+name: Lấy đơn Dayladau
+
+on:
+  schedule:
+    - cron: "*/15 23 * * *"
+    - cron: "*/15 0-16 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: sync-bookings
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Gọi /api/cron/sync-bookings
+        env:
+          TOKEN: ${{ secrets.SYNC_CRON_TOKEN || secrets.CLEANING_CRON_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then echo "Chưa đặt secret SYNC_CRON_TOKEN hoặc CLEANING_CRON_TOKEN"; exit 1; fi
+          curl --fail-with-body -sS -m 300 --retry 1 --retry-delay 20 \
+            -H "Authorization: Bearer $TOKEN" \
+            https://www.baocaodau.com/api/cron/sync-bookings
