@@ -61,8 +61,9 @@ export async function urgentMinutes(db: DB) {
   return Number.isFinite(n) && n > 0 ? n : 30;
 }
 
-export type CleanState = "done" | "urgent" | "doing" | "todo";
-export const STATE_LABEL: Record<CleanState, string> = { done: "Đã xong", urgent: "Dọn ngay", doing: "Đang dọn", todo: "Chưa dọn" };
+/** missed: khách mới đã vào phòng quá 2 giờ mà việc dọn vẫn chưa xong (lượt dọn đã qua, chỉ còn để quản lý xem). */
+export type CleanState = "done" | "urgent" | "doing" | "todo" | "missed";
+export const STATE_LABEL: Record<CleanState, string> = { done: "Đã xong", urgent: "Dọn ngay", doing: "Đang dọn", todo: "Chưa dọn", missed: "Quá giờ, chưa có checklist" };
 
 export interface BoardRoom {
   taskId: string;
@@ -137,50 +138,58 @@ async function boardFor(db: DB, propertyIds: string[], date: string, now: Date):
   const dayEnd = at(D.addDays(date, 1), "00:00");
   // Việc dở dang chỉ mang sang từ hôm trước (BACKLOG_DAYS). Việc tồn lâu hơn là dữ liệu cũ chưa ai đóng
   // (trước khi dùng app dọn phòng), không phải phòng đang chờ dọn: không hiện, không cảnh báo.
-  const backlogFrom = at(D.addDays(date, -BACKLOG_DAYS), "00:00");
+  const backlogDay = D.addDays(date, -BACKLOG_DAYS);
+  const backlogFrom = at(backlogDay, "00:00");
+  // Lấy rộng thêm một ngày phía sau: hạn dọn có thể sang ngày hôm sau (khách trả khuya), việc vẫn thuộc ngày trả phòng
   const rows = await db.select().from(tasks).where(and(
     inArray(tasks.propertyId, propertyIds), eq(tasks.type, "CLEANING"), ne(tasks.status, "CANCELLED"),
-    or(and(gte(tasks.dueAt, dayStart), lt(tasks.dueAt, dayEnd)), and(gte(tasks.dueAt, backlogFrom), lt(tasks.dueAt, dayStart), inArray(tasks.status, ["TODO", "IN_PROGRESS"]))),
+    gte(tasks.dueAt, backlogFrom), lt(tasks.dueAt, at(D.addDays(date, 2), "00:00")),
   ));
-  // Một phòng có nhiều việc còn mở (hôm qua chưa đóng, hôm nay lại có việc mới): chỉ giữ việc mới nhất
-  const latestOpen = new Map<string, Date>();
-  for (const t of rows) if (t.roomId && t.status !== "DONE" && t.dueAt > (latestOpen.get(t.roomId) ?? new Date(0))) latestOpen.set(t.roomId, t.dueAt);
-  const list = rows.filter((t) => t.status === "DONE" || !t.roomId || latestOpen.get(t.roomId)?.getTime() === t.dueAt.getTime());
-  if (!list.length) return out;
+  if (!rows.length) return out;
   const h = await stayHours(db);
-  const bookingIds = [...new Set(list.map((t) => t.bookingId).filter(Boolean) as string[])];
+  const bookingIds = [...new Set(rows.map((t) => t.bookingId).filter(Boolean) as string[])];
   const [cls, rs, arrivals, outs, urgent] = await Promise.all([
-    db.select().from(checklistResults).where(inArray(checklistResults.taskId, list.map((t) => t.id))),
+    db.select().from(checklistResults).where(inArray(checklistResults.taskId, rows.map((t) => t.id))),
     db.select({ id: rooms.id, name: rooms.name }).from(rooms).where(inArray(rooms.propertyId, propertyIds)),
-    arrivalsBetween(db, propertyIds, date, date, h),
+    arrivalsBetween(db, propertyIds, backlogDay, date, h),
     bookingIds.length ? db.select({ id: bookings.id, checkOut: bookings.checkOut, checkOutAt: bookings.checkOutAt }).from(bookings).where(inArray(bookings.id, bookingIds)) : Promise.resolve([]),
     urgentMinutes(db),
   ]);
   const roomName = new Map(rs.map((r) => [r.id, r.name]));
   const leave = new Map(outs.map((b) => [b.id, departureOf(b, h)]));
-  for (const t of list) {
+  for (const t of rows) {
+    const done = t.status === "DONE";
+    const checkoutAt = t.bookingId ? leave.get(t.bookingId) ?? null : null;
+    // Mỗi việc dọn gắn với một lượt khách trả phòng: ngày của việc là ngày khách trả (không có đơn thì theo hạn dọn)
+    const taskDay = checkoutAt ? dayVN(checkoutAt) : dayVN(t.dueAt);
+    if (taskDay > date || taskDay < backlogDay) continue;
+    if (taskDay < date && done) continue; // việc hôm trước đã xong: không mang sang
+    // Khách kế tiếp vào CHÍNH phòng đó SAU lượt trả phòng này (không lấy khách của lượt dọn khác trong ngày)
+    const from = checkoutAt ?? at(taskDay, "00:00");
+    const next = t.roomId ? arrivals.find((x) => x.roomId === t.roomId && x.id !== t.bookingId && x.at >= from && x.at < dayEnd) ?? null : null;
+    // Việc của hôm trước mà khách mới đã vào phòng từ hôm trước: lượt dọn đó đã qua, không còn là việc phải làm hôm nay
+    if (taskDay < date && next && next.at < dayStart) continue;
     const cl = (cls.find((c) => c.taskId === t.id)?.results ?? []) as ChecklistItem[];
     const st = checklistStats(cl, t.photoUrls);
-    const checkoutAt = t.bookingId ? leave.get(t.bookingId) ?? null : null;
-    // Khách kế tiếp: sau giờ khách cũ trả phòng (việc tồn từ hôm trước thì tính từ đầu ngày đang xem)
-    const from = checkoutAt && dayVN(checkoutAt) === date ? checkoutAt : dayStart;
-    const next = nextArrival(arrivals, t.roomId, from, t.bookingId);
     const nextIn = next?.at ?? null;
     const mins = nextIn ? Math.round((nextIn.getTime() - now.getTime()) / 60_000) : null;
-    const done = t.status === "DONE";
-    const state: CleanState = done ? "done" : mins !== null && mins <= urgent ? "urgent" : st.ticks || (st.photoNeed && st.photos) ? "doing" : "todo";
+    const state: CleanState = done ? "done"
+      : mins !== null && mins < -NOTIFY_LATE_LIMIT_MIN ? "missed"
+      : mins !== null && mins <= urgent ? "urgent"
+      : st.ticks || (st.photoNeed && st.photos) ? "doing" : "todo";
     const room: BoardRoom = {
       taskId: t.id, roomId: t.roomId, roomName: (t.roomId && roomName.get(t.roomId)) || t.title, title: t.title, state,
-      checkoutOn: dayVN(t.dueAt), dueAt: t.dueAt, checkoutAt, nextCheckInAt: nextIn, nextGuest: next?.guestName ?? null, minutesToCheckIn: mins, ...st,
+      checkoutOn: taskDay, dueAt: t.dueAt, checkoutAt, nextCheckInAt: nextIn, nextGuest: next?.guestName ?? null, minutesToCheckIn: mins, ...st,
       assigneeId: t.assigneeId, completedById: t.completedById, completedAt: t.completedAt,
       missingPhotos: done && (st.photoNeed ? st.photos < st.photoNeed : st.photos === 0), checklist: cl, bookingId: t.bookingId,
     };
     out.set(t.propertyId, [...(out.get(t.propertyId) ?? []), room]);
   }
-  const rank: Record<CleanState, number> = { urgent: 0, doing: 1, todo: 2, done: 3 };
+  const rank: Record<CleanState, number> = { urgent: 0, doing: 1, todo: 2, missed: 3, done: 4 };
   for (const [k, v] of out) {
     out.set(k, v.sort((a, b) => rank[a.state] - rank[b.state]
       || (a.nextCheckInAt?.getTime() ?? Infinity) - (b.nextCheckInAt?.getTime() ?? Infinity)
+      || (a.checkoutAt?.getTime() ?? 0) - (b.checkoutAt?.getTime() ?? 0)
       || a.roomName.localeCompare(b.roomName, "vi")));
   }
   return out;
@@ -389,7 +398,7 @@ export async function resolveIssue(db: DB, user: SessionUser, id: string, note: 
 
 // ---------- Daily report ----------
 export type Tone = "bad" | "warn" | "info";
-export interface ReportAlert { tone: Tone; kind: "urgent" | "missing" | "unfinished" | "support" | "issue"; title: string; detail: string; propertyId: string; href?: string }
+export interface ReportAlert { tone: Tone; kind: "urgent" | "missing" | "unfinished" | "missed" | "support" | "issue"; title: string; detail: string; propertyId: string; href?: string }
 
 export interface PropertyDay {
   propertyId: string;
@@ -441,6 +450,14 @@ export async function cleaningDailyReport(db: DB, user: SessionUser, date = D.to
         tone: "bad", kind: "urgent", propertyId: p.id, href: `/don-dep/${r.taskId}`,
         title: `${r.roomName} · ${p.name}: khách đến ${r.nextCheckInAt ? hmVN(r.nextCheckInAt) : ""}, phòng chưa dọn xong`,
         detail: `${m >= 0 ? `Còn ${m} phút` : `Đã quá giờ khách đến ${-m} phút`}. Phụ trách: ${nm(r.assigneeId)}. Đã làm ${r.ticks}/${r.total} việc, ${r.photos}/${r.photoNeed} ảnh.`,
+      });
+    }
+    const missedRooms = list.filter((r) => r.state === "missed");
+    if (missedRooms.length) {
+      alertsOut.push({
+        tone: "warn", kind: "missed", propertyId: p.id,
+        title: `${p.name}: ${missedRooms.length} lượt dọn đã qua giờ khách vào mà chưa có checklist`,
+        detail: missedRooms.map((r) => `${r.roomName} (trả ${r.checkoutAt ? hmVN(r.checkoutAt) : "?"}, khách vào ${r.nextCheckInAt ? hmVN(r.nextCheckInAt) : "?"})`).join(", "),
       });
     }
     for (const r of missing) {

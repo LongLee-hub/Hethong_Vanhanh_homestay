@@ -13,7 +13,7 @@ import { PushToggle } from "@/components/PushToggle";
 import { CleanNav } from "./nav";
 import { markReadAction, testPushAction } from "./actions";
 
-const PILL = { done: "ok", urgent: "bad", doing: "fc", todo: "" } as const;
+const PILL = { done: "ok", urgent: "bad", doing: "fc", todo: "", missed: "warn" } as const;
 
 function guestLine(r: BoardRoom, today: string) {
   const parts = [r.checkoutOn < today ? `Tồn từ ${D.formatDateVN(r.checkoutOn)}` : r.checkoutAt ? `Khách trả ${hmVN(r.checkoutAt)}` : `Hạn ${hmVN(r.dueAt)}`];
@@ -46,7 +46,9 @@ export default async function CleaningBoard({ searchParams }: { searchParams: Pr
   // Thông báo chưa xem; cảnh báo dọn ngay của cơ sở đang xem đã hiện thành mảng đỏ bên dưới nên không nhắc lại
   const inbox = (await myNotifications(db, user, { unreadOnly: true, limit: 10 })).filter((n) => !(n.urgent && n.propertyId === pid && n.key.endsWith(`:${today}`)));
   const urgent = board.filter((r) => r.state === "urgent");
-  const open = board.filter((r) => r.state !== "done");
+  // Khách mới đã vào phòng hơn 2 giờ mà việc chưa xong: tách riêng, không trộn với phòng đang phải dọn
+  const missed = board.filter((r) => r.state === "missed");
+  const open = board.filter((r) => r.state !== "done" && r.state !== "missed");
   const done = board.filter((r) => r.state === "done");
   const pct = board.length ? Math.round((done.length / board.length) * 100) : 0;
 
@@ -125,6 +127,13 @@ export default async function CleaningBoard({ searchParams }: { searchParams: Pr
 
       <h2 className="clean-h">Chưa xong <span className="muted small">xếp theo giờ khách đến</span></h2>
       {open.length ? <ul className="clean-list">{open.map(row)}</ul> : <div className="empty">{board.length ? "Đã dọn xong hết phòng hôm nay." : "Hôm nay không có phòng cần dọn."}</div>}
+
+      {missed.length > 0 && (
+        <>
+          <h2 className="clean-h">Quá giờ <span className="muted small">khách mới đã vào phòng, chưa có checklist</span></h2>
+          <ul className="clean-list">{missed.map(row)}</ul>
+        </>
+      )}
 
       {done.length > 0 && (
         <>

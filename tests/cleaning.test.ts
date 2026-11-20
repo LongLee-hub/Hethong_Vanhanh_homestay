@@ -245,3 +245,36 @@ describe("Lark đang tắt", () => {
     }
   });
 });
+
+describe("Nhiều lượt dọn trong ngày (thuê giờ + qua đêm) – tình huống phòng 301", () => {
+  it("mỗi lượt khách trả ghép đúng với khách vào kế tiếp; việc hôm qua đã có khách mới thì không mang sang", async () => {
+    const s = schema;
+    const y = D.addDays(today, -1);
+    const tmr = D.addDays(today, 1);
+    await db.insert(s.rooms).values({ id: "R301", propertyId: "KT", name: "301", openedOn: "2026-01-01" });
+    const bk = (id: string, guest: string, inAt: Date, outAt: Date, checkIn: string, checkOut: string) =>
+      ({ id, source: "DAYLADAU" as const, propertyId: "KT", roomId: "R301", channel: "Airbnb", guestName: guest, checkIn, checkOut, checkInAt: inAt, checkOutAt: outAt, status: "CONFIRMED" as const });
+    await db.insert(s.bookings).values([
+      bk("g9006", "Khách 9006", vn("10:00", y), vn("20:00", y), y, today), // thuê giờ hôm qua (cột ngày trả ghi hôm nay)
+      bk("g5818", "Khách 5818", vn("21:00", y), vn("09:00"), y, today),
+      bk("gIris", "Iris", vn("10:00"), vn("20:00"), today, tmr),
+      bk("gViet", "Việt Anh", vn("21:00"), vn("09:00", tmr), today, tmr),
+    ]);
+    // Việc cũ sinh theo cột ngày trả (cách cũ): Khách 9006 bị xếp vào hôm nay lúc 14:00
+    await createTask(db, mgr, { propertyId: "KT", roomId: "R301", type: "CLEANING", title: "Dọn 301 – Khách 9006", assigneeId: quan.id, dueAt: vn("14:00"), recurrenceRule: null })
+      .then((t) => db.update(s.tasks).set({ bookingId: "g9006" }).where(eq(s.tasks.id, t.id)));
+    await generateCleaningTasks(db, today, today);
+    const board = (await cleaningBoard(db, mgr, "KT", today, vn("10:18"))).filter((r) => r.roomId === "R301");
+    expect(board.map((r) => [hm(r.checkoutAt), hm(r.nextCheckInAt), r.nextGuest, r.state])).toEqual([
+      ["09:00", "10:00", "Iris", "urgent"], // khách vào 10:00, đã quá 18 phút
+      ["20:00", "21:00", "Việt Anh", "todo"],
+    ]);
+    // 13:00: lượt 09:00→10:00 đã quá giờ khách vào hơn 2 tiếng → tách thành "Quá giờ", không còn là Dọn ngay
+    const later = (await cleaningBoard(db, mgr, "KT", today, vn("13:00"))).filter((r) => r.roomId === "R301");
+    expect(later.map((r) => r.state)).toEqual(["todo", "missed"]);
+  });
+});
+
+function hm(d: Date | null) {
+  return d ? new Date(d.getTime() + 7 * 3600_000).toISOString().slice(11, 16) : null;
+}

@@ -12,7 +12,7 @@ import { CleanNav } from "../nav";
 const DOW = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
 const dow = (d: string) => DOW[new Date(`${d}T00:00:00Z`).getUTCDay()];
 const STATE: Record<CalendarEvent["state"], [string, string]> = {
-  done: [STATE_LABEL.done, "ok"], urgent: [STATE_LABEL.urgent, "bad"], doing: [STATE_LABEL.doing, "fc"], todo: [STATE_LABEL.todo, ""],
+  done: [STATE_LABEL.done, "ok"], urgent: [STATE_LABEL.urgent, "bad"], doing: [STATE_LABEL.doing, "fc"], todo: [STATE_LABEL.todo, ""], missed: ["Quá giờ", "warn"],
   upcoming: ["Sắp tới", ""], none: ["Chưa có việc dọn", "warn"],
 };
 
