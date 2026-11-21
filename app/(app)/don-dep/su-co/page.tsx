@@ -31,7 +31,7 @@ export default async function ReportIssue({ searchParams }: { searchParams: Prom
   return (
     <>
       <div className="topbar"><div><h1>Báo sự cố</h1><p className="small muted">{props.find((p) => p.id === pid)?.name}: quản lý nhận được ngay khi bạn gửi.</p></div></div>
-      <CleanNav current="issues" p={pid} />
+      <CleanNav current="issues" p={pid} manage={can(user, "assignTask")} />
 
       <section className="panel">
         <ActionForm action={reportIssueAction} submit="Gửi cho quản lý" okText="Đã gửi cho quản lý">

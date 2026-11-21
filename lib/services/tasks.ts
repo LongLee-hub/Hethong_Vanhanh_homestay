@@ -3,6 +3,7 @@ import { and, asc, eq, gte, inArray, isNull, lt, lte, ne, or } from "drizzle-orm
 import * as D from "../domain";
 import type { DB } from "../db";
 import { attendance, bookings, checklistResults, properties, rooms, tasks, userPropertyAccess, users } from "../db/schema";
+import { cleaningChecklistFor } from "./checklists";
 import { allowedPropertyIds, assertPropertyAccess, badRequest, can, forbidden, notFound, requirePermission, type SessionUser } from "../auth/access";
 import { getSetting } from "./settings";
 
@@ -23,6 +24,9 @@ export interface ChecklistItem {
   note?: string;
   needPhoto?: boolean;
   photo?: string | null;
+  /** Hướng dẫn ngắn và ảnh mẫu, chép từ mẫu checklist lúc tạo việc (lib/services/checklists.ts). */
+  hint?: string;
+  sample?: string;
 }
 
 /**
@@ -88,7 +92,7 @@ export async function createTask(db: DB, user: SessionUser, input: Omit<TaskInse
     if (!a) throw badRequest("Người làm không được gán cơ sở này");
   }
   const [t] = await db.insert(tasks).values({ ...input, assignedById: user.id, status: "TODO" }).returning();
-  if (t.type === "CLEANING") await db.insert(checklistResults).values({ taskId: t.id, results: newChecklist(t.type) });
+  if (t.type === "CLEANING") await db.insert(checklistResults).values({ taskId: t.id, results: await cleaningChecklistFor(db, t.propertyId) });
   return t;
 }
 
@@ -203,7 +207,7 @@ export async function generateCleaningTasks(db: DB, fromDate: string, toDate: st
         assignedById: createdBy, assigneeId: hk?.id ?? null, dueAt, status: "TODO",
       })
       .returning();
-    await db.insert(checklistResults).values({ taskId: t.id, results: newChecklist("CLEANING") });
+    await db.insert(checklistResults).values({ taskId: t.id, results: await cleaningChecklistFor(db, t.propertyId) });
     n++;
   }
   return n;

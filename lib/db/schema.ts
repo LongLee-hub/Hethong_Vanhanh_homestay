@@ -430,10 +430,19 @@ export const tasks = pgTable(
   (t) => [index("tasks_prop_status_due").on(t.propertyId, t.status, t.dueAt)],
 );
 
+/**
+ * Mẫu checklist dọn phòng do Admin/Quản lý sửa. propertyId null = mẫu mặc định cho mọi cơ sở;
+ * cơ sở có mẫu riêng thì dùng mẫu riêng. steps: [{ id, item, needPhoto, hint, sample }] (lib/services/checklists.ts).
+ */
 export const checklistTemplates = pgTable("checklist_templates", {
   id: id(),
   name: text("name").notNull(),
-  items: text("items").array().notNull(),
+  items: text("items").array().notNull().default(sql`'{}'::text[]`),
+  type: text("type").notNull().default("CLEANING"),
+  propertyId: text("property_id"),
+  steps: jsonb("steps").notNull().default(sql`'[]'::jsonb`),
+  updatedAt: ts("updated_at"),
+  updatedById: text("updated_by_id"),
 });
 
 export const checklistResults = pgTable("checklist_results", {

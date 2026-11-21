@@ -204,6 +204,13 @@
       "when": 1795331000000,
       "tag": "0027_attendance_address",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1795332000000,
+      "tag": "0028_checklist_templates_editable",
+      "breakpoints": true
     }
   ]
 }

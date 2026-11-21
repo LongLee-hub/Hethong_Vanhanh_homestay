@@ -42,7 +42,7 @@ export default async function CleaningCalendar({ searchParams }: { searchParams:
           <Link className="btn" href={link(D.addDays(from, 7))} aria-label="Tuần sau">›</Link>
         </div>
       </div>
-      <CleanNav current="calendar" p={pid} />
+      <CleanNav current="calendar" p={pid} manage={can(user, "assignTask")} />
       {props.length > 1 && (
         <nav className="chips clean-props" aria-label="Chọn cơ sở">
           {props.map((p) => <Link key={p.id} className="chip" aria-pressed={p.id === pid} href={`/don-dep/lich?p=${p.id}&d=${day}`}>{p.name}</Link>)}

@@ -81,7 +81,7 @@ export default async function CleaningBoard({ searchParams }: { searchParams: Pr
           </p>
         </div>
       </div>
-      <CleanNav current="board" p={pid} />
+      <CleanNav current="board" p={pid} manage={can(user, "assignTask")} />
       <PushToggle publicKey={vapidPublicKey()} testAction={testPushAction} />
 
       {inbox.length > 0 && (

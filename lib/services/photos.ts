@@ -4,12 +4,15 @@ import { arrayContains, eq, or } from "drizzle-orm";
 import type { DB } from "../db";
 import { attendance, bookings, expenses, facilityIssues, tasks } from "../db/schema";
 import { onShiftAt } from "./tasks";
+import { SAMPLE_FOLDER } from "./checklists";
 import { allowedPropertyIds, can, type SessionUser } from "../auth/access";
 
 const SAFE_PATH = /^[\w-]+\/[\w./-]+$/;
 
 export async function canViewPhoto(db: DB, user: SessionUser, stored: string): Promise<boolean> {
   if (!SAFE_PATH.test(stored) || stored.includes("..")) return false;
+  // Ảnh mẫu checklist: ảnh hướng dẫn, không riêng tư, ai làm việc dọn phòng hoặc quản lý đều xem được
+  if (stored.split("/")[1] === SAMPLE_FOLDER) return can(user, "workTask") || can(user, "assignTask");
   const [exp] = await db.select({ propertyId: expenses.propertyId }).from(expenses).where(arrayContains(expenses.receiptUrls, [stored])).limit(1);
   if (exp) {
     if (!can(user, "viewFinance")) return false;

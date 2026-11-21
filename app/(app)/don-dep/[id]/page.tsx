@@ -66,7 +66,14 @@ export default async function CleaningChecklist({ params }: { params: Promise<{ 
             </form>
             <span className="clean-item">
               {c.item}
+              {c.hint && <span className="small muted">{c.hint}</span>}
               {c.needPhoto && <span className="small muted">{c.photo ? "Đã có ảnh" : "Bắt buộc chụp ảnh"}</span>}
+              {c.sample && (
+                <a className="clean-sample" href={photoHref(c.sample)} target="_blank" rel="noreferrer">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={photoHref(c.sample)} alt="" loading="lazy" />Xem ảnh mẫu
+                </a>
+              )}
             </span>
             {c.photo && (
               <a href={photoHref(c.photo)} target="_blank" rel="noreferrer" className="clean-thumb">

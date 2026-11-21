@@ -588,3 +588,30 @@ table.statement .month-list .month-item input[type=month] { min-width: 140px; }
 .inbox li { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .inbox li[data-urgent] { border-color: var(--neg); }
 .inbox li a { flex: 1; min-width: 0; display: grid; gap: 2px; color: var(--ink); text-decoration: none; }
+
+/* Sửa checklist dọn phòng (/don-dep/checklist) */
+.ck-steps { list-style: none; margin: 0 0 16px; padding: 0; display: grid; gap: 8px; }
+.ck-steps > li { border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: var(--surface); }
+.ck-row { display: flex; align-items: center; gap: 12px; }
+.ck-n { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--muted); font-size: .86rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ck-text { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.ck-sample { flex: none; width: 64px; height: 64px; border-radius: 10px; overflow: hidden; background: var(--surface-2); }
+.ck-sample img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ck-move { flex: none; display: grid; gap: 4px; }
+.ck-move .btn { padding: 2px 10px; line-height: 1.2; }
+.ck-edit { margin-top: 10px; padding-left: 40px; }
+.ck-edit > summary { cursor: pointer; font-size: .9rem; color: var(--accent); font-weight: 500; }
+.ck-edit[open] > summary { margin-bottom: 12px; }
+.ck-edit > form + form { margin-top: 12px; }
+.ck-add > summary { list-style: none; display: inline-flex; }
+.ck-add > summary::-webkit-details-marker { display: none; }
+.ck-add[open] > summary { margin-bottom: 16px; }
+@media (max-width: 640px) {
+  .ck-row { align-items: flex-start; }
+  .ck-edit { padding-left: 0; }
+  .ck-sample { width: 52px; height: 52px; }
+}
+
+/* Ảnh mẫu và hướng dẫn trong checklist buồng phòng (/don-dep/[id]) */
+.clean-sample { display: inline-flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--accent); text-decoration: none; }
+.clean-sample img { width: 28px; height: 28px; border-radius: 6px; object-fit: cover; }
