@@ -1,4 +1,4 @@
-# Cảnh báo dọn phòng 5 phút/lần: phòng sắp có khách mà chưa dọn xong → đẩy thông báo tới điện thoại
+# DỰ PHÒNG (lịch chính: pg_cron trong Supabase, drizzle/0025_supabase_cron.sql). Cảnh báo dọn phòng 5 phút/lần: phòng sắp có khách mà chưa dọn xong → đẩy thông báo tới điện thoại
 # nhân viên dọn dẹp chính của cơ sở; sự cố mở quá 24 giờ → nhắc lại. Vercel gói Hobby chỉ cho cron 1 lần/ngày
 # nên lịch dày chạy ở đây. GitHub có thể chạy trễ vài phút so với lịch khi máy chủ của họ bận.
 # Cần secret CLEANING_CRON_TOKEN (Settings → Secrets and variables → Actions), trùng giá trị biến cùng tên trên Vercel.

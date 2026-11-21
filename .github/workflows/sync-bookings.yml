@@ -1,4 +1,5 @@
-# Lấy đơn Dayladau 15 phút/lần từ 6h đến 24h giờ VN để đơn đặt trong ngày về app kịp thời.
+# DỰ PHÒNG + chạy tay. Lịch chính nằm trong Supabase (pg_cron, drizzle/0025_supabase_cron.sql) vì GitHub thực tế chỉ chạy
+# lịch dày vài lần/ngày. Workflow này gọi /api/cron/sync-bookings 15 phút/lần từ 6h đến 24h giờ VN.
 # Vercel gói Hobby chỉ cho cron 1 lần/ngày (lượt đầy đủ 6h sáng ở vercel.json) nên lịch dày chạy ở đây.
 # Lịch GitHub tính theo giờ UTC: 23:xx UTC = 6:xx VN, 00:00–16:59 UTC = 7:00–23:59 VN.
 # GitHub có thể chạy trễ vài phút khi máy chủ bận; repo công khai không có commit 60 ngày thì GitHub tự tắt lịch.

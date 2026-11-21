@@ -4,7 +4,9 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
+import { sql } from "drizzle-orm";
 import { getDb } from "./db";
+import { rowsOf } from "./db/rows";
 import { HttpError, type SessionUser } from "./auth/access";
 import { SESSION_COOKIE, readSessionToken, refreshUser } from "./auth/session";
 import { getSetting } from "./services/settings";
@@ -62,6 +64,25 @@ export async function action(fn: () => Promise<unknown>): Promise<{ ok: boolean;
 export function cronAuthorized(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
   return !!secret && req.headers.get("authorization") === `Bearer ${secret}`;
+}
+
+/**
+ * Route chạy theo lịch dày (lấy đơn, cảnh báo dọn phòng). Nhận một trong:
+ * CRON_SECRET (Vercel Cron), khóa trong biến môi trường được nêu (GitHub Actions),
+ * hoặc khóa sinh sẵn trong DB app_private.cron_secrets (pg_cron của Supabase, drizzle/0025_supabase_cron.sql).
+ */
+export async function scheduledAuthorized(req: Request, envKeys: string[] = []): Promise<boolean> {
+  if (cronAuthorized(req)) return true;
+  const auth = req.headers.get("authorization") ?? "";
+  if (!auth.startsWith("Bearer ")) return false;
+  const given = auth.slice(7).trim();
+  if (given.length < 24) return false;
+  if (envKeys.some((k) => process.env[k]?.trim() === given)) return true;
+  const rows = await getDb()
+    .execute(sql`SELECT value FROM app_private.cron_secrets WHERE name = 'http'`)
+    .then((r) => rowsOf<{ value: string }>(r))
+    .catch(() => []);
+  return rows[0]?.value === given;
 }
 
 /** Địa chỉ public của app để dựng link gửi ra ngoài (Lark): APP_URL → cài đặt appUrl → header của request. */
