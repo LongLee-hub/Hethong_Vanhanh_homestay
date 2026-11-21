@@ -6,11 +6,11 @@ import { api } from "@/lib/server";
 const Body = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("in"), propertyId: z.string(), shift: z.enum(["MORNING", "EVENING", "OVERTIME"]).optional(), photoUrl: z.string().optional(),
-    lat: z.number().nullish(), lng: z.number().nullish(), accuracyM: z.number().nullish(),
+    lat: z.number().nullish(), lng: z.number().nullish(), accuracyM: z.number().nullish(), address: z.string().max(300).nullish(),
   }),
   z.object({
     action: z.literal("out"), attendanceId: z.string().optional(), photoUrl: z.string().optional(),
-    lat: z.number().nullish(), lng: z.number().nullish(), accuracyM: z.number().nullish(),
+    lat: z.number().nullish(), lng: z.number().nullish(), accuracyM: z.number().nullish(), address: z.string().max(300).nullish(),
   }),
 ]);
 

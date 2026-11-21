@@ -486,10 +486,13 @@ export const attendance = pgTable(
     lat: numeric("lat", { precision: 9, scale: 6, mode: "number" }),
     lng: numeric("lng", { precision: 9, scale: 6, mode: "number" }),
     accuracyM: integer("accuracy_m"),
+    /** Địa chỉ tra từ GPS lúc chụp ảnh vào ca, đúng dòng in trên ảnh. */
+    checkInAddress: text("check_in_address"),
     // Vị trí máy lúc chụp ảnh kết thúc ca
     checkOutLat: numeric("check_out_lat", { precision: 9, scale: 6, mode: "number" }),
     checkOutLng: numeric("check_out_lng", { precision: 9, scale: 6, mode: "number" }),
     checkOutAccuracyM: integer("check_out_accuracy_m"),
+    checkOutAddress: text("check_out_address"),
     note: text("note"),
   },
   (t) => [uniqueIndex("attendance_user_date_shift").on(t.userId, t.date, t.shift)],

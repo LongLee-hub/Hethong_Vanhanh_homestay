@@ -105,8 +105,8 @@ describe("chấm công theo ca", () => {
     await clockIn(db, hk2, { propertyId: "KT", shift: "OVERTIME", photoUrl: "loci-photos/attendance/c.jpg" });
     // Kết thúc ca: buồng phòng bắt buộc có ảnh, lưu tọa độ lúc chụp
     await expect(clockOut(db, hk2)).rejects.toThrow(/kết thúc ca/);
-    const out = await clockOut(db, hk2, { photoUrl: "loci-photos/attendance/out1.jpg", lat: 21.0013, lng: 105.8202, accuracyM: 8.6 });
-    expect(out).toMatchObject({ checkOutPhotoUrl: "loci-photos/attendance/out1.jpg", checkOutLat: 21.0013, checkOutLng: 105.8202, checkOutAccuracyM: 9 });
+    const out = await clockOut(db, hk2, { photoUrl: "loci-photos/attendance/out1.jpg", lat: 21.0013, lng: 105.8202, accuracyM: 8.6, address: "12 Vạn Phúc, Ba Đình, Hà Nội" });
+    expect(out).toMatchObject({ checkOutPhotoUrl: "loci-photos/attendance/out1.jpg", checkOutLat: 21.0013, checkOutLng: 105.8202, checkOutAccuracyM: 9, checkOutAddress: "12 Vạn Phúc, Ba Đình, Hà Nội" });
     expect(out.checkOutAt).toBeInstanceOf(Date);
     await clockOut(db, hk2, { photoUrl: "loci-photos/attendance/out2.jpg" });
     await clockOut(db, hk2, { photoUrl: "loci-photos/attendance/out3.jpg" });

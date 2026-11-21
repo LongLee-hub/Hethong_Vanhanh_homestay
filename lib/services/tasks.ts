@@ -219,6 +219,8 @@ export interface ClockInInput {
   lat?: number | null;
   lng?: number | null;
   accuracyM?: number | null;
+  /** Địa chỉ in trên ảnh (tra từ GPS ở trình duyệt). */
+  address?: string | null;
 }
 
 /** Vào ca. Buồng phòng bắt buộc có ảnh chụp tại chỗ (đã in ngày giờ, cơ sở, tọa độ). Mỗi người mỗi ngày mỗi ca một lần. */
@@ -242,6 +244,7 @@ export async function clockIn(db: DB, user: SessionUser, i: ClockInInput) {
     .values({
       userId: user.id, propertyId: i.propertyId, date: today, shift, support, checkInAt: new Date(), photoUrl: i.photoUrl,
       lat: num(i.lat), lng: num(i.lng), accuracyM: num(i.accuracyM) === null ? null : Math.round(i.accuracyM!),
+      checkInAddress: i.address?.trim().slice(0, 300) || null,
     })
     .returning();
   return row;
@@ -253,7 +256,7 @@ export async function clockIn(db: DB, user: SessionUser, i: ClockInInput) {
  */
 export async function clockOut(
   db: DB, user: SessionUser,
-  opts: { attendanceId?: string; photoUrl?: string; lat?: number | null; lng?: number | null; accuracyM?: number | null } = {},
+  opts: { attendanceId?: string; photoUrl?: string; lat?: number | null; lng?: number | null; accuracyM?: number | null; address?: string | null } = {},
 ) {
   requirePermission(user, "clock");
   if (user.role === "HOUSEKEEPER" && !opts.photoUrl) throw badRequest("Chụp ảnh tại cơ sở để kết thúc ca");
@@ -267,6 +270,7 @@ export async function clockOut(
   const [row] = await db.update(attendance).set({
     checkOutAt: new Date(), checkOutPhotoUrl: opts.photoUrl ?? null,
     checkOutLat: num(opts.lat), checkOutLng: num(opts.lng), checkOutAccuracyM: acc === null ? null : Math.round(acc),
+    checkOutAddress: opts.address?.trim().slice(0, 300) || null,
   }).where(eq(attendance.id, open[0].id)).returning();
   return row;
 }

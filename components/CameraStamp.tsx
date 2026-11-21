@@ -1,5 +1,6 @@
 "use client";
-// Máy ảnh chấm công: chụp tại chỗ, in giờ, ngày, cơ sở, tọa độ GPS và tên nhân viên lên ảnh rồi gửi kèm form.
+// Máy ảnh chấm công: chụp tại chỗ, in giờ, ngày, cơ sở, địa chỉ nơi chụp (tra từ GPS) và tên nhân viên lên ảnh rồi gửi kèm form.
+// Ảnh in địa chỉ đọc được chứ không in tọa độ; tọa độ vẫn gửi kèm để mở bản đồ trong bảng ngày công.
 // Ảnh in dấu ở trình duyệt (canvas) nên người quản lý xem ảnh là thấy ngay chụp lúc nào, ở đâu.
 // Dùng cho cả vào ca và kết thúc ca (mode="out": cơ sở, ca đã cố định theo ca đang mở, dấu in ghi "Kết thúc ca").
 // Máy không mở được camera trực tiếp (trình duyệt cũ, bị chặn quyền) thì dùng ô chụp ảnh của điện thoại, vẫn in dấu như trên.
@@ -18,15 +19,20 @@ const fmtDate = (d: Date) => {
   const s = d.toLocaleDateString("vi-VN", { timeZone: TZ, weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" });
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
-const fmtGeo = (g: Geo) => (g ? `${g.lat.toFixed(6)}, ${g.lng.toFixed(6)} (±${Math.round(g.acc)} m)` : "Không lấy được vị trí");
+/** Dòng địa điểm in trên ảnh. */
+const fmtPlace = (geo: Geo, address: string | null) =>
+  address ? `Tại: ${address}` : geo ? "Tại: chưa tra được địa chỉ" : "Không lấy được vị trí";
+/** Khoảng cách (m) giữa hai tọa độ, đủ chính xác cho vài trăm mét. */
+const dist = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) =>
+  Math.hypot((a.lat - b.lat) * 111_320, (a.lng - b.lng) * 111_320 * Math.cos((a.lat * Math.PI) / 180));
 
 /** In khối dấu thời gian vào góc dưới trái ảnh. Cỡ chữ theo cạnh ngắn của ảnh để ảnh nhỏ hay lớn đều đọc được. */
-export function drawStamp(ctx: CanvasRenderingContext2D, w: number, h: number, at: Date, place: StampProperty | undefined, geo: Geo, who: string, shift: string, mode: StampMode = "in") {
+export function drawStamp(ctx: CanvasRenderingContext2D, w: number, h: number, at: Date, place: StampProperty | undefined, geo: Geo, address: string | null, who: string, shift: string, mode: StampMode = "in") {
   const u = Math.min(w, h) / 100; // 1 đơn vị = 1% cạnh ngắn
   const pad = 3 * u;
   const big = 11 * u;
   const small = 3.4 * u;
-  const lines = [fmtDate(at), place?.name ?? "", place?.address ?? "", fmtGeo(geo), `${who} · ${shift}`].filter(Boolean);
+  const lines = [fmtDate(at), place?.name ?? "", fmtPlace(geo, address), `${who} · ${shift}`].filter(Boolean);
   const lineH = small * 1.45;
   const blockH = big * 1.05 + lines.length * lineH + pad;
   const x = pad;
@@ -90,11 +96,17 @@ export function CameraStamp({ properties, userName, shifts, name = "photo", mode
   const place = properties.find((p) => p.id === propertyId);
   const [geo, setGeo] = useState<Geo>(null);
   const [geoState, setGeoState] = useState<GeoState>("waiting");
+  const [address, setAddress] = useState<string | null>(null);
+  const [addrLoading, setAddrLoading] = useState(false);
+  const lookedUp = useRef<{ lat: number; lng: number } | null>(null);
+  const pending = useRef<Promise<string | null> | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [live, setLive] = useState(false);
   const [facing, setFacing] = useState<"user" | "environment">("user");
   const [camError, setCamError] = useState<string | null>(null);
   const [shot, setShot] = useState<string | null>(null);
+  /** Địa chỉ đã in vào ảnh vừa chụp, gửi kèm form cho đúng với ảnh. */
+  const [shotAddress, setShotAddress] = useState<string | null>(null);
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -129,6 +141,26 @@ export function CameraStamp({ properties, userName, shifts, name = "photo", mode
     return () => navigator.geolocation.clearWatch(id);
   }, []);
 
+  // Tra địa chỉ khi có vị trí, và tra lại khi người dùng đi xa hơn 30 m so với lần tra trước
+  useEffect(() => {
+    if (!geo) return;
+    if (lookedUp.current && dist(lookedUp.current, geo) < 30) return;
+    lookedUp.current = { lat: geo.lat, lng: geo.lng };
+    setAddrLoading(true);
+    const p = fetch(`/api/geocode?lat=${geo.lat}&lng=${geo.lng}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { address?: string | null } | null) => j?.address ?? null)
+      .catch(() => null);
+    pending.current = p;
+    void p.then((a) => {
+      if (pending.current !== p) return;
+      if (a) setAddress(a);
+      // Tra lỗi (mạng chập chờn) thì 15 giây sau cho tra lại
+      else setTimeout(() => { if (pending.current === p) lookedUp.current = null; }, 15_000);
+      setAddrLoading(false);
+    });
+  }, [geo]);
+
   const stop = useCallback(() => {
     stream.current?.getTracks().forEach((t) => t.stop());
     stream.current = null;
@@ -161,7 +193,11 @@ export function CameraStamp({ properties, userName, shifts, name = "photo", mode
     if (mirror) { ctx.translate(c.width, 0); ctx.scale(-1, 1); }
     ctx.drawImage(src, 0, 0, c.width, c.height);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    drawStamp(ctx, c.width, c.height, new Date(), place, geo, userName, shiftLabel, mode);
+    // Bấm chụp lúc địa chỉ đang tra dở thì chờ tối đa 5 giây để ảnh có địa chỉ
+    let addr = address;
+    if (!addr && pending.current) addr = await Promise.race([pending.current, new Promise<null>((r) => setTimeout(() => r(null), 5000))]);
+    setShotAddress(addr);
+    drawStamp(ctx, c.width, c.height, new Date(), place, geo, addr, userName, shiftLabel, mode);
     const blob: Blob | null = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.85));
     if (!blob || !fileInput.current) return;
     const dt = new DataTransfer();
@@ -190,6 +226,7 @@ export function CameraStamp({ properties, userName, shifts, name = "photo", mode
     lastFile.current = null;
     if (fileInput.current) fileInput.current.value = "";
     setShot(null);
+    setShotAddress(null);
     void start();
   }
 
@@ -226,8 +263,7 @@ export function CameraStamp({ properties, userName, shifts, name = "photo", mode
               <b className={css.time}>{fmtTime(now)} <small className={css.tag} data-mode={mode}>{MODE_TAG[mode]}</small></b>
               <span>{fmtDate(now)}</span>
               <span>{place?.name}</span>
-              {place?.address && <span>{place.address}</span>}
-              <span>{fmtGeo(geo)}</span>
+              <span>{!address && addrLoading ? "Đang tra địa chỉ…" : fmtPlace(geo, address)}</span>
             </div>
           </>
         ) : (
@@ -256,10 +292,11 @@ export function CameraStamp({ properties, userName, shifts, name = "photo", mode
       </div>
 
       <p className={`small ${geoState === "ok" ? "muted" : "neg"}`} role="status">
-        {geoState === "ok" && geo ? `Đã lấy vị trí, sai số khoảng ${Math.round(geo.acc)} m.`
+        {geoState === "ok" && geo
+          ? address ? `Địa chỉ in trên ảnh: ${address}.` : addrLoading ? "Đang tra địa chỉ nơi chụp…" : "Đã lấy vị trí nhưng chưa tra được địa chỉ. Vẫn chụp được, vị trí GPS vẫn được lưu."
           : geoState === "waiting" ? "Đang lấy vị trí… Bật định vị (GPS) trên điện thoại nếu chờ lâu."
-          : geoState === "denied" ? "Chưa được cấp quyền vị trí. Cho phép vị trí cho trang này để ảnh có tọa độ."
-          : "Máy không hỗ trợ định vị, ảnh sẽ không có tọa độ."}
+          : geoState === "denied" ? "Chưa được cấp quyền vị trí. Cho phép vị trí cho trang này để ảnh có địa chỉ nơi chụp."
+          : "Máy không hỗ trợ định vị, ảnh sẽ không có địa chỉ nơi chụp."}
       </p>
       {camError && <p className="small neg">{camError}</p>}
 
@@ -267,6 +304,7 @@ export function CameraStamp({ properties, userName, shifts, name = "photo", mode
       {fixed && <><input type="hidden" name="shift" value={shift} /><input type="hidden" name="propertyId" value={propertyId} /></>}
       <input type="hidden" name="lat" value={geo?.lat ?? ""} />
       <input type="hidden" name="lng" value={geo?.lng ?? ""} />
+      <input type="hidden" name="address" value={shotAddress ?? ""} />
       <input type="hidden" name="accuracy" value={geo ? Math.round(geo.acc) : ""} />
     </div>
   );

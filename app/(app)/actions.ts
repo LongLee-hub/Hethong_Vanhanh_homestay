@@ -110,7 +110,7 @@ export async function clockAction(_: State, f: FormData): Promise<State> {
       if (user.role === "HOUSEKEEPER" && !file) throw badRequest("Chụp ảnh tại cơ sở để kết thúc ca");
       await clockOut(db, user, {
         attendanceId: String(f.get("attendanceId") || "") || undefined, photoUrl: file ? await uploadPhoto(file, "attendance") : undefined,
-        lat: coord("lat"), lng: coord("lng"), accuracyM: coord("accuracy"),
+        lat: coord("lat"), lng: coord("lng"), accuracyM: coord("accuracy"), address: String(f.get("address") ?? ""),
       });
       return;
     }
@@ -120,7 +120,7 @@ export async function clockAction(_: State, f: FormData): Promise<State> {
     if (user.role === "HOUSEKEEPER" && !file) throw badRequest("Chụp ảnh tại cơ sở để vào ca");
     await clockIn(db, user, {
       propertyId: String(f.get("propertyId")), shift, support: f.get("kind") === "SUPPORT", photoUrl: file ? await uploadPhoto(file, "attendance") : undefined,
-      lat: coord("lat"), lng: coord("lng"), accuracyM: coord("accuracy"),
+      lat: coord("lat"), lng: coord("lng"), accuracyM: coord("accuracy"), address: String(f.get("address") ?? ""),
     });
   });
   revalidatePath("/attendance");

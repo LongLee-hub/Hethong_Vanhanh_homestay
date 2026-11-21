@@ -197,6 +197,13 @@
       "when": 1795330000000,
       "tag": "0026_attendance_checkout_location",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1795331000000,
+      "tag": "0027_attendance_address",
+      "breakpoints": true
     }
   ]
 }

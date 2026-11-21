@@ -16,10 +16,11 @@ import { clockAction } from "../actions";
 
 const hm = (d: Date | null) => (d ? new Date(d.getTime() + 7 * 3600_000).toISOString().slice(11, 16) : "—");
 /** Ảnh và vị trí của một lần chụp chấm công (vào ca hoặc kết thúc ca). */
-function Proof({ photo, lat, lng, acc }: { photo: string | null; lat: number | null; lng: number | null; acc: number | null }) {
+function Proof({ photo, lat, lng, acc, address }: { photo: string | null; lat: number | null; lng: number | null; acc: number | null; address: string | null }) {
   if (!photo && (lat === null || lng === null)) return <span className="muted">—</span>;
   return (
-    <span style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
+    <span style={{ display: "inline-flex", gap: 10, flexWrap: "wrap", maxWidth: 280 }}>
+      {address && <span className="small" style={{ flexBasis: "100%" }}>{address}</span>}
       {photo ? <a href={photoHref(photo)} target="_blank" rel="noreferrer">Xem ảnh</a> : <span className="muted">Không ảnh</span>}
       {lat !== null && lng !== null
         ? <a href={`https://www.google.com/maps?q=${lat},${lng}`} target="_blank" rel="noreferrer">Bản đồ{acc ? ` (±${acc} m)` : ""}</a>
@@ -133,9 +134,9 @@ export default async function Attendance({ searchParams }: { searchParams: Promi
                 <td>{props.find((p) => p.id === r.propertyId)?.name ?? others.find((p) => p.id === r.propertyId)?.name}</td>
                 <td>{SHIFT_LABEL[r.shift]}{r.support ? <span className="pill warn" style={{ marginLeft: 6 }}>Hỗ trợ</span> : null}</td>
                 <td className="num">{hm(r.checkInAt)}</td>
-                <td><Proof photo={r.photoUrl} lat={r.lat} lng={r.lng} acc={r.accuracyM} /></td>
+                <td><Proof photo={r.photoUrl} lat={r.lat} lng={r.lng} acc={r.accuracyM} address={r.checkInAddress} /></td>
                 <td className="num">{r.checkOutAt ? hm(r.checkOutAt) : <span className="pill warn">Chưa kết thúc</span>}</td>
-                <td>{r.checkOutAt ? <Proof photo={r.checkOutPhotoUrl} lat={r.checkOutLat} lng={r.checkOutLng} acc={r.checkOutAccuracyM} /> : <span className="muted">—</span>}</td>
+                <td>{r.checkOutAt ? <Proof photo={r.checkOutPhotoUrl} lat={r.checkOutLat} lng={r.checkOutLng} acc={r.checkOutAccuracyM} address={r.checkOutAddress} /> : <span className="muted">—</span>}</td>
               </tr>
             ))}
             {!listed.length && <tr><td colSpan={8} className="muted">Chưa có ngày công nào trong tháng.</td></tr>}
