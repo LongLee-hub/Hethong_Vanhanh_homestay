@@ -19,7 +19,7 @@ import { addTaskPhoto, createTask, setTaskStatus, updateChecklist } from "../lib
 import { createRoom as createRoomInProperty, updateRoom } from "../lib/services/rooms";
 import { buildInvestorReport } from "../lib/services/investor-report";
 import { setPropertyActive, updateProperty, type UpdatePropertyInput } from "../lib/services/properties";
-import { createUser, resetPassword, setUserActive, setUserProperties, updateUser } from "../lib/services/users";
+import { createUser, deleteUser, resetPassword, setUserActive, setUserProperties, updateUser } from "../lib/services/users";
 import { verifyLogin } from "../lib/auth/session";
 import { bookingChanges } from "../lib/services/booking-changes";
 
@@ -525,6 +525,29 @@ describe("Tài khoản theo vị trí", () => {
     await setUserActive(db, admin, u.id, true);
     expect((await verifyLogin(db, "kt2@x.vn", "moimoi1234")).id).toBe(u.id);
     await expect(setUserActive(db, admin, admin.id, false)).rejects.toThrow(/tự khóa/);
+  });
+
+  it("xóa tài khoản chưa dùng; tài khoản có dữ liệu thì phải khóa", async () => {
+    const u = await createUser(db, admin, { ...base, name: "Tạo nhầm", phone: "0977000111", role: "HOUSEKEEPER", propertyIds: ["X"] });
+    await expect(deleteUser(db, mgr, u.id)).rejects.toMatchObject({ status: 403 });
+    await deleteUser(db, admin, u.id);
+    expect(await db.select().from(schema.users).where(eq(schema.users.id, u.id))).toEqual([]);
+    expect(await db.select().from(schema.userPropertyAccess).where(eq(schema.userPropertyAccess.userId, u.id))).toEqual([]);
+    // Số điện thoại được giải phóng để tạo lại
+    await createUser(db, admin, { ...base, name: "Tạo lại", phone: "0977000111", role: "HOUSEKEEPER", propertyIds: ["X"] });
+
+    const worked = await createUser(db, admin, { ...base, name: "Đã chấm công", phone: "0977000222", role: "HOUSEKEEPER", propertyIds: ["X"] });
+    await db.insert(schema.attendance).values({ userId: worked.id, propertyId: "X", date: "2026-11-01", checkInAt: new Date() });
+    await expect(deleteUser(db, admin, worked.id)).rejects.toThrow(/chấm công.*khóa tài khoản/);
+
+    // NĐT: xóa tài khoản, chủ đầu tư và cơ sở vẫn giữ, chỉ gỡ liên kết
+    const inv = await createUser(db, admin, { ...base, name: "NĐT thử", email: "ndt-thu@x.vn", role: "INVESTOR" });
+    const [before] = await db.select().from(schema.investors).where(eq(schema.investors.userId, inv.id));
+    await deleteUser(db, admin, inv.id);
+    const [after] = await db.select().from(schema.investors).where(eq(schema.investors.id, before.id));
+    expect(after.userId).toBeNull();
+
+    await expect(deleteUser(db, admin, admin.id)).rejects.toThrow(/tự xóa/);
   });
 
   it("sửa thông tin không được trùng tài khoản khác", async () => {

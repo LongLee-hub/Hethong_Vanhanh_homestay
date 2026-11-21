@@ -1,8 +1,13 @@
 // Quản lý tài khoản (chỉ Admin): tạo tài khoản theo vai trò, sửa thông tin, đặt lại mật khẩu, khóa / mở khóa.
 // NĐT gắn với một bản ghi investors (xem cơ sở mình sở hữu); Quản lý / Kế toán / Buồng phòng gắn với danh sách cơ sở.
-import { and, asc, eq, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, or, type SQL } from "drizzle-orm";
+import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import type { DB } from "../db";
-import { investors, properties, userPropertyAccess, users } from "../db/schema";
+import {
+  attendance, bankStatements, bankTransactions, bookingChangeLogs, bookings, expenses, facilityIssues, gmailAccounts,
+  housekeeperPay, investors, payrollAdjustments, properties, propertyTargets, settlementUnlockLogs, settlements, tasks,
+  userPropertyAccess, users,
+} from "../db/schema";
 import { badRequest, notFound, requirePermission, type Role, type SessionUser } from "../auth/access";
 import { hashPassword, normalizePhone } from "../auth/session";
 
@@ -141,4 +146,60 @@ export async function setUserActive(db: DB, user: SessionUser, userId: string, a
   }
   const [row] = await db.update(users).set({ active }).where(eq(users.id, userId)).returning({ id: users.id });
   if (!row) throw notFound("Không tìm thấy tài khoản");
+}
+
+/**
+ * Nơi tài khoản để lại dấu vết công việc. Có dữ liệu ở bất kỳ chỗ nào thì không xóa được
+ * (sổ sách, chấm công, lương, quyết toán phải giữ người thực hiện) — khi đó khóa tài khoản thay vì xóa.
+ */
+const HISTORY: { label: string; table: PgTable; cols: PgColumn[] }[] = [
+  { label: "chấm công", table: attendance, cols: [attendance.userId] },
+  { label: "điều chỉnh lương", table: payrollAdjustments, cols: [payrollAdjustments.userId, payrollAdjustments.createdBy] },
+  { label: "chi phí", table: expenses, cols: [expenses.createdById, expenses.approvedById, expenses.updatedById] },
+  { label: "đặt phòng", table: bookings, cols: [bookings.createdById] },
+  { label: "lịch sử sửa đặt phòng", table: bookingChangeLogs, cols: [bookingChangeLogs.changedBy] },
+  { label: "sao kê ngân hàng", table: bankStatements, cols: [bankStatements.uploadedById] },
+  { label: "giao dịch ngân hàng", table: bankTransactions, cols: [bankTransactions.handledById] },
+  { label: "quyết toán", table: settlements, cols: [settlements.lockedById] },
+  { label: "mở khóa quyết toán", table: settlementUnlockLogs, cols: [settlementUnlockLogs.byUserId] },
+  { label: "công việc", table: tasks, cols: [tasks.assignedById, tasks.assigneeId, tasks.completedById] },
+  { label: "sự cố cơ sở", table: facilityIssues, cols: [facilityIssues.reportedById, facilityIssues.assigneeId, facilityIssues.resolvedById] },
+  { label: "chỉ tiêu KPI", table: propertyTargets, cols: [propertyTargets.updatedBy] },
+  { label: "đơn giá lương", table: housekeeperPay, cols: [housekeeperPay.updatedBy] },
+  { label: "kết nối Gmail", table: gmailAccounts, cols: [gmailAccounts.connectedById] },
+];
+
+/** Các loại dữ liệu mà tài khoản đã tạo hoặc tham gia (rỗng = xóa được). */
+export async function userHistory(db: DB, userId: string) {
+  const found = await Promise.all(
+    HISTORY.map(async (h) => {
+      const where = or(...h.cols.map((c) => eq(c, userId))) as SQL;
+      const rows = await db.select({ x: h.cols[0] }).from(h.table).where(where).limit(1);
+      return rows.length ? h.label : null;
+    }),
+  );
+  return found.filter((x): x is string => !!x);
+}
+
+/**
+ * Xóa hẳn tài khoản. Chỉ cho xóa tài khoản chưa có dữ liệu công việc (tạo nhầm, tạo thử, chưa dùng);
+ * tài khoản đã làm việc thì khóa để giữ lịch sử. Với NĐT: bản ghi chủ đầu tư và cơ sở vẫn giữ,
+ * chỉ gỡ liên kết đăng nhập (có thể tạo tài khoản mới và gắn lại).
+ */
+export async function deleteUser(db: DB, user: SessionUser, userId: string) {
+  requirePermission(user, "admin");
+  if (userId === user.id) throw badRequest("Không thể tự xóa tài khoản của mình");
+  const [u] = await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!u) throw notFound("Không tìm thấy tài khoản");
+  if (u.role === "ADMIN") {
+    const others = await db.select({ id: users.id }).from(users).where(and(eq(users.role, "ADMIN"), eq(users.active, true), ne(users.id, userId))).limit(1);
+    if (!others.length) throw badRequest("Cần giữ ít nhất một Admin đang hoạt động");
+  }
+  const used = await userHistory(db, userId);
+  if (used.length) throw badRequest(`Tài khoản đã có dữ liệu ${used.join(", ")} nên không xóa được. Hãy khóa tài khoản để giữ lịch sử.`);
+  await db.transaction(async (tx) => {
+    await tx.update(investors).set({ userId: null }).where(eq(investors.userId, userId));
+    // user_property_access, thông báo, push… tự xóa theo ON DELETE CASCADE
+    await tx.delete(users).where(eq(users.id, userId));
+  });
 }

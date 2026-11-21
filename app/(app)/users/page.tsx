@@ -7,7 +7,7 @@ import { NoAccess } from "@/components/NoAccess";
 import { requireUser } from "@/lib/server";
 import { ActionForm } from "@/components/ActionForm";
 import { investorsWithoutAccount, listUsers, STAFF_ROLES } from "@/lib/services/users";
-import { resetPasswordAction, setUserActiveAction, setUserPropertiesAction, updateUserAction } from "./actions";
+import { deleteUserAction, resetPasswordAction, setUserActiveAction, setUserPropertiesAction, updateUserAction } from "./actions";
 import { CreateUser } from "./create-user";
 import { PropertyChecks, ROLE_INFO, type PropOpt } from "./shared";
 
@@ -92,6 +92,18 @@ export default async function Users({ searchParams }: { searchParams: Promise<Re
                     {u.id !== user.id && (
                       <ActionForm action={setUserActiveAction} submit={u.active ? "Khóa tài khoản" : "Mở khóa tài khoản"} okText="Đã cập nhật" className={`row danger-zone ${u.active ? "" : "safe"}`}>
                         <input type="hidden" name="userId" value={u.id} /><input type="hidden" name="active" value={u.active ? "0" : "1"} />
+                      </ActionForm>
+                    )}
+                    {u.id !== user.id && (
+                      <ActionForm
+                        action={deleteUserAction}
+                        submit="Xóa tài khoản"
+                        okText="Đã xóa"
+                        className="row danger-zone"
+                        confirmText={`Xóa vĩnh viễn tài khoản "${u.name}"? Thao tác này không hoàn tác được.`}
+                      >
+                        <input type="hidden" name="userId" value={u.id} />
+                        <span className="small muted">Chỉ xóa được tài khoản chưa có dữ liệu (tạo nhầm, chưa dùng). Tài khoản đã làm việc thì khóa để giữ lịch sử.</span>
                       </ActionForm>
                     )}
                     <p className="hint">Tạo ngày {u.createdAt.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}. Khóa tài khoản sẽ đăng xuất người dùng ngay; dữ liệu họ đã nhập vẫn giữ nguyên.</p>

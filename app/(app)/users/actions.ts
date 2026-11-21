@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { action, requireUser } from "@/lib/server";
 import type { Role } from "@/lib/auth/access";
-import { createUser, resetPassword, setUserActive, setUserProperties, updateUser } from "@/lib/services/users";
+import { createUser, deleteUser, resetPassword, setUserActive, setUserProperties, updateUser } from "@/lib/services/users";
 
 type State = { ok: boolean; error?: string } | null;
 const s = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
@@ -44,4 +44,9 @@ export async function resetPasswordAction(_: State, f: FormData): Promise<State>
 export async function setUserActiveAction(_: State, f: FormData): Promise<State> {
   const user = await requireUser();
   return run(() => setUserActive(getDb(), user, s(f, "userId"), s(f, "active") === "1"));
+}
+
+export async function deleteUserAction(_: State, f: FormData): Promise<State> {
+  const user = await requireUser();
+  return run(() => deleteUser(getDb(), user, s(f, "userId")));
 }
