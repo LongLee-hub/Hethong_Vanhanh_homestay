@@ -480,11 +480,16 @@ export const attendance = pgTable(
     checkOutAt: ts("check_out_at"),
     /** Ảnh vào ca đã in ngày giờ, cơ sở, tọa độ lên ảnh (components/CameraStamp.tsx). */
     photoUrl: text("photo_url"),
+    /** Ảnh kết thúc ca, in dấu giống ảnh vào ca. */
     checkOutPhotoUrl: text("check_out_photo_url"),
     // Vị trí máy lúc chụp ảnh vào ca; null = người dùng không cho lấy vị trí
     lat: numeric("lat", { precision: 9, scale: 6, mode: "number" }),
     lng: numeric("lng", { precision: 9, scale: 6, mode: "number" }),
     accuracyM: integer("accuracy_m"),
+    // Vị trí máy lúc chụp ảnh kết thúc ca
+    checkOutLat: numeric("check_out_lat", { precision: 9, scale: 6, mode: "number" }),
+    checkOutLng: numeric("check_out_lng", { precision: 9, scale: 6, mode: "number" }),
+    checkOutAccuracyM: integer("check_out_accuracy_m"),
     note: text("note"),
   },
   (t) => [uniqueIndex("attendance_user_date_shift").on(t.userId, t.date, t.shift)],

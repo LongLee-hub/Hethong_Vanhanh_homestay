@@ -29,3 +29,7 @@
 .shutter i { display: block; width: 100%; height: 100%; border-radius: 50%; background: var(--accent); transition: transform .12s; }
 .shutter:active i { transform: scale(.9); }
 @media (prefers-reduced-motion: reduce) { .shutter i { transition: none; } }
+
+/* Nhãn VÀO CA / KẾT THÚC CA trong khung xem trước, cùng màu với nhãn in lên ảnh */
+.tag { display: inline-block; vertical-align: middle; margin-left: 6px; padding: 2px 6px; font-size: .7rem; font-weight: 700; letter-spacing: .02em; background: #2e9c92; color: #fff; border-radius: 3px; }
+.tag[data-mode="out"] { background: #d9622b; }

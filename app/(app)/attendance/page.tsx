@@ -15,6 +15,19 @@ import { CameraStamp } from "@/components/CameraStamp";
 import { clockAction } from "../actions";
 
 const hm = (d: Date | null) => (d ? new Date(d.getTime() + 7 * 3600_000).toISOString().slice(11, 16) : "—");
+/** Ảnh và vị trí của một lần chụp chấm công (vào ca hoặc kết thúc ca). */
+function Proof({ photo, lat, lng, acc }: { photo: string | null; lat: number | null; lng: number | null; acc: number | null }) {
+  if (!photo && (lat === null || lng === null)) return <span className="muted">—</span>;
+  return (
+    <span style={{ display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
+      {photo ? <a href={photoHref(photo)} target="_blank" rel="noreferrer">Xem ảnh</a> : <span className="muted">Không ảnh</span>}
+      {lat !== null && lng !== null
+        ? <a href={`https://www.google.com/maps?q=${lat},${lng}`} target="_blank" rel="noreferrer">Bản đồ{acc ? ` (±${acc} m)` : ""}</a>
+        : <span className="muted">Không vị trí</span>}
+    </span>
+  );
+}
+
 const SHIFTS: Shift[] = ["MORNING", "EVENING", "OVERTIME"];
 const SHIFT_HINT: Record<Shift, string> = { MORNING: "Tính 1 công sáng", EVENING: "Tính 1 công tối", OVERTIME: "Tính theo lần" };
 
@@ -57,9 +70,15 @@ export default async function Attendance({ searchParams }: { searchParams: Promi
           </header>
 
           {open ? (
-            <ActionForm action={clockAction} submit={`Ra ${SHIFT_LABEL[open.shift].toLowerCase()}`} okText="Đã ra ca" className="row">
+            <ActionForm action={clockAction} submit={`Kết thúc ${SHIFT_LABEL[open.shift].toLowerCase()}`} okText="Đã kết thúc ca">
               <input type="hidden" name="action" value="out" />
               <input type="hidden" name="attendanceId" value={open.id} />
+              <CameraStamp
+                mode="out"
+                userName={user.name}
+                properties={[...props, ...others].filter((p) => p.id === open.propertyId).map((p) => ({ id: p.id, name: open.support ? `${p.name} (hỗ trợ)` : p.name, address: p.address }))}
+                shifts={[{ value: open.shift, label: SHIFT_LABEL[open.shift] }]}
+              />
             </ActionForm>
           ) : !props.length && !others.length ? (
             <p className="small muted">Bạn chưa được giao cơ sở nào. Nhờ admin giao cơ sở ở trang Tài khoản.</p>
@@ -105,7 +124,7 @@ export default async function Attendance({ searchParams }: { searchParams: Promi
           )}
         </header>
         <div className="tbl-wrap"><table>
-          <thead><tr><th>Ngày</th><th>Nhân viên</th><th>Cơ sở</th><th>Ca</th><th>Vào</th><th>Ra</th><th>Ảnh</th><th>Vị trí</th></tr></thead>
+          <thead><tr><th>Ngày</th><th>Nhân viên</th><th>Cơ sở</th><th>Ca</th><th>Vào</th><th>Ảnh / vị trí vào</th><th>Kết thúc</th><th>Ảnh / vị trí kết thúc</th></tr></thead>
           <tbody>
             {listed.map((r) => (
               <tr key={r.id}>
@@ -114,11 +133,9 @@ export default async function Attendance({ searchParams }: { searchParams: Promi
                 <td>{props.find((p) => p.id === r.propertyId)?.name ?? others.find((p) => p.id === r.propertyId)?.name}</td>
                 <td>{SHIFT_LABEL[r.shift]}{r.support ? <span className="pill warn" style={{ marginLeft: 6 }}>Hỗ trợ</span> : null}</td>
                 <td className="num">{hm(r.checkInAt)}</td>
-                <td className="num">{hm(r.checkOutAt)}</td>
-                <td>{r.photoUrl ? <a href={photoHref(r.photoUrl)} target="_blank" rel="noreferrer">Xem ảnh</a> : <span className="muted">—</span>}</td>
-                <td>{r.lat !== null && r.lng !== null
-                  ? <a href={`https://www.google.com/maps?q=${r.lat},${r.lng}`} target="_blank" rel="noreferrer">Bản đồ{r.accuracyM ? ` (±${r.accuracyM} m)` : ""}</a>
-                  : <span className="muted">—</span>}</td>
+                <td><Proof photo={r.photoUrl} lat={r.lat} lng={r.lng} acc={r.accuracyM} /></td>
+                <td className="num">{r.checkOutAt ? hm(r.checkOutAt) : <span className="pill warn">Chưa kết thúc</span>}</td>
+                <td>{r.checkOutAt ? <Proof photo={r.checkOutPhotoUrl} lat={r.checkOutLat} lng={r.checkOutLng} acc={r.checkOutAccuracyM} /> : <span className="muted">—</span>}</td>
               </tr>
             ))}
             {!listed.length && <tr><td colSpan={8} className="muted">Chưa có ngày công nào trong tháng.</td></tr>}

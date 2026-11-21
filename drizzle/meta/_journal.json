@@ -190,6 +190,13 @@
       "when": 1795250000000,
       "tag": "0025_supabase_cron",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1795330000000,
+      "tag": "0026_attendance_checkout_location",
+      "breakpoints": true
     }
   ]
 }

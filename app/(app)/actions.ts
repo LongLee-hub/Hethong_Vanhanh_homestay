@@ -107,7 +107,11 @@ export async function clockAction(_: State, f: FormData): Promise<State> {
     const file = photo(f, "photo");
     const coord = (k: string) => { const v = String(f.get(k) ?? ""); return v === "" ? null : Number(v); };
     if (f.get("action") === "out") {
-      await clockOut(db, user, { attendanceId: String(f.get("attendanceId") || "") || undefined, photoUrl: file ? await uploadPhoto(file, "attendance") : undefined });
+      if (user.role === "HOUSEKEEPER" && !file) throw badRequest("Chụp ảnh tại cơ sở để kết thúc ca");
+      await clockOut(db, user, {
+        attendanceId: String(f.get("attendanceId") || "") || undefined, photoUrl: file ? await uploadPhoto(file, "attendance") : undefined,
+        lat: coord("lat"), lng: coord("lng"), accuracyM: coord("accuracy"),
+      });
       return;
     }
     const shift = String(f.get("shift") || "MORNING");

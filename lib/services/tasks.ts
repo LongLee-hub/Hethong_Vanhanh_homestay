@@ -247,15 +247,28 @@ export async function clockIn(db: DB, user: SessionUser, i: ClockInInput) {
   return row;
 }
 
-/** Ra ca: ca đang mở gần nhất hôm nay (hoặc đúng ca được chỉ định). */
-export async function clockOut(db: DB, user: SessionUser, opts: { attendanceId?: string; photoUrl?: string } = {}) {
+/**
+ * Ra ca: ca đang mở gần nhất hôm nay (hoặc đúng ca được chỉ định).
+ * Buồng phòng phải chụp ảnh kết thúc ca tại cơ sở (in giờ, vị trí như ảnh vào ca).
+ */
+export async function clockOut(
+  db: DB, user: SessionUser,
+  opts: { attendanceId?: string; photoUrl?: string; lat?: number | null; lng?: number | null; accuracyM?: number | null } = {},
+) {
   requirePermission(user, "clock");
+  if (user.role === "HOUSEKEEPER" && !opts.photoUrl) throw badRequest("Chụp ảnh tại cơ sở để kết thúc ca");
   const today = D.todayVN();
   const open = (await db.select().from(attendance).where(and(eq(attendance.userId, user.id), eq(attendance.date, today))))
     .filter((r) => !r.checkOutAt && (!opts.attendanceId || r.id === opts.attendanceId))
     .sort((a, b) => b.checkInAt.getTime() - a.checkInAt.getTime());
   if (!open.length) throw badRequest("Không có ca nào đang mở hôm nay");
-  await db.update(attendance).set({ checkOutAt: new Date(), checkOutPhotoUrl: opts.photoUrl ?? null }).where(eq(attendance.id, open[0].id));
+  const num = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const acc = num(opts.accuracyM);
+  const [row] = await db.update(attendance).set({
+    checkOutAt: new Date(), checkOutPhotoUrl: opts.photoUrl ?? null,
+    checkOutLat: num(opts.lat), checkOutLng: num(opts.lng), checkOutAccuracyM: acc === null ? null : Math.round(acc),
+  }).where(eq(attendance.id, open[0].id)).returning();
+  return row;
 }
 export async function attendanceForMonth(db: DB, user: SessionUser, month: string) {
   const conds = [gte(attendance.date, D.firstDay(month)), lte(attendance.date, D.lastDay(month))];

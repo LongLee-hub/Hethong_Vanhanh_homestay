@@ -103,10 +103,14 @@ describe("chấm công theo ca", () => {
     expect(row).toMatchObject({ shift: "MORNING", date: D.todayVN(), lat: 21.0012, lng: 105.8201, accuracyM: 12, support: false });
     await expect(clockIn(db, hk2, { propertyId: "KT", shift: "MORNING", photoUrl: "loci-photos/attendance/b.jpg" })).rejects.toThrow(/đã vào ca/);
     await clockIn(db, hk2, { propertyId: "KT", shift: "OVERTIME", photoUrl: "loci-photos/attendance/c.jpg" });
-    await clockOut(db, hk2);
-    await clockOut(db, hk2);
-    await clockOut(db, hk2);
-    await expect(clockOut(db, hk2)).rejects.toThrow(/Không có ca/);
+    // Kết thúc ca: buồng phòng bắt buộc có ảnh, lưu tọa độ lúc chụp
+    await expect(clockOut(db, hk2)).rejects.toThrow(/kết thúc ca/);
+    const out = await clockOut(db, hk2, { photoUrl: "loci-photos/attendance/out1.jpg", lat: 21.0013, lng: 105.8202, accuracyM: 8.6 });
+    expect(out).toMatchObject({ checkOutPhotoUrl: "loci-photos/attendance/out1.jpg", checkOutLat: 21.0013, checkOutLng: 105.8202, checkOutAccuracyM: 9 });
+    expect(out.checkOutAt).toBeInstanceOf(Date);
+    await clockOut(db, hk2, { photoUrl: "loci-photos/attendance/out2.jpg" });
+    await clockOut(db, hk2, { photoUrl: "loci-photos/attendance/out3.jpg" });
+    await expect(clockOut(db, hk2, { photoUrl: "loci-photos/attendance/out4.jpg" })).rejects.toThrow(/Không có ca/);
   });
 
   it("ảnh chấm công: chính chủ và admin xem được, người khác thì không", async () => {

@@ -8,10 +8,13 @@ const Body = z.discriminatedUnion("action", [
     action: z.literal("in"), propertyId: z.string(), shift: z.enum(["MORNING", "EVENING", "OVERTIME"]).optional(), photoUrl: z.string().optional(),
     lat: z.number().nullish(), lng: z.number().nullish(), accuracyM: z.number().nullish(),
   }),
-  z.object({ action: z.literal("out") }),
+  z.object({
+    action: z.literal("out"), attendanceId: z.string().optional(), photoUrl: z.string().optional(),
+    lat: z.number().nullish(), lng: z.number().nullish(), accuracyM: z.number().nullish(),
+  }),
 ]);
 
 export const POST = api(async ({ user, req }) => {
   const b = Body.parse(await req.json());
-  return b.action === "in" ? clockIn(getDb(), user, b) : clockOut(getDb(), user);
+  return b.action === "in" ? clockIn(getDb(), user, b) : clockOut(getDb(), user, b);
 });
