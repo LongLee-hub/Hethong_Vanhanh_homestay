@@ -227,19 +227,31 @@ export interface ListingSummary {
   name: string;
   orders: number;
   roomId: string | null;
+  /** Đã gắn phòng trong hệ thống nhưng lần tải này Dayladau không trả về đơn nào của listing. */
+  notSeen?: boolean;
 }
+
+/** Số trang đơn tối đa đọc khi liệt kê listing (100 đơn/trang), và số trang gọi song song mỗi lượt. */
+export const LISTING_SCAN_MAX_PAGES = 50;
+const LISTING_SCAN_PARALLEL = 5;
 
 export interface ConnectionTest {
   ok: boolean;
   error?: string;
   ordersOnFirstPage: number;
+  /** Tổng số đơn (đã bỏ trùng) đọc được qua mọi trang. */
+  ordersScanned: number;
   listings: ListingSummary[];
   statuses: { status: string; orders: number; treatedAs: "CONFIRMED" | "CANCELLED" }[];
   /** Vài đơn mẫu (không có tên/SĐT khách) để đối chiếu tiền host với Dayladau */
   samples: { id: string; listing: string; checkIn: string; checkOut: string; totalBilled: number; hostAmount: number; rentalType: string | null }[];
 }
 
-/** Gọi trang đầu (100 đơn) để kiểm tra host ID + token và liệt kê listing cần gắn phòng. */
+/**
+ * Kiểm tra host ID + token và liệt kê listing của tài khoản. Dayladau không có API liệt kê phòng, nên listing
+ * được suy ra từ đơn: đọc mọi trang đơn (không chỉ 100 đơn mới nhất, vì phòng ít đơn sẽ bị sót), rồi bổ sung
+ * các listing đã gắn phòng trong hệ thống mà không thấy đơn nào.
+ */
 export async function testConnection(
   db: DB,
   user: SessionUser,
@@ -251,16 +263,35 @@ export async function testConnection(
   if (!acc) throw notFound("Không tìm thấy tài khoản Dayladau");
   const fetchPage = deps.fetchPage ?? fetchOrdersPage;
   const decrypt = deps.decrypt ?? decryptSecret;
-  let orders;
+  let orders: Awaited<ReturnType<typeof fetchOrdersPage>>;
+  let ordersOnFirstPage = 0;
   try {
-    orders = await fetchPage(acc.hostId, decrypt(acc.tokenEncrypted), 0, PAGE_SIZE);
+    const token = decrypt(acc.tokenEncrypted);
+    const first = await fetchPage(acc.hostId, token, 0, PAGE_SIZE);
+    ordersOnFirstPage = first.length;
+    const byId = new Map<string, (typeof first)[number]>();
+    const add = (os: typeof first) => { for (const o of os) byId.set(o.id === undefined || o.id === null ? `#${byId.size}` : String(o.id), o); };
+    add(first);
+    let page = 1;
+    let done = first.length < PAGE_SIZE;
+    while (!done && page < LISTING_SCAN_MAX_PAGES) {
+      const batch: number[] = [];
+      for (let i = 0; i < LISTING_SCAN_PARALLEL && page < LISTING_SCAN_MAX_PAGES; i++, page++) batch.push(page);
+      const pages = await Promise.all(batch.map((p) => fetchPage(acc.hostId, token, p * PAGE_SIZE, PAGE_SIZE)));
+      for (const os of pages) {
+        add(os);
+        if (os.length < PAGE_SIZE) done = true;
+      }
+    }
+    orders = [...byId.values()];
   } catch (e) {
-    return { ok: false, error: (e as Error).message, ordersOnFirstPage: 0, listings: [], statuses: [], samples: [] };
+    return { ok: false, error: (e as Error).message, ordersOnFirstPage: 0, ordersScanned: 0, listings: [], statuses: [], samples: [] };
   }
   const byListing = await roomsByListing(db, [accountId]);
   const listings = new Map<string, ListingSummary>();
   const statuses = new Map<string, { orders: number; treatedAs: "CONFIRMED" | "CANCELLED" }>();
   const samples: ConnectionTest["samples"] = [];
+  const seenRefs = new Set<string>();
   for (const o of orders) {
     let m;
     try {
@@ -268,7 +299,13 @@ export async function testConnection(
     } catch {
       continue;
     }
-    const l = listings.get(m.listingKey) ?? { key: m.listingKey, name: m.listingName, orders: 0, roomId: (byListing.get(listingRef(accountId, m.listingKey)) ?? byListing.get(listingRef(accountId, m.listingName)))?.id ?? null };
+    let l = listings.get(m.listingKey);
+    if (!l) {
+      const ref = byListing.has(listingRef(accountId, m.listingKey)) ? listingRef(accountId, m.listingKey) : listingRef(accountId, m.listingName);
+      const room = byListing.get(ref);
+      if (room) seenRefs.add(ref);
+      l = { key: m.listingKey, name: m.listingName, orders: 0, roomId: room?.id ?? null };
+    }
     l.orders++;
     listings.set(m.listingKey, l);
     const s = statuses.get(m.rawStatus) ?? { orders: 0, treatedAs: m.status };
@@ -278,9 +315,18 @@ export async function testConnection(
       samples.push({ id: m.externalId, listing: m.listingName, checkIn: m.checkIn, checkOut: m.checkOut, totalBilled: m.grossAmount, hostAmount: m.hostAmount, rentalType: m.rentalType });
     }
   }
+  // Listing đã gắn phòng nhưng không có đơn nào trong các trang đã đọc: vẫn liệt kê để không "mất" phòng đã gắn
+  const prefix = listingRef(accountId, "");
+  for (const [ref, room] of byListing) {
+    if (!ref.startsWith(prefix) || seenRefs.has(ref)) continue;
+    const key = ref.slice(prefix.length);
+    if (listings.has(key)) continue;
+    listings.set(key, { key, name: room.name, orders: 0, roomId: room.id, notSeen: true });
+  }
   return {
     ok: true,
-    ordersOnFirstPage: orders.length,
+    ordersOnFirstPage,
+    ordersScanned: orders.length,
     listings: [...listings.values()].sort((a, b) => a.name.localeCompare(b.name, "vi")),
     statuses: [...statuses.entries()].map(([status, v]) => ({ status, ...v })),
     samples,

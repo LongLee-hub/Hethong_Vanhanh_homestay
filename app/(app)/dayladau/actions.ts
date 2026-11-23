@@ -73,7 +73,7 @@ export async function testConnectionAction(accountId: string): Promise<Connectio
   try {
     return await testConnection(getDb(), user, accountId);
   } catch (e) {
-    return { ok: false, error: e instanceof HttpError ? e.message : "Lỗi máy chủ", ordersOnFirstPage: 0, listings: [], statuses: [], samples: [] };
+    return { ok: false, error: e instanceof HttpError ? e.message : "Lỗi máy chủ", ordersOnFirstPage: 0, ordersScanned: 0, listings: [], statuses: [], samples: [] };
   }
 }
 

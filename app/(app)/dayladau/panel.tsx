@@ -418,7 +418,7 @@ function AccountCard({ acc, investorId, props, bookings, onEdit }: { acc: Accoun
       {test && !test.ok && <div className="banner bad">Không kết nối được: {test.error}</div>}
       {test?.ok && (
         <div className="stack">
-          <div className="banner info">Kết nối thành công. Trang đầu có {test.ordersOnFirstPage} đơn.</div>
+          <div className="banner info">Kết nối thành công. Đã đọc {test.ordersScanned} đơn.</div>
           {!props.length && <NewProperty investorId={investorId} accountId={acc.id} />}
           <div>
             <h3>Gắn listing Dayladau với phòng</h3>
@@ -458,7 +458,7 @@ function ListingRow({ accountId, listing, props }: { accountId: string; listing:
   return (
     <tr>
       <td><b>{listing.name}</b><div className="small muted">mã {listing.key}</div></td>
-      <td className="n">{listing.orders}</td>
+      <td className="n">{listing.notSeen ? <span className="muted" title="Đã gắn phòng nhưng Dayladau chưa trả về đơn nào của listing này">0</span> : listing.orders}</td>
       <td>
         <div className="row">
           <select value={roomId} onChange={(e) => setRoomId(e.target.value)} aria-label={`Phòng cho ${listing.name}`} style={{ maxWidth: 260 }}>

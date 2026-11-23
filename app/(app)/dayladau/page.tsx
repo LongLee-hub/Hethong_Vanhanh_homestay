@@ -9,6 +9,9 @@ import { NoAccess } from "@/components/NoAccess";
 import { DayladauPanel } from "./panel";
 import { larkEnabled } from "@/lib/services/settings";
 
+// Lấy danh sách listing đọc mọi trang đơn Dayladau, có thể quá thời gian mặc định
+export const maxDuration = 300;
+
 // Cảnh báo do đồng bộ sinh ra; SYNC_FAILED không tự đóng nên chỉ lấy vài ngày gần đây
 const SYNC_ALERTS = ["UNMAPPED_ROOM", "BOOKING_MISSING", "LOCKED_MONTH_CHANGED"];
 const FAILED_DAYS = 3;

@@ -409,6 +409,22 @@ describe("Quản trị kết nối Dayladau", () => {
     expect(a.lastSyncStatus).toBe("OK");
   });
 
+  it("liệt kê listing đọc mọi trang đơn và giữ listing đã gắn dù không thấy đơn", async () => {
+    const mk = (i: number, listing: number) => ({ id: `P-${i}`, total_billed: 100_000, status: "confirmed", listing: { id: listing, name: `NTG L${listing}` }, reservation: { start_time: "2026-09-20", end_time: "2026-09-21" }, items: [] });
+    // Trang 1–2 đầy đơn của listing 501, listing 777 chỉ có đơn ở trang 3
+    const all = [...Array.from({ length: 200 }, (_, i) => mk(i, 501)), mk(200, 777), mk(201, 501)];
+    const offsets: number[] = [];
+    const fetchPage = async (_h: string, _t: string, offset: number, limit = 100) => { offsets.push(offset); return all.slice(offset, offset + limit); };
+    const t = await testConnection(db, admin, accB, { fetchPage, decrypt: dec });
+    expect(t.ordersScanned).toBe(202);
+    expect(t.listings.find((l) => l.key === "777")).toMatchObject({ orders: 1 });
+    expect(offsets.slice(0, 3)).toEqual([0, 100, 200]);
+    // Listing 501 đã gắn phòng Z1 (test trước); chỉ trả đơn của 777 thì 501 vẫn hiện là đã gắn, đánh dấu không thấy đơn
+    const t2 = await testConnection(db, admin, accB, { fetchPage: async () => [mk(1, 777)], decrypt: dec });
+    expect(t2.listings.find((l) => l.key === "501")).toMatchObject({ roomId: "Z1", orders: 0, notSeen: true });
+    expect(t2.listings.find((l) => l.key === "777")).toMatchObject({ roomId: null, orders: 1 });
+  });
+
   it("kết nối lỗi trả thông báo, không ném lỗi", async () => {
     const t = await testConnection(db, admin, accB, { fetchPage: async () => { throw new Error("Host ID hoặc access token không hợp lệ (HTTP 401)"); }, decrypt: dec });
     expect(t).toMatchObject({ ok: false, error: expect.stringMatching(/không hợp lệ/) });

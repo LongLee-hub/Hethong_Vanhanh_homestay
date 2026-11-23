@@ -17,6 +17,9 @@ import {
 } from "./actions";
 import { AddRoom } from "./add-room";
 
+// Lấy danh sách listing đọc mọi trang đơn Dayladau, có thể quá thời gian mặc định
+export const maxDuration = 300;
+
 type Room = { id: string; name: string; dayladauRoomId: string | null; openedOn: string; closedOn: string | null; revenueKpiMonthly: number };
 
 function roomStatus(r: Room, today: string) {

@@ -68,7 +68,7 @@ export function AddRoom({ propertyId, hasAccount, properties, roomLabel, today }
             <li key={l.key}>
               <label className="listing" aria-checked={key === l.key}>
                 <input type="radio" name={`listing-${propertyId}`} checked={key === l.key} onChange={() => pick(l)} />
-                <span className="listing-name"><b>{l.name}</b><span className="small muted">Mã {l.key} · {l.orders} đơn gần đây</span></span>
+                <span className="listing-name"><b>{l.name}</b><span className="small muted">Mã {l.key} · {l.orders} đơn</span></span>
               </label>
             </li>
           ))}
@@ -76,11 +76,11 @@ export function AddRoom({ propertyId, hasAccount, properties, roomLabel, today }
             <li key={l.key}>
               <div className="listing off">
                 <input type="radio" disabled aria-label="Đã gắn" />
-                <span className="listing-name"><b>{l.name}</b><span className="small muted">Đã gắn: {l.roomId && roomLabel[l.roomId] ? roomLabel[l.roomId] : "phòng vừa thêm"}</span></span>
+                <span className="listing-name"><b>{l.name}</b><span className="small muted">Đã gắn: {l.roomId && roomLabel[l.roomId] ? roomLabel[l.roomId] : "phòng vừa thêm"}{l.notSeen ? " · chưa có đơn nào trên Dayladau" : ` · ${l.orders} đơn`}</span></span>
               </div>
             </li>
           ))}
-          {!listings.length && !loadErr && <li className="small muted" style={{ padding: 12 }}>Chưa thấy phòng nào trong các đơn gần đây trên Dayladau.</li>}
+          {!listings.length && !loadErr && <li className="small muted" style={{ padding: 12 }}>Chưa thấy phòng nào trong các đơn trên Dayladau.</li>}
         </ul>
       )}
 
