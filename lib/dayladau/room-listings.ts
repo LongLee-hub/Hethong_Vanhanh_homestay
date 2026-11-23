@@ -2,7 +2,7 @@
 // Mọi chỗ tra "listing này thuộc phòng nào" và mọi chỗ bỏ gắn hàng loạt đi qua đây để hai nơi luôn khớp nhau.
 import { and, eq, inArray } from "drizzle-orm";
 import type { DB } from "../db";
-import { roomListings, rooms } from "../db/schema";
+import { ignoredListings, roomListings, rooms } from "../db/schema";
 
 type RoomRow = typeof rooms.$inferSelect;
 export const listingRef = (accountId: string, listingKey: string) => `${accountId}|${listingKey}`;
@@ -45,6 +45,8 @@ export async function detachListing(db: DB, accountId: string, listingKey: strin
 /** Gắn listing vào phòng (phòng phải dùng tài khoản này): phòng chưa có listing thì thành listing chính, đã có thì thêm làm listing phụ. */
 export async function attachListing(db: DB, accountId: string, listingKey: string, roomId: string) {
   await detachListing(db, accountId, listingKey);
+  // Gắn lại listing đã bỏ qua (phòng cũ đã xóa) thì đồng bộ nhận đơn của nó trở lại
+  await db.delete(ignoredListings).where(and(eq(ignoredListings.dayladauAccountId, accountId), eq(ignoredListings.listingKey, listingKey)));
   const [room] = await db.select().from(rooms).where(eq(rooms.id, roomId)).limit(1);
   if (room?.dayladauRoomId && room.dayladauAccountId === accountId) await db.insert(roomListings).values({ roomId, dayladauAccountId: accountId, listingKey });
   else await db.update(rooms).set({ dayladauAccountId: accountId, dayladauRoomId: listingKey }).where(eq(rooms.id, roomId));
@@ -60,4 +62,11 @@ export async function clearRoomListings(db: DB, where: { roomIds?: string[]; acc
     await db.delete(roomListings).where(inArray(roomListings.roomId, where.roomIds));
     await db.update(rooms).set({ dayladauAccountId: null, dayladauRoomId: null }).where(inArray(rooms.id, where.roomIds));
   }
+}
+
+/** Listing bỏ qua của các tài khoản, khóa listingRef(accountId, listingKey). */
+export async function ignoredListingRefs(db: DB, accountIds: string[]): Promise<Set<string>> {
+  if (!accountIds.length) return new Set();
+  const rs = await db.select().from(ignoredListings).where(inArray(ignoredListings.dayladauAccountId, accountIds));
+  return new Set(rs.map((r) => listingRef(r.dayladauAccountId, r.listingKey)));
 }

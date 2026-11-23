@@ -9,6 +9,8 @@ export interface DayladauRawBooking {
 export interface DayladauClient {
   /** Trả toàn bộ đơn của host, đã gộp các trang và bỏ trùng theo id. */
   listBookings(opts: { hostId: string; token: string; checkOutFrom?: string; maxOrders?: number }): Promise<DayladauRawBooking[]>;
+  /** Đơn tạo tay trên lịch (thẻ Host), trong khoảng thời gian (mili-giây). Không có thì đồng bộ bỏ qua đơn lịch. */
+  listCalendar?(opts: { hostId: string; token: string; fromMs: number; toMs: number }): Promise<DayladauRawBooking[]>;
 }
 
 export const DAYLADAU_BASE = process.env.DAYLADAU_API_BASE ?? "https://api.dayladau.com";
@@ -66,5 +68,9 @@ export const httpDayladauClient: DayladauClient = {
       if (orders.length < PAGE_SIZE) break;
     }
     return [...byId.values()];
+  },
+  async listCalendar({ hostId, token, fromMs, toMs }) {
+    const { listCalendarReservations } = await import("./calendar");
+    return listCalendarReservations(hostId, token, fromMs, toMs);
   },
 };

@@ -14,7 +14,7 @@ import { commonAllocation, commonCostBasis, getSettlement, lockSettlement, payba
 import { importListingOrders, SYNC_FULL_MAX_ORDERS, SYNC_MAX_ORDERS, syncBookings } from "../lib/dayladau/sync";
 import { createRoom, listConnections, listingsForProperty, mapListingToRoom, saveDayladauAccount, saveInvestor, setPropertyAccount, testConnection, type InvestorInfo } from "../lib/dayladau/admin";
 import { liveOrdersForMonth } from "../lib/dayladau/live";
-import { transferRoom } from "../lib/services/rooms";
+import { deleteRoom, transferRoom } from "../lib/services/rooms";
 import { CLEANING_CHECKLIST, addTaskPhoto, createTask, setTaskStatus, updateChecklist } from "../lib/services/tasks";
 import { createRoom as createRoomInProperty, updateRoom } from "../lib/services/rooms";
 import { buildInvestorReport } from "../lib/services/investor-report";
@@ -440,6 +440,50 @@ describe("Quản trị kết nối Dayladau", () => {
     // Ngày mở bán kéo về đêm đầu tiên của đơn cũ
     const [room] = await db.select().from(schema.rooms).where(eq(schema.rooms.id, "Z-LATE"));
     expect(room.openedOn).toBe("2026-06-10");
+  });
+
+  it("xóa phòng: xóa đơn Dayladau, bỏ qua listing để đồng bộ không nhập lại; chặn khi đơn đã khóa sổ", async () => {
+    const mk = (id: string, listing: string) => ({ id, total_billed: 500_000, status: "paid", listing: { id: listing, name: `NTG ${listing}` }, reservation: { start_time: "2026-06-10", end_time: "2026-06-11" }, items: [] });
+    const data = [mk("LI-1", "L-LATE"), mk("LI-3", "L-LATE")];
+    const res = await deleteRoom(db, admin, "Z-LATE");
+    expect(res).toEqual({ bookings: 2, listings: ["L-LATE"] });
+    expect(await db.select().from(schema.rooms).where(eq(schema.rooms.id, "Z-LATE"))).toEqual([]);
+    expect(await db.select().from(schema.bookings).where(inArray(schema.bookings.externalId, ["LI-1", "LI-3"]))).toEqual([]);
+    const r = await syncBookings(db, { client: { listBookings: async () => data }, today: "2026-06-30", decrypt: dec, accountIds: [accB], full: true });
+    expect(r).toMatchObject({ created: 0, skipped: 0, unmapped: [] });
+    // Gắn lại listing vào phòng khác thì đồng bộ nhận đơn trở lại
+    await db.insert(schema.rooms).values({ id: "Z-AGAIN", propertyId: "Z", name: "P-again", openedOn: "2026-01-01" });
+    await mapListingToRoom(db, admin, accB, "L-LATE", "Z-AGAIN");
+    expect((await syncBookings(db, { client: { listBookings: async () => data }, today: "2026-06-30", decrypt: dec, accountIds: [accB], full: true })).created).toBe(2);
+    // Đơn tạo trước khi khóa sổ tháng 06 → không xóa được
+    await db.insert(schema.settlements).values({ investorId: "inv-b", month: "2026-06", status: "LOCKED", lockedAt: new Date(Date.now() + 60_000) });
+    await expect(deleteRoom(db, admin, "Z-AGAIN")).rejects.toThrow(/khóa sổ \(2026-06\)/);
+    await db.delete(schema.settlements).where(and(eq(schema.settlements.investorId, "inv-b"), eq(schema.settlements.month, "2026-06")));
+  });
+
+  it("đồng bộ nhập đơn tạo tay trên lịch có tiền, bỏ đơn 0đ / đơn thuộc đơn Dayladau / listing chưa gắn", async () => {
+    const cal: Record<string, unknown>[] = [
+      { id: "calA-1", source: "zalo", total_price: 59000, listing: { id: "L-LATE", name: "x" }, start_time: "2026-06-12T09:00:00+07:00", end_time: "2026-06-12T10:00:00+07:00" },
+      { id: "calB-1", source: "direct", total_price: 0, listing: { id: "L-LATE" }, start_time: "2026-06-13T13:00:00+07:00", end_time: "2026-06-13T20:00:00+07:00" },
+      { id: "calC-1", total_price: 300000, order_id: 999, listing: { id: "L-LATE" }, start_time: "2026-06-14T21:00:00+07:00", end_time: "2026-06-15T09:00:00+07:00" },
+      { id: "calD-1", total_price: 400000, listing: { id: "L-NOPE" }, start_time: "2026-06-14T21:00:00+07:00", end_time: "2026-06-15T09:00:00+07:00" },
+      { id: "calE-1", source: "KHÁCH QUEN", total_price: 1_225_000, listing: { id: "L-LATE" }, start_time: "2026-06-20T12:00:00+07:00", end_time: "2026-06-22T12:00:00+07:00" },
+    ];
+    const windows: [number, number][] = [];
+    const client = { listBookings: async () => [], listCalendar: async (o: { fromMs: number; toMs: number }) => { windows.push([o.fromMs, o.toMs]); return cal; } };
+    const r = await syncBookings(db, { client, today: "2026-06-30", decrypt: dec, accountIds: [accB] });
+    expect(windows[0][0]).toBe(Date.parse("2026-05-01T00:00:00+07:00"));
+    expect(r).toMatchObject({ created: 2, unmapped: [] });
+    const got = await db.select().from(schema.bookings).where(inArray(schema.bookings.externalId, ["calA-1", "calB-1", "calC-1", "calD-1", "calE-1"]));
+    expect(got.map((b) => [b.externalId, b.roomId, b.channel, b.netAmount, b.commissionAmount, b.rentalType]).sort()).toEqual([
+      ["calA-1", "Z-AGAIN", "Zalo", 59000, 0, "hourly_rental"],
+      ["calE-1", "Z-AGAIN", "Khách quen", 1_225_000, 0, null],
+    ]);
+    // Đơn đã nhập bị hủy trên lịch: cập nhật thành hủy
+    cal[0] = { ...cal[0], status: "cancelled" };
+    await syncBookings(db, { client, today: "2026-06-30", decrypt: dec, accountIds: [accB] });
+    const [a] = await db.select().from(schema.bookings).where(eq(schema.bookings.externalId, "calA-1"));
+    expect(a).toMatchObject({ status: "CANCELLED", netAmount: 0 });
   });
 
   it("kết nối lỗi trả thông báo, không ném lỗi", async () => {

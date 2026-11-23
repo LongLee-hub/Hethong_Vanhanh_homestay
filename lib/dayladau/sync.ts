@@ -1,6 +1,6 @@
 // Job đồng bộ Dayladau (Đặc tả mục 6). Chạy 06:00 hằng ngày và khi Admin bấm "Đồng bộ ngay".
 import { hostname } from "node:os";
-import { and, eq, gt, gte, inArray, notInArray, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, notInArray, notLike, sql } from "drizzle-orm";
 import * as D from "../domain";
 import type { DB } from "../db";
 import { rowsOf } from "../db/rows";
@@ -9,7 +9,8 @@ import { decryptSecret, getAllSettings, notifyLark } from "../services/settings"
 import { sameTracked, upsertBooking, type BookingInput } from "../services/bookings";
 import { httpDayladauClient, type DayladauClient } from "./client";
 import { mapDayladauOrder, netOf } from "./mapping";
-import { listingRef, roomsByListing } from "./room-listings";
+import { mapCalendarReservation } from "./calendar";
+import { ignoredListingRefs, listingRef, roomsByListing } from "./room-listings";
 import { rematchDayladauPayoutItems } from "./payouts";
 import { backfillRoomOpenedOn } from "./room-opened";
 
@@ -85,6 +86,7 @@ export async function syncBookings(
     .innerJoin(investors, eq(investors.id, dayladauAccounts.investorId))
     .where(and(...conds));
   const byListing = await roomsByListing(db, accs.map((a) => a.acc.id));
+  const ignored = await ignoredListingRefs(db, accs.map((a) => a.acc.id));
 
   for (const { acc, investorName } of accs) {
     const who = `${investorName} · ${acc.label}`;
@@ -120,6 +122,8 @@ export async function syncBookings(
           continue;
         }
         const room = roomOf(m.listingKey) ?? roomOf(m.listingName);
+        // Listing của phòng đã xóa: bỏ qua lặng lẽ, không báo "chưa gắn phòng"
+        if (!room && (ignored.has(listingRef(acc.id, m.listingKey)) || ignored.has(listingRef(acc.id, m.listingName)))) continue;
         if (!room) {
           sum.skipped++;
           const u = unmapped.get(m.listingKey) ?? { name: m.listingName, count: 0 };
@@ -134,6 +138,55 @@ export async function syncBookings(
           bookedAt: m.bookedAt, checkIn: m.checkIn, checkOut: m.checkOut, checkInAt: m.checkInAt, checkOutAt: m.checkOutAt, grossAmount: m.grossAmount, commissionAmount: commission,
           netAmount: net, status: m.status, rentalType: m.rentalType, rawPayload: raw, lastSyncedAt: new Date(),
         });
+      }
+
+      // Đơn tạo tay trên lịch (thẻ Host): không có trong /orders, đọc riêng. Lỗi ở đây không chặn đồng bộ đơn.
+      let calendarOk = false;
+      if (client.listCalendar) {
+        try {
+          const vnMs = (d: string) => Date.parse(`${d}T00:00:00+07:00`);
+          const [fromDay, toDay] = opts.month
+            ? [D.firstDay(opts.month), D.addDays(D.lastDay(opts.month), 1)]
+            : opts.full || onlyListings || first
+              ? ["2024-01-01", D.addDays(today, 365)]
+              : [D.firstDay(D.prevMonth(D.monthOf(today))), D.addDays(today, 180)];
+          const cal = await client.listCalendar({ hostId: acc.hostId, token: decrypt(acc.tokenEncrypted), fromMs: vnMs(fromDay), toMs: vnMs(toDay) });
+          const candidates: BookingInput[] = [];
+          for (const raw of cal) {
+            let m;
+            try {
+              m = mapCalendarReservation(raw);
+            } catch {
+              continue;
+            }
+            if (m.linkedOrderId) continue; // đơn Dayladau thật, đã nhập từ /orders
+            if (onlyListings && !onlyListings.has(m.listingKey) && !onlyListings.has(m.listingName)) continue;
+            if (opts.month && !(m.checkIn <= D.lastDay(opts.month) && m.checkOut > D.firstDay(opts.month))) continue;
+            const room = roomOf(m.listingKey) ?? roomOf(m.listingName);
+            if (!room) continue; // đơn lịch của listing chưa gắn: bỏ qua, không báo (listing đã được báo qua đơn thường)
+            seen.push(m.externalId);
+            candidates.push({
+              source: "DAYLADAU", externalId: m.externalId, propertyId: room.propertyId, roomId: room.id, channel: m.channel, guestName: m.guestName,
+              bookedAt: m.bookedAt, checkIn: m.checkIn, checkOut: m.checkOut, checkInAt: m.checkInAt, checkOutAt: m.checkOutAt, grossAmount: m.grossAmount, commissionAmount: 0,
+              netAmount: m.status === "CANCELLED" ? 0 : m.grossAmount, status: m.status, rentalType: m.rentalType, rawPayload: raw, lastSyncedAt: new Date(),
+            });
+          }
+          // Chỉ ghi đơn có tiền (khóa phòng, đổi phòng 0đ không phải doanh thu, không tính vào công suất).
+          // Đơn đã nhập trước đó mà nay hủy hoặc về 0đ thì vẫn cập nhật.
+          const zero = candidates.filter((c) => c.status === "CANCELLED" || !c.grossAmount).map((c) => c.externalId!);
+          const had = new Set<string>();
+          for (const ids of chunks(zero)) {
+            for (const r of await db.select({ e: bookings.externalId }).from(bookings).where(and(eq(bookings.source, "DAYLADAU"), inArray(bookings.externalId, ids)))) had.add(r.e!);
+          }
+          for (const c of candidates) {
+            if ((c.status === "CANCELLED" || !c.grossAmount) && !had.has(c.externalId!)) continue;
+            if (c.status === "CANCELLED" || !c.grossAmount) c.status = "CANCELLED";
+            todo.push(c);
+          }
+          calendarOk = true;
+        } catch (e) {
+          sum.errors.push({ accountId: acc.id, investorId: acc.investorId, message: `Đơn trên lịch (thẻ Host): ${(e as Error).message}` });
+        }
       }
 
       // Đọc sẵn đơn đã có bằng vài truy vấn, chỉ mở transaction cho đơn mới hoặc có thay đổi.
@@ -174,7 +227,7 @@ export async function syncBookings(
         const missing = await db
           .select({ id: bookings.id, externalId: bookings.externalId, propertyId: bookings.propertyId })
           .from(bookings)
-          .where(and(eq(bookings.source, "DAYLADAU"), inArray(bookings.propertyId, pids), gte(bookings.checkOut, D.firstDay(D.prevMonth(D.monthOf(today)))), eq(bookings.status, "CONFIRMED"), seen.length ? notInArray(bookings.externalId, seen) : undefined));
+          .where(and(eq(bookings.source, "DAYLADAU"), inArray(bookings.propertyId, pids), gte(bookings.checkOut, D.firstDay(D.prevMonth(D.monthOf(today)))), eq(bookings.status, "CONFIRMED"), seen.length ? notInArray(bookings.externalId, seen) : undefined, calendarOk ? undefined : notLike(bookings.externalId, "cal%")));
         for (const b of missing) {
           await raiseAlert(db, "BOOKING_MISSING", `BOOKING_MISSING:${b.id}`, `Đơn ${b.externalId} không còn trả về từ Dayladau. Kiểm tra lại trên Dayladau.`, b.propertyId);
         }

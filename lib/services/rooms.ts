@@ -1,7 +1,8 @@
 // Quản lý phòng: gán phòng vào cơ sở, chuyển phòng, đóng/mở phòng.
-import { and, eq, gt, isNull, lt, or } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { DB } from "../db";
-import { bookings, properties, rooms } from "../db/schema";
+import { rowsOf } from "../db/rows";
+import { adjustments, bookingNights, bookings, facilityIssues, ignoredListings, properties, reviews, roomListings, rooms, settlements, tasks } from "../db/schema";
 import { assertPropertyAccess, badRequest, notFound, requirePermission, type SessionUser } from "../auth/access";
 import { clearRoomListings, detachListing } from "../dayladau/room-listings";
 
@@ -166,4 +167,62 @@ export async function reopenRoom(db: DB, user: SessionUser, roomId: string): Pro
 export async function roomsOfProperty(db: DB, user: SessionUser, propertyId: string): Promise<RoomRow[]> {
   await assertPropertyAccess(db, user, propertyId);
   return db.select().from(rooms).where(eq(rooms.propertyId, propertyId));
+}
+
+// ---------- Xóa phòng ----------
+
+/**
+ * Xóa hẳn phòng khỏi hệ thống (không còn trên báo cáo), dùng cho phòng tạo nhầm hoặc listing cũ không dùng nữa.
+ * Xóa luôn đơn Dayladau của phòng; listing của phòng được đưa vào danh sách bỏ qua để đồng bộ không nhập lại.
+ * Không xóa được khi:
+ * - phòng có đơn ngoài OTA nhập tay (có ảnh chuyển khoản) — chuyển hoặc xóa đơn đó trước;
+ * - phòng có đơn đã nằm trong tháng khóa sổ lúc khóa (xóa sẽ làm sai quyết toán đã chốt) — dùng Đóng phòng.
+ */
+export async function deleteRoom(db: DB, user: SessionUser, roomId: string): Promise<{ bookings: number; listings: string[] }> {
+  requirePermission(user, "admin");
+  const [room] = await db.select().from(rooms).where(eq(rooms.id, roomId)).limit(1);
+  if (!room) throw notFound("Không tìm thấy phòng");
+  await assertPropertyAccess(db, user, room.propertyId);
+  const [prop] = await db.select({ investorId: properties.investorId }).from(properties).where(eq(properties.id, room.propertyId)).limit(1);
+
+  const bs = await db.select({ id: bookings.id, source: bookings.source }).from(bookings).where(eq(bookings.roomId, roomId));
+  const manual = bs.filter((b) => b.source === "MANUAL").length;
+  if (manual) throw badRequest(`Phòng có ${manual} đơn nhập tay (ngoài OTA). Chuyển hoặc xóa các đơn đó trước khi xóa phòng.`);
+
+  // Đơn đã được tính khi khóa sổ: đơn tạo trước lúc khóa và có đêm trong tháng khóa
+  if (bs.length && prop) {
+    const locked = await db.execute(sql`
+      select distinct to_char(n.night_date, 'YYYY-MM') as month
+      from ${bookingNights} n
+      join ${settlements} s on s.investor_id = ${prop.investorId} and s.status = 'LOCKED' and s.month = to_char(n.night_date, 'YYYY-MM')
+      where n.room_id = ${roomId}
+        and (s.locked_at is null or exists (
+          select 1 from booking_change_logs l where l.booking_id = n.booking_id and l.changed_at < s.locked_at))
+      order by 1`);
+    const months = rowsOf<{ month: string }>(locked).map((r) => r.month);
+    if (months.length) throw badRequest(`Phòng có đơn đã tính vào tháng đã khóa sổ (${months.join(", ")}). Xóa sẽ làm sai quyết toán; hãy dùng Đóng phòng.`);
+  }
+
+  const extra = await db.select({ accountId: roomListings.dayladauAccountId, key: roomListings.listingKey }).from(roomListings).where(eq(roomListings.roomId, roomId));
+  const listings = [
+    ...(room.dayladauAccountId && room.dayladauRoomId ? [{ accountId: room.dayladauAccountId, key: room.dayladauRoomId }] : []),
+    ...extra,
+  ];
+
+  await db.transaction(async (tx) => {
+    const t = tx as unknown as DB;
+    const ids = bs.map((b) => b.id);
+    if (ids.length) {
+      await t.delete(adjustments).where(inArray(adjustments.bookingId, ids));
+      await t.delete(bookings).where(inArray(bookings.id, ids)); // đêm và lịch sử đơn xóa theo (cascade)
+    }
+    await t.update(reviews).set({ roomId: null }).where(eq(reviews.roomId, roomId));
+    await t.update(tasks).set({ roomId: null }).where(eq(tasks.roomId, roomId));
+    await t.update(facilityIssues).set({ roomId: null }).where(eq(facilityIssues.roomId, roomId));
+    for (const l of listings) {
+      await t.insert(ignoredListings).values({ dayladauAccountId: l.accountId, listingKey: l.key, reason: `Phòng "${room.name}" đã xóa` }).onConflictDoNothing();
+    }
+    await t.delete(rooms).where(eq(rooms.id, roomId)); // listing phụ, phòng gán listing Airbnb xóa theo (cascade)
+  });
+  return { bookings: bs.length, listings: listings.map((l) => l.key) };
 }

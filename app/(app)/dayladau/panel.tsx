@@ -440,6 +440,24 @@ function AccountCard({ acc, investorId, props, bookings, onEdit }: { acc: Accoun
               <table><tbody>{test.samples.map((x) => <tr key={x.id}><td className="small">{x.id}<br />{x.listing}</td><td className="n small">Khách trả {vnd(x.totalBilled)}<br /><b>Host nhận {vnd(x.hostAmount)}</b></td></tr>)}</tbody></table>
             </div>
           </div>
+          {test.calendar && (
+            <div style={{ marginTop: 16 }}>
+              <h3>Đơn tạo tay trên lịch (thẻ Host)</h3>
+              {test.calendar.ok ? (
+                <>
+                  <p className="small muted">{test.calendar.count} đơn trong 60 ngày trước và sau hôm nay. Chỉ đơn có tiền mới được tính doanh thu; nhận và trả trong cùng ngày tính là thuê giờ.</p>
+                  <table><tbody>{test.calendar.samples.map((x) => (
+                    <tr key={x.id}>
+                      <td className="small">{x.id}<br />{x.listing}{!x.roomId && <span className="muted"> · listing chưa gắn phòng</span>}</td>
+                      <td className="small">{x.checkIn} → {x.checkOut}{x.hourly ? " · thuê giờ" : ""}<br />{x.channel} · {x.status || "—"}{x.linkedOrder ? ` · thuộc đơn ${x.linkedOrder}` : ""}</td>
+                      <td className="n small"><b>{vnd(x.amount)}</b></td>
+                    </tr>
+                  ))}</tbody></table>
+                  <details className="small muted"><summary>Tên trường dữ liệu Dayladau trả về</summary>{test.calendar.fields.join(", ")}</details>
+                </>
+              ) : <div className="banner bad">Không lấy được đơn trên lịch: {test.calendar.error}</div>}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -7,10 +7,10 @@ import { badRequest, HttpError } from "@/lib/auth/access";
 import { createProperty, createRoom, listingsForProperty, setPropertyAccount, type ListingSummary } from "@/lib/dayladau/admin";
 import { setPropertyActive, updateProperty } from "@/lib/services/properties";
 import { importListingOrdersLater } from "@/lib/dayladau/import-later";
-import { closeRoom, reopenRoom, transferRoom, updateRoom } from "@/lib/services/rooms";
+import { closeRoom, deleteRoom, reopenRoom, transferRoom, updateRoom } from "@/lib/services/rooms";
 import * as D from "@/lib/domain";
 
-type State = { ok: boolean; error?: string } | null;
+type State = { ok: boolean; error?: string; info?: string } | null;
 const s = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 const money = (f: FormData, k: string) => Number(s(f, k).replace(/[^\d]/g, "")) || 0;
 
@@ -99,6 +99,17 @@ export async function transferRoomAction(_: State, f: FormData): Promise<State> 
 export async function closeRoomAction(_: State, f: FormData): Promise<State> {
   const user = await requireUser();
   return run(() => closeRoom(getDb(), user, s(f, "roomId"), s(f, "closedOn")));
+}
+
+/** Xóa hẳn phòng (phòng tạo nhầm, listing cũ không dùng): không còn trên báo cáo, đồng bộ không nhập lại. */
+export async function deleteRoomAction(_: State, f: FormData): Promise<State> {
+  const user = await requireUser();
+  let info = "";
+  const r = await run(async () => {
+    const d = await deleteRoom(getDb(), user, s(f, "roomId"));
+    info = `Đã xóa phòng${d.bookings ? ` và ${d.bookings} đơn Dayladau của phòng` : ""}`;
+  });
+  return r?.ok ? { ...r, info } : r;
 }
 
 export async function reopenRoomAction(_: State, f: FormData): Promise<State> {

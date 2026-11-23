@@ -12,7 +12,7 @@ import { visibleInvestors, visibleProperties } from "@/lib/queries";
 import { vnd } from "@/components/MonthNav";
 import { ActionForm } from "@/components/ActionForm";
 import {
-  closeRoomAction, createPropertyAction, renameRoomAction, reopenRoomAction, setRoomKpiAction,
+  closeRoomAction, createPropertyAction, deleteRoomAction, renameRoomAction, reopenRoomAction, setRoomKpiAction,
   setPropertyAccountAction, setPropertyActiveAction, transferRoomAction, updatePropertyAction,
 } from "./actions";
 import { AddRoom } from "./add-room";
@@ -161,6 +161,15 @@ export default async function Properties({ searchParams }: { searchParams: Promi
                               </ActionForm>
                             )}
                             <p className="hint">Mở từ {D.formatDateVN(r.openedOn)}. Chỉ chuyển được phòng không còn đơn chưa trả phòng, sang cơ sở cùng chủ đầu tư. Cơ sở đích dùng tài khoản Dayladau khác thì listing của phòng bị bỏ gắn.</p>
+                            <div className="danger-zone">
+                              <ActionForm
+                                action={deleteRoomAction} submit="Xóa phòng" okText="Đã xóa phòng" className="row" submitClass="btn danger"
+                                confirmText={`Xóa hẳn phòng "${r.name}"? Phòng và các đơn Dayladau của phòng sẽ biến mất khỏi báo cáo, listing của phòng không được đồng bộ nữa. Không hoàn tác được.`}
+                              >
+                                <input type="hidden" name="roomId" value={r.id} />
+                              </ActionForm>
+                              <p className="hint">Dùng cho phòng tạo nhầm hoặc listing cũ không dùng nữa. Phòng có đơn nhập tay hoặc đơn đã khóa sổ thì không xóa được, hãy dùng Đóng phòng.</p>
+                            </div>
                           </div>
                         </details>
                       )}

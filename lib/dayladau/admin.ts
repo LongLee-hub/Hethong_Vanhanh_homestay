@@ -9,6 +9,7 @@ import { badRequest, notFound, requirePermission, type SessionUser } from "../au
 import { decryptSecret, encryptSecret } from "../services/settings";
 import { fetchOrdersPage, PAGE_SIZE } from "./client";
 import { mapDayladauOrder } from "./mapping";
+import { fetchCalendarPage, fieldNamesOf, listCalendarReservations, mapCalendarReservation, type CalendarFetch } from "./calendar";
 import { DISMISSIBLE_ALERTS } from "./alert-types";
 import { isLarkWebhook } from "../services/expense-notify";
 import { attachListing, clearRoomListings, detachListing, listingRef, roomsByListing } from "./room-listings";
@@ -245,6 +246,14 @@ export interface ConnectionTest {
   statuses: { status: string; orders: number; treatedAs: "CONFIRMED" | "CANCELLED" }[];
   /** Vài đơn mẫu (không có tên/SĐT khách) để đối chiếu tiền host với Dayladau */
   samples: { id: string; listing: string; checkIn: string; checkOut: string; totalBilled: number; hostAmount: number; rentalType: string | null }[];
+  /** Đơn tạo tay trên lịch (thẻ Host) trong 60 ngày trước/sau hôm nay: để đối chiếu cách đọc dữ liệu. */
+  calendar?: {
+    ok: boolean;
+    error?: string;
+    count: number;
+    fields: string[];
+    samples: { id: string; listing: string; roomId: string | null; checkIn: string; checkOut: string; amount: number; channel: string; status: string; hourly: boolean; linkedOrder: string | null }[];
+  };
 }
 
 /**
@@ -256,7 +265,7 @@ export async function testConnection(
   db: DB,
   user: SessionUser,
   accountId: string,
-  deps: { fetchPage?: typeof fetchOrdersPage; decrypt?: (s: string) => string } = {},
+  deps: { fetchPage?: typeof fetchOrdersPage; decrypt?: (s: string) => string; fetchCalendar?: CalendarFetch } = {},
 ): Promise<ConnectionTest> {
   requirePermission(user, "admin");
   const [acc] = await db.select().from(dayladauAccounts).where(eq(dayladauAccounts.id, accountId)).limit(1);
@@ -323,8 +332,30 @@ export async function testConnection(
     if (listings.has(key)) continue;
     listings.set(key, { key, name: room.name, orders: 0, roomId: room.id, notSeen: true });
   }
+  // Đơn trên lịch: chỉ gọi khi dùng API thật hoặc test truyền hàm lấy lịch
+  const fetchCal = deps.fetchCalendar ?? (deps.fetchPage ? null : fetchCalendarPage);
+  let calendar: ConnectionTest["calendar"];
+  if (fetchCal) {
+    try {
+      const now = Date.now();
+      const cal = await listCalendarReservations(acc.hostId, decrypt(acc.tokenEncrypted), now - 60 * 86_400_000, now + 60 * 86_400_000, fetchCal);
+      const fields = [...new Set(cal.slice(0, 20).flatMap((o) => fieldNamesOf(o)))].sort();
+      const mapped = cal.flatMap((o) => { try { return [mapCalendarReservation(o)]; } catch { return []; } });
+      mapped.sort((a, b) => Number(b.grossAmount > 0) - Number(a.grossAmount > 0) || b.checkIn.localeCompare(a.checkIn));
+      calendar = {
+        ok: true, count: cal.length, fields,
+        samples: mapped.slice(0, 10).map((m) => ({
+          id: m.externalId, listing: m.listingName, roomId: (byListing.get(listingRef(accountId, m.listingKey)) ?? byListing.get(listingRef(accountId, m.listingName)))?.id ?? null,
+          checkIn: m.checkIn, checkOut: m.checkOut, amount: m.grossAmount, channel: m.channel, status: m.rawStatus, hourly: !!m.rentalType, linkedOrder: m.linkedOrderId,
+        })),
+      };
+    } catch (e) {
+      calendar = { ok: false, error: (e as Error).message, count: 0, fields: [], samples: [] };
+    }
+  }
   return {
     ok: true,
+    calendar,
     ordersOnFirstPage,
     ordersScanned: orders.length,
     listings: [...listings.values()].sort((a, b) => a.name.localeCompare(b.name, "vi")),

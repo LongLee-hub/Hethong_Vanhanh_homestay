@@ -116,6 +116,19 @@ export const rooms = pgTable(
   (t) => [uniqueIndex("rooms_dayladau_listing").on(t.dayladauAccountId, t.dayladauRoomId)],
 );
 
+// Listing Dayladau cố ý bỏ qua (phòng đã xóa): đồng bộ không nhập đơn và không báo "listing chưa gắn phòng".
+// Gắn lại listing vào phòng thì tự bỏ khỏi danh sách này.
+export const ignoredListings = pgTable(
+  "ignored_listings",
+  {
+    dayladauAccountId: text("dayladau_account_id").notNull().references(() => dayladauAccounts.id),
+    listingKey: text("listing_key").notNull(),
+    reason: text("reason"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.dayladauAccountId, t.listingKey] })],
+);
+
 // Listing phụ của phòng: listing cũ hoặc listing thứ hai của cùng một phòng trên Dayladau.
 // Listing chính vẫn nằm ở rooms.dayladau_room_id. Một listing chỉ thuộc một phòng (chính hoặc phụ), kiểm tra ở lib/dayladau/room-listings.ts.
 export const roomListings = pgTable(

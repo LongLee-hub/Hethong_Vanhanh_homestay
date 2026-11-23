@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hostAmountOf, mapDayladauOrder, netOf, toVNDate } from "../lib/dayladau/mapping";
 import { ordersUrl } from "../lib/dayladau/client";
+import { itemsOf, mapCalendarReservation } from "../lib/dayladau/calendar";
 
 const order = (over: Record<string, any> = {}) => ({
   id: 12345,
@@ -80,5 +81,30 @@ describe("Map order Dayladau (theo script Apps Script)", () => {
 
   it("thiếu ngày → báo lỗi rõ ràng", () => {
     expect(() => mapDayladauOrder(order({ reservation: {} }))).toThrow(/thiếu ngày/);
+  });
+});
+
+describe("Đơn tạo tay trên lịch (thẻ Host)", () => {
+  it("đọc danh sách dưới nhiều khóa khác nhau", () => {
+    expect(itemsOf({ calendars: [{ id: 1 }] })).toHaveLength(1);
+    expect(itemsOf({ data: { items: [{ id: 1 }, { id: 2 }] } })).toHaveLength(2);
+    expect(itemsOf([{ id: 1 }])).toHaveLength(1);
+    expect(itemsOf({ message: "ok" })).toBeNull();
+  });
+
+  it("map đơn gia hạn giờ thành thuê giờ, host nhận đủ tiền", () => {
+    const m = mapCalendarReservation({
+      id: "cal2cxvnhiz-1795435507670", type: "reservation", status: "success", source: "zalo", total_price: 59000,
+      listing: { id: "ls2z17kjr4", name: "tcung101" }, start_time: "2026-11-21T09:00:00+07:00", end_time: "2026-11-21T10:00:00+07:00", guest_name: "Khách extend 1h",
+    });
+    expect(m).toMatchObject({ externalId: "cal2cxvnhiz-1795435507670", listingKey: "ls2z17kjr4", channel: "Zalo", checkIn: "2026-11-21", checkOut: "2026-11-22", rentalType: "hourly_rental", grossAmount: 59000, hostAmount: 59000, commissionAmount: 0, status: "CONFIRMED", linkedOrderId: null });
+  });
+
+  it("qua đêm là đêm bán; hủy; đơn thuộc đơn Dayladau", () => {
+    const base = { id: "c1", listing_id: "L1", start_time: Date.parse("2026-10-23T12:00:00+07:00"), end_time: Date.parse("2026-10-25T12:00:00+07:00"), price: "1.225.000" };
+    expect(mapCalendarReservation(base)).toMatchObject({ externalId: "cal:c1", checkIn: "2026-10-23", checkOut: "2026-10-25", rentalType: null, grossAmount: 1_225_000 });
+    expect(mapCalendarReservation({ ...base, status: "cancelled" }).status).toBe("CANCELLED");
+    expect(mapCalendarReservation({ ...base, order_id: 327585 }).linkedOrderId).toBe("327585");
+    expect(() => mapCalendarReservation({ id: "c2" })).toThrow(/thiếu ngày/);
   });
 });
