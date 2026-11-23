@@ -191,10 +191,10 @@ export async function syncBookings(
 
       // Đọc sẵn đơn đã có bằng vài truy vấn, chỉ mở transaction cho đơn mới hoặc có thay đổi.
       // Đơn y hệt lần trước (cả tên khách và dữ liệu gốc) chỉ cần cập nhật giờ đồng bộ, gộp thành từng lô.
-      const existing = new Map<string, Pick<typeof bookings.$inferSelect, "id" | "roomId" | "checkIn" | "checkOut" | "grossAmount" | "commissionAmount" | "netAmount" | "status" | "rentalType" | "guestName" | "rawPayload">>();
+      const existing = new Map<string, Pick<typeof bookings.$inferSelect, "id" | "roomId" | "checkIn" | "checkOut" | "grossAmount" | "commissionAmount" | "netAmount" | "status" | "rentalType" | "guestName" | "channel" | "rawPayload">>();
       for (const ids of chunks(todo.map((b) => b.externalId!))) {
         const rows = await db
-          .select({ id: bookings.id, externalId: bookings.externalId, roomId: bookings.roomId, checkIn: bookings.checkIn, checkOut: bookings.checkOut, grossAmount: bookings.grossAmount, commissionAmount: bookings.commissionAmount, netAmount: bookings.netAmount, status: bookings.status, rentalType: bookings.rentalType, guestName: bookings.guestName, rawPayload: bookings.rawPayload })
+          .select({ id: bookings.id, externalId: bookings.externalId, roomId: bookings.roomId, checkIn: bookings.checkIn, checkOut: bookings.checkOut, grossAmount: bookings.grossAmount, commissionAmount: bookings.commissionAmount, netAmount: bookings.netAmount, status: bookings.status, rentalType: bookings.rentalType, guestName: bookings.guestName, channel: bookings.channel, rawPayload: bookings.rawPayload })
           .from(bookings)
           .where(and(eq(bookings.source, "DAYLADAU"), inArray(bookings.externalId, ids)));
         for (const { externalId, ...r } of rows) existing.set(externalId!, r);
@@ -203,7 +203,7 @@ export async function syncBookings(
       for (const input of todo) {
         const prev = existing.get(input.externalId!);
         const next = { ...input, rentalType: input.rentalType ?? null } as typeof bookings.$inferSelect;
-        if (prev && sameTracked(prev, next) && prev.guestName === input.guestName && stableJson(prev.rawPayload) === stableJson(input.rawPayload)) {
+        if (prev && sameTracked(prev, next) && prev.guestName === input.guestName && prev.channel === input.channel && stableJson(prev.rawPayload) === stableJson(input.rawPayload)) {
           untouched.push(prev.id);
           sum.unchanged++;
           continue;

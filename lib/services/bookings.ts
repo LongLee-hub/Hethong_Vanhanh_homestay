@@ -70,7 +70,7 @@ export async function upsertBooking(db: DB, input: BookingInput, changedBy: stri
       if (input.source === "DAYLADAU") {
         // Giờ nhận/trả không ảnh hưởng doanh thu nhưng cần cho lịch dọn phòng: luôn cập nhật theo API
         await t.update(bookings).set({
-          lastSyncedAt: new Date(), rawPayload: input.rawPayload ?? prev.rawPayload, guestName: next.guestName,
+          lastSyncedAt: new Date(), rawPayload: input.rawPayload ?? prev.rawPayload, guestName: next.guestName, channel: next.channel,
           checkInAt: input.checkInAt === undefined ? prev.checkInAt : input.checkInAt, checkOutAt: input.checkOutAt === undefined ? prev.checkOutAt : input.checkOutAt,
         }).where(eq(bookings.id, id));
       }
