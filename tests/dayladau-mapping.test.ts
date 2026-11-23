@@ -104,6 +104,9 @@ describe("Đơn tạo tay trên lịch (thẻ Host)", () => {
     const base = { id: "c1", listing_id: "L1", start_time: Date.parse("2026-10-23T12:00:00+07:00"), end_time: Date.parse("2026-10-25T12:00:00+07:00"), price: "1.225.000" };
     expect(mapCalendarReservation(base)).toMatchObject({ externalId: "cal:c1", checkIn: "2026-10-23", checkOut: "2026-10-25", rentalType: null, grossAmount: 1_225_000 });
     expect(mapCalendarReservation({ ...base, status: "cancelled" }).status).toBe("CANCELLED");
+    // Dữ liệu thật: không có status, avaiable=true là đơn hủy; không có source là DIRECT
+    expect(mapCalendarReservation({ ...base, avaiable: true })).toMatchObject({ status: "CANCELLED", rawStatus: "Hủy" });
+    expect(mapCalendarReservation({ ...base, avaiable: false, amount: 177000 })).toMatchObject({ status: "CONFIRMED", channel: "Direct" });
     expect(mapCalendarReservation({ ...base, order_id: 327585 }).linkedOrderId).toBe("327585");
     expect(() => mapCalendarReservation({ id: "c2" })).toThrow(/thiếu ngày/);
   });

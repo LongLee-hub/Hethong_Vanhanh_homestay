@@ -449,7 +449,7 @@ function AccountCard({ acc, investorId, props, bookings, onEdit }: { acc: Accoun
                   <table><tbody>{test.calendar.samples.map((x) => (
                     <tr key={x.id}>
                       <td className="small">{x.id}<br />{x.listing}{!x.roomId && <span className="muted"> · listing chưa gắn phòng</span>}</td>
-                      <td className="small">{x.checkIn} → {x.checkOut}{x.hourly ? " · thuê giờ" : ""}<br />{x.channel} · {x.status || "—"}{x.linkedOrder ? ` · thuộc đơn ${x.linkedOrder}` : ""}<br /><span className="muted">{x.flags}</span></td>
+                      <td className="small">{x.checkIn} → {x.checkOut}{x.hourly ? " · thuê giờ" : ""}<br />{x.channel} · {x.status || "—"}{x.linkedOrder ? ` · thuộc đơn ${x.linkedOrder}` : ""}</td>
                       <td className="n small"><b>{vnd(x.amount)}</b></td>
                     </tr>
                   ))}</tbody></table>

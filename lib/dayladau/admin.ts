@@ -252,7 +252,7 @@ export interface ConnectionTest {
     error?: string;
     count: number;
     fields: string[];
-    samples: { id: string; listing: string; roomId: string | null; checkIn: string; checkOut: string; amount: number; channel: string; status: string; hourly: boolean; linkedOrder: string | null; flags: string }[];
+    samples: { id: string; listing: string; roomId: string | null; checkIn: string; checkOut: string; amount: number; channel: string; status: string; hourly: boolean; linkedOrder: string | null }[];
   };
 }
 
@@ -339,14 +339,12 @@ export async function testConnection(
     try {
       const now = Date.now();
       const cal = await listCalendarReservations(acc.hostId, decrypt(acc.tokenEncrypted), now - 365 * 86_400_000, now + 60 * 86_400_000, fetchCal);
-      const flagsOf = new Map(cal.map((o) => [String(o?.id ?? ""), `type=${o?.type ?? "-"} avaiable=${o?.avaiable ?? "-"} ufs=${o?.platform_detail?.user_facing_status_key ?? "-"} sync=${JSON.stringify(o?.platform_sync_status ?? null)}`]));
       const fields = [...new Set(cal.slice(0, 20).flatMap((o) => fieldNamesOf(o)))].sort();
       const mapped = cal.flatMap((o) => { try { return [mapCalendarReservation(o)]; } catch { return []; } });
       mapped.sort((a, b) => b.checkIn.localeCompare(a.checkIn));
       calendar = {
         ok: true, count: cal.length, fields,
         samples: mapped.slice(0, 60).map((m) => ({
-          flags: flagsOf.get(m.externalId.replace(/^cal:/, "")) ?? "",
           id: m.externalId, listing: m.listingName, roomId: (byListing.get(listingRef(accountId, m.listingKey)) ?? byListing.get(listingRef(accountId, m.listingName)))?.id ?? null,
           checkIn: m.checkIn, checkOut: m.checkOut, amount: m.grossAmount, channel: m.channel, status: m.rawStatus, hourly: !!m.rentalType, linkedOrder: m.linkedOrderId,
         })),

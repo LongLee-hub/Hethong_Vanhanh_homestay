@@ -480,7 +480,7 @@ describe("Quản trị kết nối Dayladau", () => {
       ["calE-1", "Z-AGAIN", "Khách quen", 1_225_000, 0, null],
     ]);
     // Đơn đã nhập bị hủy trên lịch: cập nhật thành hủy
-    cal[0] = { ...cal[0], status: "cancelled" };
+    cal[0] = { ...cal[0], avaiable: true };
     await syncBookings(db, { client, today: "2026-06-30", decrypt: dec, accountIds: [accB] });
     const [a] = await db.select().from(schema.bookings).where(eq(schema.bookings.externalId, "calA-1"));
     expect(a).toMatchObject({ status: "CANCELLED", netAmount: 0 });

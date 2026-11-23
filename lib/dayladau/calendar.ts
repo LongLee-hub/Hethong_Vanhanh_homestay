@@ -120,9 +120,12 @@ export function mapCalendarReservation(o: RawOrder): MappedCalendarBooking {
   const listing = o?.listing ?? o?.room ?? o?.data?.listing;
   const listingId = first(listing?.id, listing?._id, o?.listing_id, o?.listingId, o?.room_id, o?.data?.listing_id);
   const listingName = String(first(listing?.name, listing?.title, listing?.nickname, o?.listing_name, o?.room_name) ?? "").trim();
-  const rawStatus = String(first(o?.status, o?.reservation_status, o?.state, o?.reservation?.status) ?? "");
+  // Dayladau không có trường trạng thái cho đơn lịch: "avaiable" (sai chính tả từ API) = true nghĩa là đơn đã hủy, lịch trống lại
+  const freed = o?.avaiable === true || o?.avaiable === "true" || o?.available === true;
+  const rawStatus = String(first(o?.status, o?.reservation_status, o?.state, o?.reservation?.status) ?? (freed ? "Hủy" : "Thành công"));
   const chRaw = String(first(o?.source, o?.channel, o?.sale_channel, o?.platform, o?.ota, o?.reservation?.source) ?? "").trim();
-  const ch = CHANNEL_NAMES[chRaw.toLowerCase()] ?? (chRaw ? chRaw.charAt(0).toUpperCase() + chRaw.slice(1).toLowerCase() : "Dayladau");
+  // Không ghi kênh bán: trang host hiện là DIRECT
+  const ch = CHANNEL_NAMES[chRaw.toLowerCase()] ?? (chRaw ? chRaw.charAt(0).toUpperCase() + chRaw.slice(1).toLowerCase() : "Direct");
   const guest = first(o?.guest?.fullname, o?.guest?.name, o?.guest_name, o?.customer_name, o?.customer?.name, o?.name, o?.title, o?.note_title);
   const amount = calendarAmountOf(o);
   const linked = first(o?.order_id, o?.orderId, o?.order?.id, o?.reservation?.order_id);
@@ -141,7 +144,7 @@ export function mapCalendarReservation(o: RawOrder): MappedCalendarBooking {
     grossAmount: amount,
     hostAmount: amount,
     commissionAmount: 0,
-    status: CANCELLED_STATUS.test(rawStatus) ? "CANCELLED" : "CONFIRMED",
+    status: freed || CANCELLED_STATUS.test(rawStatus) ? "CANCELLED" : "CONFIRMED",
     rawStatus,
     linkedOrderId: linked !== undefined ? String(linked) : null,
   };
