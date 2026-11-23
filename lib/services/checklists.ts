@@ -26,7 +26,7 @@ const newId = () => crypto.randomUUID().slice(0, 8);
 
 /** Mẫu có sẵn trong code, dùng khi chưa ai lưu mẫu mặc định. */
 export const builtinSteps = (): ChecklistStep[] =>
-  CLEANING_CHECKLIST.map((c, i) => ({ id: `b${i + 1}`, item: c.item, needPhoto: !!c.needPhoto, hint: null, sample: null }));
+  CLEANING_CHECKLIST.map((c, i) => ({ id: `b${i + 1}`, item: c.item, needPhoto: !!c.needPhoto, hint: c.hint ?? null, sample: null }));
 
 /** Checklist cho một việc dọn mới từ các mục của mẫu. */
 export const stepsToChecklist = (steps: ChecklistStep[]): ChecklistItem[] =>

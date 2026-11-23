@@ -15,7 +15,7 @@ import { SYNC_FULL_MAX_ORDERS, SYNC_MAX_ORDERS, syncBookings } from "../lib/dayl
 import { createRoom, listConnections, listingsForProperty, mapListingToRoom, saveDayladauAccount, saveInvestor, setPropertyAccount, testConnection, type InvestorInfo } from "../lib/dayladau/admin";
 import { liveOrdersForMonth } from "../lib/dayladau/live";
 import { transferRoom } from "../lib/services/rooms";
-import { addTaskPhoto, createTask, setTaskStatus, updateChecklist } from "../lib/services/tasks";
+import { CLEANING_CHECKLIST, addTaskPhoto, createTask, setTaskStatus, updateChecklist } from "../lib/services/tasks";
 import { createRoom as createRoomInProperty, updateRoom } from "../lib/services/rooms";
 import { buildInvestorReport } from "../lib/services/investor-report";
 import { setPropertyActive, updateProperty, type UpdatePropertyInput } from "../lib/services/properties";
@@ -324,7 +324,7 @@ describe("Công việc (giai đoạn 4)", () => {
     // Form tick ở trang Công việc không làm mất cờ bắt buộc ảnh
     const [after] = await db.select().from(schema.checklistResults).where(eq(schema.checklistResults.taskId, t.id));
     const items = after.results as { needPhoto?: boolean }[];
-    expect(items.filter((r) => r.needPhoto).length).toBe(4);
+    expect(items.filter((r) => r.needPhoto).length).toBe(CLEANING_CHECKLIST.filter((c) => c.needPhoto).length);
     await db.update(schema.checklistResults).set({ results: items.map((r) => ({ ...r, photo: r.needPhoto ? "loci-photos/x.jpg" : undefined })) }).where(eq(schema.checklistResults.taskId, t.id));
     await setTaskStatus(db, hk, t.id, "DONE");
     const [done] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, t.id));

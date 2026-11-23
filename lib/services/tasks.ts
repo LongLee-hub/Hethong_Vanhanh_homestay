@@ -30,17 +30,40 @@ export interface ChecklistItem {
 }
 
 /**
- * Checklist dọn phòng. Các mục có máy ảnh bắt buộc chụp, thiếu ảnh thì không hoàn thành được:
- * quản lý xem lại được từng phòng, kể cả chìa khoá/thẻ từ (sự cố mất chìa khoá phát hiện ngay trong ca).
+ * Checklist dọn phòng 10 phút (Unixstay, Tờ A) — làm mỗi lần dọn sau khi khách trả phòng.
+ * Mục có máy ảnh bắt buộc chụp theo "Mẫu chụp ảnh & video báo cáo", thiếu ảnh thì không hoàn thành được.
+ * Quy tắc dừng: mọi mục không đạt phải xử lý xong trước khi giao phòng.
  */
 export const CLEANING_CHECKLIST: ChecklistItem[] = [
-  { item: "Thay ga, vỏ gối, khăn tắm", done: false, needPhoto: true },
-  { item: "Vệ sinh nhà tắm, bồn cầu", done: false, needPhoto: true },
-  { item: "Hút bụi, lau sàn", done: false, needPhoto: true },
-  { item: "Bổ sung nước, trà, đồ vệ sinh cá nhân", done: false },
-  { item: "Kiểm tra điều hòa, đèn, remote", done: false },
-  { item: "Đổ rác, thay túi rác", done: false },
-  { item: "Kiểm tra chìa khoá / thẻ từ đủ và đúng chỗ", done: false, needPhoto: true },
+  // A. Phòng ngủ
+  { item: "Vỏ chăn-ga-gối thay mới: không vết bẩn, không tóc, không hôi, nhăn dưới 40%", done: false, needPhoto: true,
+    hint: "Ảnh cận cảnh giường: đứng cuối giường, chụp chéo 30–45° dọc mặt giường lên đến gối, thấy rõ ga và gối." },
+  { item: "Điều hòa: bật, mát rõ sau 5 phút · điều khiển có pin", done: false, needPhoto: true,
+    hint: "Chụp cận remote hoặc cục lạnh đang hiện đèn báo bật và nhiệt độ cài đặt." },
+  { item: "Wifi vào được, máy chiếu/TV mở Netflix xem thử 1 phim", done: false, needPhoto: true,
+    hint: "Bật máy → mở Netflix → chọn phim bấm play, chụp màn hình đang phát. Theo mẫu cần quay video 10–15 giây, gửi qua kênh của cơ sở." },
+  // B. Bếp
+  { item: "Bếp từ, ấm siêu tốc, máy hút mùi: bật thử, có hoạt động", done: false, needPhoto: true,
+    hint: "Ảnh toàn cảnh khu bếp: đứng đối diện, chụp ngang tầm mắt lấy đủ 3 thiết bị và mặt bếp trong một khung." },
+  { item: "Tủ lạnh: làm lạnh, sạch, không còn đồ thừa", done: false, needPhoto: true,
+    hint: "Mở hết cửa tủ lạnh, đứng thẳng phía trước chụp toàn bộ khoang bên trong." },
+  // C. Nhà tắm
+  { item: "Giấy vệ sinh: 01 cuộn (cuộn đang dùng dưới ½ thì thêm 1 cuộn mới)", done: false },
+  { item: "Dầu gội & sữa tắm: còn trên ⅓ bình (dưới ⅓ thì đổ đầy)", done: false },
+  { item: "Bàn chải 2 cái còn nguyên túi · kem đánh răng", done: false },
+  { item: "Khăn tắm 2 cái sạch, không ẩm ướt, không hôi", done: false, needPhoto: true,
+    hint: "Một ảnh chung đồ dùng nhà tắm: giấy vệ sinh, dầu gội & sữa tắm, bàn chải + kem, khăn tắm — đếm được rõ số lượng." },
+  { item: "Bồn rửa, bồn cầu, sàn: sạch, khô, không tóc, không mùi hôi", done: false, needPhoto: true,
+    hint: "Ảnh toàn cảnh nhà tắm: đứng tại cửa, lấy đủ bồn cầu, bồn rửa và sàn trong một khung." },
+  { item: "Lòng bồn cầu: sạch, không ố vàng", done: false, needPhoto: true,
+    hint: "Mở nắp, chụp từ trên xuống nhìn thẳng vào lòng bồn, đủ sáng. Đây là chỗ khách hay khiếu nại nhất." },
+  { item: "Nước nóng vòi sen: mở thử, có nước nóng", done: false, needPhoto: true,
+    hint: "Mở vòi sen hết cỡ nóng, chụp thấy rõ hơi nước. Theo mẫu cần quay video 10 giây (hứng tay, nói \"nước đã nóng\"), gửi qua kênh của cơ sở." },
+  // D. Khoá an toàn và báo cáo
+  { item: "Khoá cửa dễ khoá, không kẹt, không hỏng · khoá lại, cất chìa vào hộp khoá", done: false, needPhoto: true,
+    hint: "Mở nắp hộp khoá, chụp rõ số phòng trên hộp và trên chìa, lấy được cửa phòng đã đóng kín phía sau." },
+  { item: "Báo cáo: ảnh toàn cảnh phòng lúc rời đi · ghi vấn đề phát hiện vào ghi chú (nếu có)", done: false, needPhoto: true,
+    hint: "Đứng tại cửa ra vào, bật đủ đèn, chụp thẳng vào trong lấy đủ giường và phần lớn phòng. Mục nào không đạt phải xử lý xong trước khi giao phòng." },
 ];
 
 /** Checklist mới cho việc vừa tạo: dọn phòng dùng checklist có ảnh, loại khác dùng danh sách cũ. */

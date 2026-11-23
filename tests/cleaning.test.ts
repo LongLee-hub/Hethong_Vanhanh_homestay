@@ -7,7 +7,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import * as schema from "../lib/db/schema";
 import type { DB } from "../lib/db";
 import type { SessionUser } from "../lib/auth/access";
-import { clockIn, createTask, generateCleaningTasks } from "../lib/services/tasks";
+import { CLEANING_CHECKLIST, clockIn, createTask, generateCleaningTasks } from "../lib/services/tasks";
 import { mapDayladauOrder, toInstant } from "../lib/dayladau/mapping";
 import { myNotifications, notifyUsers, saveSubscription, type PushSender } from "../lib/services/notify";
 import {
@@ -70,16 +70,17 @@ describe("Dọn phòng", () => {
     const [cl] = await db.select().from(schema.checklistResults).where(eq(schema.checklistResults.taskId, t203));
     const items = cl.results as { item: string; needPhoto?: boolean }[];
     for (let i = 0; i < items.length; i++) if (!items[i].needPhoto) await toggleChecklistItem(db, quan, t203, i, true);
-    await expect(completeCleaning(db, quan, t203)).rejects.toThrow(/4 việc chưa tick, 4 ảnh bắt buộc/);
+    const nPhoto = CLEANING_CHECKLIST.filter((c) => c.needPhoto).length;
+    await expect(completeCleaning(db, quan, t203)).rejects.toThrow(new RegExp(`${nPhoto} việc chưa tick, ${nPhoto} ảnh bắt buộc`));
     const photoIdx = items.map((r, i) => (r.needPhoto ? i : -1)).filter((i) => i >= 0);
-    for (const i of photoIdx.slice(0, 3)) await setChecklistPhoto(db, quan, t203, i, `loci-photos/cleaning/${i}.jpg`);
+    for (const i of photoIdx.slice(0, -1)) await setChecklistPhoto(db, quan, t203, i, `loci-photos/cleaning/${i}.jpg`);
     await expect(completeCleaning(db, quan, t203)).rejects.toThrow(/1 việc chưa tick, 1 ảnh bắt buộc/);
-    await setChecklistPhoto(db, quan, t203, photoIdx[3], "loci-photos/cleaning/key.jpg");
+    await setChecklistPhoto(db, quan, t203, photoIdx.at(-1)!, "loci-photos/cleaning/key.jpg");
     await completeCleaning(db, quan, t203);
     const [done] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, t203));
     expect(done.status).toBe("DONE");
     expect(done.completedById).toBe(quan.id);
-    expect(done.photoUrls).toHaveLength(4);
+    expect(done.photoUrls).toHaveLength(nPhoto);
   });
 
   it("ca hỗ trợ: Hương vào ca ở Khương Trung (không được giao) thì làm được việc dọn ở đó", async () => {
