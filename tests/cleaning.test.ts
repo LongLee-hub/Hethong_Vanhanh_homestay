@@ -12,7 +12,7 @@ import { mapDayladauOrder, toInstant } from "../lib/dayladau/mapping";
 import { myNotifications, notifyUsers, saveSubscription, type PushSender } from "../lib/services/notify";
 import {
   cleaningBoard, cleaningCalendar, cleaningDailyReport, cleaningWeeklyReport, completeCleaning, computeCleaningAlerts, listIssues,
-  assignIssue, reportIssue, resolveIssue, setChecklistPhoto, toggleChecklistItem, weekStart,
+  assignIssue, reportIssue, resolveIssue, setChecklistPhoto, toggleChecklistItem, weekStart, closePassedCleaningTasks, isAutoClosed,
 } from "../lib/services/cleaning";
 import * as D from "../lib/domain";
 
@@ -272,6 +272,40 @@ describe("Nhiều lượt dọn trong ngày (thuê giờ + qua đêm) – tình 
     // 13:00: lượt 09:00→10:00 đã quá giờ khách vào hơn 2 tiếng → tách thành "Quá giờ", không còn là Dọn ngay
     const later = (await cleaningBoard(db, mgr, "KT", today, vn("13:00"))).filter((r) => r.roomId === "R301");
     expect(later.map((r) => r.state)).toEqual(["todo", "missed"]);
+  });
+});
+
+describe("Tự đóng việc dọn đã qua lượt", () => {
+  it("đóng việc hôm qua mà khách mới đã vào; giữ việc hôm qua khách chưa đến; Daily report ngày cũ vẫn thấy Quá giờ", async () => {
+    const s = schema;
+    const y = D.addDays(today, -1);
+    await db.insert(s.rooms).values([
+      { id: "A1", propertyId: "LT", name: "A1", openedOn: "2026-01-01" },
+      { id: "A2", propertyId: "LT", name: "A2", openedOn: "2026-01-01" },
+    ]);
+    await db.insert(s.bookings).values([
+      { id: "a1-out", source: "DAYLADAU", propertyId: "LT", roomId: "A1", channel: "Airbnb", guestName: "Cũ A1", checkIn: D.addDays(y, -1), checkOut: y, checkInAt: vn("14:00", D.addDays(y, -1)), checkOutAt: vn("09:00", y), status: "CONFIRMED" },
+      { id: "a1-in", source: "DAYLADAU", propertyId: "LT", roomId: "A1", channel: "Airbnb", guestName: "Mới A1", checkIn: y, checkOut: D.addDays(today, 2), checkInAt: vn("21:00", y), checkOutAt: vn("12:00", D.addDays(today, 2)), status: "CONFIRMED" },
+      { id: "a2-out", source: "DAYLADAU", propertyId: "LT", roomId: "A2", channel: "Airbnb", guestName: "Cũ A2", checkIn: D.addDays(y, -1), checkOut: y, checkInAt: vn("14:00", D.addDays(y, -1)), checkOutAt: vn("09:00", y), status: "CONFIRMED" },
+    ]);
+    const mk = (room: string, booking: string) => createTask(db, mgr, { propertyId: "LT", roomId: room, type: "CLEANING", title: `Dọn ${room}`, assigneeId: huong.id, dueAt: vn("18:00", y), recurrenceRule: null })
+      .then(async (t) => { await db.update(s.tasks).set({ bookingId: booking }).where(eq(s.tasks.id, t.id)); return t.id; });
+    const passed = await mk("A1", "a1-out");
+    const pending = await mk("A2", "a2-out");
+    const old = await createTask(db, mgr, { propertyId: "LT", roomId: "A2", type: "CLEANING", title: "Dọn A2 cũ", assigneeId: huong.id, dueAt: vn("12:00", D.addDays(today, -10)), recurrenceRule: null });
+
+    expect(await closePassedCleaningTasks(db, today)).toBeGreaterThanOrEqual(2); // kể cả việc cũ của các test trước
+    const get = async (id: string) => (await db.select().from(s.tasks).where(eq(s.tasks.id, id)))[0];
+    expect(isAutoClosed(await get(passed))).toBe(true);
+    expect(isAutoClosed(await get(old.id))).toBe(true);
+    expect((await get(pending)).status).toBe("TODO"); // khách mới chưa vào A2: vẫn phải dọn, vẫn mang sang hôm nay
+    expect((await cleaningBoard(db, mgr, "LT", today, vn("08:00"))).map((r) => r.taskId)).toContain(pending);
+    expect((await cleaningBoard(db, mgr, "LT", today, vn("08:00"))).map((r) => r.taskId)).not.toContain(passed);
+    // Xem lại Daily report hôm qua: lượt A1 vẫn hiện là Quá giờ, không biến mất
+    const rep = await cleaningDailyReport(db, mgr, y, { propertyId: "LT" }, vn("08:00"));
+    expect(rep.alerts.some((a) => a.kind === "missed" && a.detail.includes("A1"))).toBe(true);
+    // Chạy lại không đóng thêm
+    expect(await closePassedCleaningTasks(db, today)).toBe(0);
   });
 });
 

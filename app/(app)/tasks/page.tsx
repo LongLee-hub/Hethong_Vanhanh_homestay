@@ -22,7 +22,15 @@ export default async function Tasks() {
   const props = await visibleProperties(db, user);
   const name = Object.fromEntries(props.map((p) => [p.id, p.name]));
   const since = new Date(Date.now() - 7 * 86400_000);
-  const list = (await listTasks(db, user, { from: since })).filter((t) => t.status !== "CANCELLED");
+  const all = (await listTasks(db, user, { from: since })).filter((t) => t.status !== "CANCELLED");
+  // Việc dọn phòng làm ở tab Dọn phòng (đúng phòng hôm nay, checklist chụp ảnh); để ở đây nhân viên dễ mở nhầm việc ngày cũ
+  const cleaningOpen = all.filter((t) => t.type === "CLEANING" && t.status !== "DONE").length;
+  const today = D.todayVN();
+  const dayOf = (d: Date) => new Date(d.getTime() + 7 * 3600_000).toISOString().slice(0, 10);
+  // Thứ tự: việc mở hạn hôm nay → việc mở sắp tới → việc mở quá hạn từ ngày trước (mới trước) → việc đã xong (mới trước)
+  const group = (t: (typeof all)[number]) => (t.status === "DONE" ? 3 : dayOf(t.dueAt) === today ? 0 : dayOf(t.dueAt) > today ? 1 : 2);
+  const list = all.filter((t) => t.type !== "CLEANING").sort((a, b) => group(a) - group(b)
+    || (group(a) <= 1 ? a.dueAt.getTime() - b.dueAt.getTime() : b.dueAt.getTime() - a.dueAt.getTime()));
   const cls = list.length ? await db.select().from(checklistResults).where(inArray(checklistResults.taskId, list.map((t) => t.id))) : [];
   const staff = await staffForProperties(db, props.map((p) => p.id));
   const now = new Date();
@@ -30,6 +38,14 @@ export default async function Tasks() {
     <>
       <div className="topbar"><h1>Công việc</h1></div>
       <div className="stack">
+        <section className="panel row">
+          <div>
+            <b>Việc dọn phòng nằm ở tab Dọn phòng</b>
+            <p className="small muted" style={{ margin: 0 }}>{cleaningOpen ? `Còn ${cleaningOpen} lượt dọn chưa xong. ` : ""}Tab Dọn phòng hiện đúng các phòng cần dọn hôm nay, kèm checklist chụp ảnh.</p>
+          </div>
+          <span className="spacer" />
+          <a className="btn primary sm" href="/don-dep">Mở Dọn phòng</a>
+        </section>
         {list.map((t) => {
           const cl = cls.find((c) => c.taskId === t.id)?.results as { item: string; done: boolean }[] | undefined;
           const overdue = ["TODO", "IN_PROGRESS"].includes(t.status) && t.dueAt < now;
@@ -43,7 +59,6 @@ export default async function Tasks() {
                 <span className={`pill ${overdue ? "bad" : t.status === "DONE" ? "ok" : ""}`}>{overdue ? "Quá hạn" : STATUS[t.status]}</span>
               </summary>
               {t.description && <p className="small">{t.description}</p>}
-              {t.type === "CLEANING" && <p><a className="btn sm" href={`/don-dep/${t.id}`}>Mở checklist dọn phòng (chụp ảnh từng mục)</a></p>}
               {cl && (
                 <form action={checklistAction} className="stack" style={{ gap: 6 }}>
                   <input type="hidden" name="taskId" value={t.id} />
@@ -65,7 +80,7 @@ export default async function Tasks() {
             </details>
           );
         })}
-        {!list.length && <div className="empty">Không có việc nào trong 7 ngày qua và sắp tới.</div>}
+        {!list.length && <div className="empty">Không có việc nào khác trong 7 ngày qua và sắp tới.</div>}
       </div>
       {can(user, "assignTask") && (
         <section className="panel" style={{ marginTop: 16 }}>

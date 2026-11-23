@@ -141,10 +141,11 @@ async function boardFor(db: DB, propertyIds: string[], date: string, now: Date):
   const backlogDay = D.addDays(date, -BACKLOG_DAYS);
   const backlogFrom = at(backlogDay, "00:00");
   // Lấy rộng thêm một ngày phía sau: hạn dọn có thể sang ngày hôm sau (khách trả khuya), việc vẫn thuộc ngày trả phòng
-  const rows = await db.select().from(tasks).where(and(
-    inArray(tasks.propertyId, propertyIds), eq(tasks.type, "CLEANING"), ne(tasks.status, "CANCELLED"),
+  // Việc hệ thống tự đóng (lượt dọn đã qua) vẫn lấy để Daily report ngày cũ hiện "Quá giờ" như trước
+  const rows = (await db.select().from(tasks).where(and(
+    inArray(tasks.propertyId, propertyIds), eq(tasks.type, "CLEANING"),
     gte(tasks.dueAt, backlogFrom), lt(tasks.dueAt, at(D.addDays(date, 2), "00:00")),
-  ));
+  ))).filter((t) => t.status !== "CANCELLED" || isAutoClosed(t));
   if (!rows.length) return out;
   const h = await stayHours(db);
   const bookingIds = [...new Set(rows.map((t) => t.bookingId).filter(Boolean) as string[])];
@@ -164,6 +165,8 @@ async function boardFor(db: DB, propertyIds: string[], date: string, now: Date):
     const taskDay = checkoutAt ? dayVN(checkoutAt) : dayVN(t.dueAt);
     if (taskDay > date || taskDay < backlogDay) continue;
     if (taskDay < date && done) continue; // việc hôm trước đã xong: không mang sang
+    const autoClosed = t.status === "CANCELLED";
+    if (taskDay < date && autoClosed) continue; // lượt dọn đã qua, hệ thống đã đóng: không mang sang
     // Khách kế tiếp vào CHÍNH phòng đó SAU lượt trả phòng này (không lấy khách của lượt dọn khác trong ngày)
     const from = checkoutAt ?? at(taskDay, "00:00");
     const next = t.roomId ? arrivals.find((x) => x.roomId === t.roomId && x.id !== t.bookingId && x.at >= from && x.at < dayEnd) ?? null : null;
@@ -174,6 +177,7 @@ async function boardFor(db: DB, propertyIds: string[], date: string, now: Date):
     const nextIn = next?.at ?? null;
     const mins = nextIn ? Math.round((nextIn.getTime() - now.getTime()) / 60_000) : null;
     const state: CleanState = done ? "done"
+      : autoClosed ? "missed"
       : mins !== null && mins < -NOTIFY_LATE_LIMIT_MIN ? "missed"
       : mins !== null && mins <= urgent ? "urgent"
       : st.ticks || (st.photoNeed && st.photos) ? "doing" : "todo";
@@ -193,6 +197,42 @@ async function boardFor(db: DB, propertyIds: string[], date: string, now: Date):
       || a.roomName.localeCompare(b.roomName, "vi")));
   }
   return out;
+}
+
+// ---------- Tự đóng việc dọn đã qua ----------
+/** Ghi chú gắn vào mô tả việc khi hệ thống tự đóng; dùng để nhận ra việc tự đóng (khác việc quản lý huỷ). */
+export const AUTO_CLOSE_NOTE = "[Tự đóng] Lượt dọn đã qua: khách mới đã vào phòng hoặc việc tồn quá hạn, không còn phải làm.";
+export const isAutoClosed = (t: { status: string; description: string | null }) => t.status === "CANCELLED" && !!t.description?.includes(AUTO_CLOSE_NOTE);
+
+/**
+ * Đóng các việc dọn còn mở của những ngày trước mà không còn phải làm nữa, để chúng không nằm "Quá hạn" trong danh sách
+ * của nhân viên: khách mới đã vào phòng trước hôm nay, hoặc việc tồn lâu hơn BACKLOG_DAYS ngày.
+ * Đúng những việc mà bảng phòng hôm nay đã bỏ qua; việc hôm qua mà khách mới chưa đến thì vẫn giữ để dọn.
+ */
+export async function closePassedCleaningTasks(db: DB, today = D.todayVN()) {
+  const dayStart = at(today, "00:00");
+  const open = await db.select().from(tasks).where(and(
+    eq(tasks.type, "CLEANING"), inArray(tasks.status, ["TODO", "IN_PROGRESS"]), lt(tasks.dueAt, at(D.addDays(today, 1), "00:00")),
+  ));
+  if (!open.length) return 0;
+  const h = await stayHours(db);
+  const bookingIds = [...new Set(open.map((t) => t.bookingId).filter(Boolean) as string[])];
+  const outs = bookingIds.length ? await db.select({ id: bookings.id, checkOut: bookings.checkOut, checkOutAt: bookings.checkOutAt }).from(bookings).where(inArray(bookings.id, bookingIds)) : [];
+  const leave = new Map(outs.map((b) => [b.id, departureOf(b, h)]));
+  const backlogDay = D.addDays(today, -BACKLOG_DAYS);
+  const arrivals = await arrivalsBetween(db, [...new Set(open.map((t) => t.propertyId))], backlogDay, D.addDays(today, -1), h);
+  const stale = open.filter((t) => {
+    const checkoutAt = t.bookingId ? leave.get(t.bookingId) ?? null : null;
+    const taskDay = checkoutAt ? dayVN(checkoutAt) : dayVN(t.dueAt);
+    if (taskDay >= today) return false;
+    if (taskDay < backlogDay) return true;
+    const from = checkoutAt ?? at(taskDay, "00:00");
+    return !!t.roomId && arrivals.some((a) => a.roomId === t.roomId && a.id !== t.bookingId && a.at >= from && a.at < dayStart);
+  });
+  for (const t of stale) {
+    await db.update(tasks).set({ status: "CANCELLED", description: t.description ? `${t.description}\n${AUTO_CLOSE_NOTE}` : AUTO_CLOSE_NOTE }).where(eq(tasks.id, t.id));
+  }
+  return stale.length;
 }
 
 /** Chi tiết một việc dọn để mở checklist. */
