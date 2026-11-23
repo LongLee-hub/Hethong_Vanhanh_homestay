@@ -3,6 +3,7 @@ import * as D from "@/lib/domain";
 import { getDb } from "@/lib/db";
 import { checklistResults } from "@/lib/db/schema";
 import { can } from "@/lib/auth/access";
+import { redirect } from "next/navigation";
 import { NoAccess } from "@/components/NoAccess";
 import { requireUser } from "@/lib/server";
 import { listTasks } from "@/lib/services/tasks";
@@ -18,6 +19,7 @@ const fmt = (d: Date) => new Date(d.getTime() + 7 * 3600_000).toISOString().slic
 export default async function Tasks() {
   const user = await requireUser();
   if (!can(user, "workTask")) return <NoAccess />;
+  if (user.role === "HOUSEKEEPER") redirect("/don-dep");
   const db = getDb();
   const props = await visibleProperties(db, user);
   const name = Object.fromEntries(props.map((p) => [p.id, p.name]));

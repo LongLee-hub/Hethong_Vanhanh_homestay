@@ -16,7 +16,7 @@ export default function LoginPage() {
     if (!res.ok) return setError(data.error ?? "Đăng nhập không thành công");
     // Mở từ link (vd tin nhắc duyệt chi phí trên Lark): quay lại đúng trang đó. Chỉ nhận đường dẫn nội bộ.
     const next = new URLSearchParams(location.search).get("next") ?? "";
-    location.href = /^\/(?!\/)[\w\-/?=&%.]*$/.test(next) ? next : data.role === "HOUSEKEEPER" ? "/tasks" : "/";
+    location.href = /^\/(?!\/)[\w\-/?=&%.]*$/.test(next) ? next : data.role === "HOUSEKEEPER" ? "/don-dep" : "/";
   }
   return (
     <form className="login panel" onSubmit={submit}>

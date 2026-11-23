@@ -50,7 +50,7 @@ export default async function CleaningChecklist({ params }: { params: Promise<{ 
       <p className="small muted clean-hint">
         {photoItems.length
           ? `Tick từng việc. ${photoItems.length} việc có nút máy ảnh bắt buộc chụp ảnh; thiếu ảnh thì chưa hoàn thành được phòng. Chụp ảnh xong mục đó tự được tick.`
-          : "Tick từng việc và tải ít nhất một ảnh nghiệm thu ở trang Công việc."}
+          : "Tick từng việc. Checklist này chưa có mục bắt buộc chụp ảnh nên chưa hoàn thành được phòng; báo quản lý thêm ít nhất một mục chụp ảnh."}
       </p>
 
       <ol className="clean-check">

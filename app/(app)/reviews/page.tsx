@@ -49,7 +49,7 @@ function KpiCell({ pct }: { pct: number | null }) {
   return <td className={`n ${pct === null ? "muted" : pct >= 100 ? "pos" : ""}`}>{pctTxt(pct)}</td>;
 }
 
-function ReviewCard({ r }: { r: ReviewItem }) {
+function ReviewCard({ r, taskLink = true }: { r: ReviewItem; taskLink?: boolean }) {
   return (
     <article className={`${css.review} ${r.low ? css.low : ""}`}>
       <header className={css.reviewHead}>
@@ -59,7 +59,7 @@ function ReviewCard({ r }: { r: ReviewItem }) {
           <span className="small muted">{r.propertyName}{r.roomName ? `, phòng ${r.roomName}` : r.listingName ? `, ${r.listingName}` : ""}. Trả phòng {D.formatDateVN(r.reviewDate)}</span>
         </div>
       </header>
-      {r.low && <Link className={`small ${css.taskLink}`} href="/tasks">Xem việc xử lý</Link>}
+      {r.low && taskLink && <Link className={`small ${css.taskLink}`} href="/tasks">Xem việc xử lý</Link>}
       {r.content ? <p className={css.text}>{r.content}</p> : <p className={`${css.text} muted`}>Khách chỉ chấm điểm, không viết nhận xét.</p>}
       <div className={css.sub}>
         {CRITERIA.slice(1).map((c) => {
@@ -72,7 +72,7 @@ function ReviewCard({ r }: { r: ReviewItem }) {
 }
 
 /** Buồng phòng: đánh giá của cơ sở được giao, không có doanh thu. Thưởng 5★ và phạt dưới 4★ tính vào lương tháng. */
-function StaffReviews({ s, month, p }: { s: Awaited<ReturnType<typeof monthlyReviewSummary>>; month: string; p?: string }) {
+function StaffReviews({ s, month, p, taskLink }: { s: Awaited<ReturnType<typeof monthlyReviewSummary>>; month: string; p?: string; taskLink: boolean }) {
   const monthLow = D.formatMonthVN(month).toLowerCase();
   const showProp = p && s.byProperty.some((x) => x.propertyId === p) ? p : null;
   const listed = showProp ? s.items.filter((r) => r.propertyId === showProp) : s.items;
@@ -98,7 +98,7 @@ function StaffReviews({ s, month, p }: { s: Awaited<ReturnType<typeof monthlyRev
             </div>
           )}
         </header>
-        {listed.length ? <div className={css.list}>{listed.map((r) => <ReviewCard key={r.id} r={r} />)}</div> : <p className="muted">Chưa có đánh giá nào trong {monthLow}.</p>}
+        {listed.length ? <div className={css.list}>{listed.map((r) => <ReviewCard key={r.id} r={r} taskLink={taskLink} />)}</div> : <p className="muted">Chưa có đánh giá nào trong {monthLow}.</p>}
       </section>
     </>
   );
@@ -111,7 +111,7 @@ export default async function Reviews({ searchParams }: { searchParams: Promise<
   const db = getDb();
   const month = monthParam(sp.month);
   const s = await monthlyReviewSummary(db, user, month);
-  if (!can(user, "viewFinance")) return <StaffReviews s={s} month={month} p={sp.p} />;
+  if (!can(user, "viewFinance")) return <StaffReviews s={s} month={month} p={sp.p} taskLink={user.role !== "HOUSEKEEPER"} />;
   const isAdmin = can(user, "admin");
   const monthLow = D.formatMonthVN(month).toLowerCase();
   const low = s.items.filter((r) => r.low);

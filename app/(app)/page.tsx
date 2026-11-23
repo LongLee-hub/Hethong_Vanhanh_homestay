@@ -40,7 +40,7 @@ const fmtTime = (d: Date) =>
 
 export default async function Dashboard() {
   const user = await requireUser();
-  if (user.role === "HOUSEKEEPER") redirect("/tasks");
+  if (user.role === "HOUSEKEEPER") redirect("/don-dep");
   const db = getDb();
   const today = D.todayVN();
   const month = D.monthOf(today);
