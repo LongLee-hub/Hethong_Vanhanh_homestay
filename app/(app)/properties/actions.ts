@@ -6,6 +6,7 @@ import { action, requireUser } from "@/lib/server";
 import { badRequest, HttpError } from "@/lib/auth/access";
 import { createProperty, createRoom, listingsForProperty, setPropertyAccount, type ListingSummary } from "@/lib/dayladau/admin";
 import { setPropertyActive, updateProperty } from "@/lib/services/properties";
+import { importListingOrdersLater } from "@/lib/dayladau/import-later";
 import { closeRoom, reopenRoom, transferRoom, updateRoom } from "@/lib/services/rooms";
 import * as D from "@/lib/domain";
 
@@ -70,10 +71,14 @@ export async function listingsAction(propertyId: string): Promise<{ ok: boolean;
 /** Tạo phòng, gắn luôn listing Dayladau nếu có chọn (cùng một giao dịch). */
 export async function createRoomAction(input: { propertyId: string; name: string; openedOn: string; listingKey?: string }): Promise<State> {
   const user = await requireUser();
-  return run(async () => {
+  let accountId: string | null | undefined;
+  const r = await run(async () => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.openedOn)) throw badRequest("Chọn ngày mở bán");
-    await createRoom(getDb(), user, { ...input, listingKey: input.listingKey || undefined });
+    accountId = (await createRoom(getDb(), user, { ...input, listingKey: input.listingKey || undefined })).dayladauAccountId;
   });
+  // Phòng mới gắn listing: nhập luôn đơn cũ của listing (đồng bộ thường chỉ đọc đơn mới nhất)
+  if (r?.ok && input.listingKey) importListingOrdersLater(accountId, [input.listingKey]);
+  return r;
 }
 
 export async function renameRoomAction(_: State, f: FormData): Promise<State> {

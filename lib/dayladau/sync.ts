@@ -61,7 +61,11 @@ async function raiseAlert(db: DB, type: string, key: string, message: string, pr
 
 export async function syncBookings(
   db: DB,
-  opts: { client?: DayladauClient; today?: string; decrypt?: (s: string) => string; investorIds?: string[]; accountIds?: string[]; maxOrders?: number; full?: boolean; month?: string } = {},
+  opts: {
+    client?: DayladauClient; today?: string; decrypt?: (s: string) => string; investorIds?: string[]; accountIds?: string[]; maxOrders?: number; full?: boolean; month?: string;
+    /** Chỉ ghi đơn của các listing này (mã hoặc tên), đọc toàn bộ lịch sử. Dùng khi vừa gắn listing vào phòng. */
+    listingKeys?: string[];
+  } = {},
 ): Promise<SyncSummary> {
   const client = opts.client ?? httpDayladauClient;
   const decrypt = opts.decrypt ?? decryptSecret;
@@ -69,6 +73,7 @@ export async function syncBookings(
   const cfg = await getAllSettings(db);
   const [run] = await db.insert(syncRuns).values({}).returning();
   const sum: SyncSummary = { created: 0, updated: 0, unchanged: 0, skipped: 0, adjustments: 0, unmapped: [], errors: [] };
+  const onlyListings = opts.listingKeys?.length ? new Set(opts.listingKeys) : null;
 
   // Gọi riêng từng tài khoản Dayladau đang bật; tài khoản chỉ đổ đơn vào các cơ sở đang dùng nó
   const conds = [eq(dayladauAccounts.active, true), eq(dayladauAccounts.payoutOnly, false)];
@@ -92,7 +97,7 @@ export async function syncBookings(
       const hasRooms = [...byListing.entries()].some(([k, r]) => k.startsWith(listingRef(acc.id, "")) && pids.includes(r.propertyId));
       // Tài khoản mới (đã gắn phòng nhưng chưa có đơn nào về) thì lấy toàn bộ đơn cũ, các lần sau chỉ lấy đơn mới nhất
       const first = hasRooms && !(await db.select({ id: bookings.id }).from(bookings).where(and(eq(bookings.source, "DAYLADAU"), inArray(bookings.propertyId, pids))).limit(1)).length;
-      const maxOrders = opts.maxOrders ?? (opts.full || opts.month || first ? SYNC_FULL_MAX_ORDERS : SYNC_MAX_ORDERS);
+      const maxOrders = opts.maxOrders ?? (opts.full || opts.month || onlyListings || first ? SYNC_FULL_MAX_ORDERS : SYNC_MAX_ORDERS);
       const raws = await client.listBookings({ hostId: acc.hostId, token: decrypt(acc.tokenEncrypted), maxOrders });
       const seen: string[] = [];
       const unmapped = new Map<string, { name: string; count: number }>();
@@ -107,6 +112,8 @@ export async function syncBookings(
           sum.errors.push({ accountId: acc.id, investorId: acc.investorId, message: (e as Error).message });
           continue;
         }
+        // Chỉ nhập đơn của listing vừa gắn: đơn của listing khác để nguyên, không tính bỏ qua
+        if (onlyListings && !onlyListings.has(m.listingKey) && !onlyListings.has(m.listingName)) continue;
         // Đồng bộ theo tháng: chỉ ghi đơn có đêm trong tháng (giống bookingsForMonth). Đơn ngoài tháng vẫn tính là đã thấy trên API.
         if (opts.month && !(m.checkIn <= D.lastDay(opts.month) && m.checkOut > D.firstDay(opts.month))) {
           seen.push(m.externalId);
@@ -163,7 +170,7 @@ export async function syncBookings(
       // Đơn đã có nhưng không còn trả về từ API: không xóa, chỉ cảnh báo (chỉ xét đơn còn ở tương lai gần).
       // Chỉ xét cơ sở dùng tài khoản này: đơn của cơ sở dùng tài khoản khác không bao giờ có trong kết quả.
       // Chỉ kết luận được khi đã lấy hết đơn; chạm trần maxOrders thì đơn cũ vắng mặt là chuyện bình thường.
-      if (pids.length && raws.length < maxOrders) {
+      if (pids.length && raws.length < maxOrders && !onlyListings) {
         const missing = await db
           .select({ id: bookings.id, externalId: bookings.externalId, propertyId: bookings.propertyId })
           .from(bookings)
@@ -192,4 +199,14 @@ export async function syncBookings(
     .set({ finishedAt: new Date(), created: sum.created, updated: sum.updated, skipped: sum.skipped, errors: sum.errors })
     .where(eq(syncRuns.id, run.id));
   return sum;
+}
+
+/**
+ * Nhập toàn bộ đơn cũ của listing vừa gắn vào phòng. Đồng bộ thường chỉ đọc 300 đơn mới nhất, nên listing gắn muộn
+ * (phòng mới tạo, listing đã ẩn trên Dayladau) sẽ không bao giờ có đơn cũ nếu không nhập riêng.
+ */
+export async function importListingOrders(db: DB, accountId: string, listingKeys: string[], opts: { client?: DayladauClient; decrypt?: (s: string) => string } = {}) {
+  const keys = listingKeys.filter(Boolean);
+  if (!accountId || !keys.length) return null;
+  return syncBookings(db, { ...opts, accountIds: [accountId], listingKeys: keys });
 }

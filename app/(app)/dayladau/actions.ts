@@ -8,6 +8,7 @@ import {
   createProperty, createRoom, dismissSyncAlert, mapListingToRoom, saveDayladauAccount, saveInvestor, testConnection, type ConnectionTest,
 } from "@/lib/dayladau/admin";
 import { syncBookings, type SyncSummary } from "@/lib/dayladau/sync";
+import { importListingOrdersLater } from "@/lib/dayladau/import-later";
 import { computeAlerts } from "@/lib/services/alerts";
 import { reconcilePayoutRevenue } from "@/lib/airbnb/payouts";
 
@@ -80,6 +81,8 @@ export async function testConnectionAction(accountId: string): Promise<Connectio
 export async function mapListingAction(accountId: string, listingKey: string, roomId: string | null): Promise<State> {
   const user = await requireUser();
   const r = await action(() => mapListingToRoom(getDb(), user, accountId, listingKey, roomId));
+  // Gắn xong thì nhập luôn đơn cũ của listing (đồng bộ thường chỉ đọc đơn mới nhất)
+  if (r?.ok && roomId) importListingOrdersLater(accountId, [listingKey]);
   revalidatePath("/dayladau");
   return r;
 }
@@ -87,7 +90,9 @@ export async function mapListingAction(accountId: string, listingKey: string, ro
 export async function createRoomForListingAction(input: { propertyId: string; name: string; listingKey: string }): Promise<{ ok: boolean; error?: string; roomId?: string }> {
   const user = await requireUser();
   let roomId: string | undefined;
-  const r = await action(async () => { roomId = (await createRoom(getDb(), user, { ...input, openedOn: D.todayVN() })).id; });
+  let accountId: string | null | undefined;
+  const r = await action(async () => { const row = await createRoom(getDb(), user, { ...input, openedOn: D.todayVN() }); roomId = row.id; accountId = row.dayladauAccountId; });
+  if (r?.ok) importListingOrdersLater(accountId, [input.listingKey]);
   revalidatePath("/dayladau");
   return { ...r, roomId };
 }

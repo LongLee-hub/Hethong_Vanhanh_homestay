@@ -4,6 +4,10 @@ import { getDb } from "@/lib/db";
 import { requirePermission } from "@/lib/auth/access";
 import { createRoom, updateRoom, transferRoom, closeRoom, reopenRoom, roomsOfProperty } from "@/lib/services/rooms";
 import { api } from "@/lib/server";
+import { importListingOrdersLater } from "@/lib/dayladau/import-later";
+
+// Gắn listing thì nhập đơn cũ của listing chạy nền sau khi trả kết quả
+export const maxDuration = 300;
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Ngày phải có dạng YYYY-MM-DD");
 
@@ -49,11 +53,16 @@ export const POST = api(async ({ user, req }) => {
   const db = getDb();
 
   switch (action) {
-    case "create":
-      return createRoom(db, user, CreateSchema.parse(body));
+    case "create": {
+      const room = await createRoom(db, user, CreateSchema.parse(body));
+      importListingOrdersLater(room.dayladauAccountId, [room.dayladauRoomId]);
+      return room;
+    }
     case "update": {
       const { roomId, ...input } = UpdateSchema.parse(body);
-      return updateRoom(db, user, roomId, input);
+      const room = await updateRoom(db, user, roomId, input);
+      if (input.dayladauRoomId) importListingOrdersLater(room.dayladauAccountId, [input.dayladauRoomId]);
+      return room;
     }
     case "transfer":
       return transferRoom(db, user, TransferSchema.parse(body));

@@ -11,7 +11,7 @@ import { allowedPropertyIds, assertPropertyAccess, type SessionUser } from "../l
 import { saveManualBooking, upsertBooking } from "../lib/services/bookings";
 import { approveExpenses, createExpense, setCommonFinalized } from "../lib/services/expenses";
 import { commonAllocation, commonCostBasis, getSettlement, lockSettlement, paybackForInvestor, unlockSettlement } from "../lib/services/settlement";
-import { SYNC_FULL_MAX_ORDERS, SYNC_MAX_ORDERS, syncBookings } from "../lib/dayladau/sync";
+import { importListingOrders, SYNC_FULL_MAX_ORDERS, SYNC_MAX_ORDERS, syncBookings } from "../lib/dayladau/sync";
 import { createRoom, listConnections, listingsForProperty, mapListingToRoom, saveDayladauAccount, saveInvestor, setPropertyAccount, testConnection, type InvestorInfo } from "../lib/dayladau/admin";
 import { liveOrdersForMonth } from "../lib/dayladau/live";
 import { transferRoom } from "../lib/services/rooms";
@@ -423,6 +423,23 @@ describe("Quản trị kết nối Dayladau", () => {
     const t2 = await testConnection(db, admin, accB, { fetchPage: async () => [mk(1, 777)], decrypt: dec });
     expect(t2.listings.find((l) => l.key === "501")).toMatchObject({ roomId: "Z1", orders: 0, notSeen: true });
     expect(t2.listings.find((l) => l.key === "777")).toMatchObject({ roomId: null, orders: 1 });
+  });
+
+  it("nhập đơn cũ của listing vừa gắn: đọc toàn bộ lịch sử, chỉ ghi đơn của listing đó", async () => {
+    const mk = (id: string, listing: string) => ({ id, total_billed: 500_000, status: "paid", listing: { id: listing, name: `NTG ${listing}` }, reservation: { start_time: "2026-06-10", end_time: "2026-06-11" }, items: [] });
+    const data = [mk("LI-1", "L-LATE"), mk("LI-2", "L-OTHER"), mk("LI-3", "L-LATE")];
+    await db.insert(schema.rooms).values({ id: "Z-LATE", propertyId: "Z", name: "P-late", openedOn: "2026-11-23" });
+    await mapListingToRoom(db, admin, accB, "L-LATE", "Z-LATE");
+    await mapListingToRoom(db, admin, accB, "L-OTHER", "Z1");
+    const asked: number[] = [];
+    const r = await importListingOrders(db, accB, ["L-LATE"], { client: { listBookings: async (o) => { asked.push(o.maxOrders!); return data; } }, decrypt: dec });
+    expect(asked).toEqual([SYNC_FULL_MAX_ORDERS]);
+    expect(r).toMatchObject({ created: 2, skipped: 0, unmapped: [] });
+    const got = await db.select({ e: schema.bookings.externalId }).from(schema.bookings).where(inArray(schema.bookings.externalId, ["LI-1", "LI-2", "LI-3"]));
+    expect(got.map((g) => g.e).sort()).toEqual(["LI-1", "LI-3"]);
+    // Ngày mở bán kéo về đêm đầu tiên của đơn cũ
+    const [room] = await db.select().from(schema.rooms).where(eq(schema.rooms.id, "Z-LATE"));
+    expect(room.openedOn).toBe("2026-06-10");
   });
 
   it("kết nối lỗi trả thông báo, không ném lỗi", async () => {
