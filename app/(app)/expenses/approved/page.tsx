@@ -12,7 +12,7 @@ import { users } from "@/lib/db/schema";
 import { can } from "@/lib/auth/access";
 import { NoAccess } from "@/components/NoAccess";
 import { requireUser } from "@/lib/server";
-import { categories, expensesForMonth, monthParam, visibleProperties } from "@/lib/queries";
+import { categories, expensesForMonth, monthParam, visibleInvestors, visibleProperties } from "@/lib/queries";
 import { pendingExpenses } from "@/lib/services/expenses";
 import { commonAllocation } from "@/lib/services/settlement";
 import { MonthNav, vnd } from "@/components/MonthNav";
@@ -27,9 +27,14 @@ export default async function ApprovedExpenses({ searchParams }: { searchParams:
   const sp = await searchParams;
   const month = monthParam(sp.month);
   const db = getDb();
-  const [props, cats, { direct, common }, pending, alloc] = await Promise.all([
-    visibleProperties(db, user), categories(db), expensesForMonth(db, user, month), pendingExpenses(db, user), commonAllocation(db, month),
+  const [allProps, invs, cats, { direct, common }, pending, alloc] = await Promise.all([
+    visibleProperties(db, user), visibleInvestors(db, user), categories(db), expensesForMonth(db, user, month), pendingExpenses(db, user), commonAllocation(db, month),
   ]);
+  // Lọc theo chủ đầu tư: chỉ giữ cơ sở của CĐT đó; chi phí chung chỉ hiện khi CĐT có cơ sở Unix
+  const invList = invs.filter((i) => allProps.some((p) => p.investorId === i.id));
+  const inv = invList.some((i) => i.id === sp.inv) ? sp.inv : "";
+  const props = inv ? allProps.filter((p) => p.investorId === inv) : allProps;
+  const propIds = new Set(props.map((p) => p.id));
   const unixProps = props.filter((p) => alloc.isUnix(p.id));
   const hasUnix = unixProps.length > 0;
   let prop = sp.prop ?? "";
@@ -67,10 +72,12 @@ export default async function ApprovedExpenses({ searchParams }: { searchParams:
   const approverName = Object.fromEntries(
     (approverIds.length ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, approverIds)) : []).map((u) => [u.id, u.name]),
   );
-  const pendingHere = pending.filter((e) => e.month === month && (prop === COMMON ? e.propertyId === null : prop ? e.propertyId === prop : e.propertyId !== null || hasUnix));
-  const scope = commonView ? "chi phí chung (Unix)" : prop ? propName[prop] : "tất cả cơ sở";
+  const pendingHere = pending.filter((e) => e.month === month && (prop === COMMON ? e.propertyId === null : prop ? e.propertyId === prop : e.propertyId !== null ? propIds.has(e.propertyId) : hasUnix));
+  const invName = invList.find((i) => i.id === inv)?.name;
+  const scope = commonView ? "chi phí chung (Unix)" : prop ? propName[prop] : invName ? `cơ sở của ${invName}` : "tất cả cơ sở";
+  const filterQs = (extra: Record<string, string> = {}) => new URLSearchParams({ ...(inv ? { inv } : {}), ...(prop ? { prop } : {}), ...extra }).toString();
   const monthLower = D.formatMonthVN(month).toLowerCase();
-  const exportHref = `/expenses/export?${new URLSearchParams({ month, approved: "1", ...(prop ? { prop } : {}) })}`;
+  const exportHref = `/expenses/export?${filterQs({ month, approved: "1" })}`;
   const approver = (e: Row) => (
     <td className="small">{e.approvedById ? approverName[e.approvedById] ?? "—" : "—"}{e.approvedAt && <div className="hint">{D.formatDateVN(D.todayVN(e.approvedAt))}</div>}</td>
   );
@@ -91,7 +98,7 @@ export default async function ApprovedExpenses({ searchParams }: { searchParams:
     <>
       <div className="topbar">
         <h1>Chi phí đã duyệt</h1>
-        <MonthNav month={month} path="/expenses/approved" extra={prop ? `&prop=${prop}` : ""} />
+        <MonthNav month={month} path="/expenses/approved" extra={inv || prop ? `&${filterQs()}` : ""} />
         <ExpenseTabs current="approved" pending={pending.length} bank={can(user, "importStatement")} month={month} />
         <p className="sub">
           Các khoản đã được duyệt và ghi nhận vào lãi lỗ, theo tháng hạch toán (tháng chi tiền).
@@ -115,6 +122,14 @@ export default async function ApprovedExpenses({ searchParams }: { searchParams:
 
       <section className="panel">
         <form className="expense-filter" action="/expenses/approved" role="search" aria-label="Lọc chi phí đã duyệt">
+          {invList.length > 1 && (
+            <label className="field"><span>Chủ đầu tư</span>
+              <select name="inv" defaultValue={inv}>
+                <option value="">Tất cả chủ đầu tư</option>
+                {invList.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+              </select>
+            </label>
+          )}
           <label className="field"><span>Cơ sở</span>
             <select name="prop" defaultValue={prop}>
               <option value="">Tất cả cơ sở</option>
@@ -125,7 +140,7 @@ export default async function ApprovedExpenses({ searchParams }: { searchParams:
           <label className="field"><span>Tháng hạch toán</span><input type="month" name="month" defaultValue={month} /></label>
           <div className="row">
             <button className="btn primary">Xem</button>
-            {prop && <Link className="btn" href={`/expenses/approved?month=${month}`}>Xóa lọc</Link>}
+            {(prop || inv) && <Link className="btn" href={`/expenses/approved?month=${month}`}>Xóa lọc</Link>}
             <a className="btn" href={exportHref} download>Tải Excel</a>
           </div>
         </form>
@@ -150,7 +165,7 @@ export default async function ApprovedExpenses({ searchParams }: { searchParams:
                 <tbody>
                   {groups.map((g) => (
                     <tr key={g.id}>
-                      <td><Link href={`/expenses/approved?${new URLSearchParams({ month, prop: g.id })}`}>{g.label}</Link></td>
+                      <td><Link href={`/expenses/approved?${new URLSearchParams({ month, ...(inv ? { inv } : {}), prop: g.id })}`}>{g.label}</Link></td>
                       <td className="n">{g.items.length}</td><td className="n">{vnd(g.direct)}</td>
                       <td className="n">{alloc.isUnix(g.id) ? vnd(g.share) : <span className="muted">Không chịu</span>}</td>
                       <td className="n"><b>{vnd(g.total)}</b></td>

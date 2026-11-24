@@ -28,7 +28,12 @@ export async function GET(req: Request) {
   // approved=1: bảng kê chi phí đã duyệt theo tháng hạch toán (trang /expenses/approved) — thay cột Trạng thái bằng Người duyệt, Ngày duyệt
   const approvedOnly = !template && sp.approved === "1";
   const db = getDb();
-  const props = await visibleProperties(db, user);
+  const sp0 = new URL(req.url).searchParams.get("inv") ?? "";
+  const allProps = await visibleProperties(db, user);
+  // inv=…: chỉ xuất cơ sở của chủ đầu tư đó (trang chi phí đã duyệt lọc theo CĐT)
+  const invId = !template && allProps.some((p) => p.investorId === sp0) ? sp0 : "";
+  const props = invId ? allProps.filter((p) => p.investorId === invId) : allProps;
+  const propIds = new Set(props.map((p) => p.id));
   const propName = Object.fromEntries(props.map((p) => [p.id, p.name]));
   const catName = Object.fromEntries((await categories(db)).map((c) => [c.id, c.name]));
 
@@ -75,7 +80,7 @@ export async function GET(req: Request) {
     const alloc = approvedOnly ? await commonAllocation(db, month) : null;
     const hasUnix = !!alloc && props.some((p) => alloc.isUnix(p.id));
     const rows = [...direct, ...common]
-      .filter((e) => (!approvedOnly || (e.approvalStatus === "APPROVED" && (e.propertyId !== null || (f.prop === "common" && hasUnix)))) && (!f.prop || (f.prop === "common" ? e.propertyId === null : e.propertyId === f.prop)) && (!f.cat || e.categoryId === f.cat) && words.every((w) => fold(e.description).includes(w)))
+      .filter((e) => (!approvedOnly || (e.approvalStatus === "APPROVED" && (e.propertyId !== null || (f.prop === "common" && hasUnix)))) && (!invId || e.propertyId === null || propIds.has(e.propertyId)) && (!invId || e.propertyId !== null || props.some((p) => alloc?.isUnix(p.id))) && (!f.prop || (f.prop === "common" ? e.propertyId === null : e.propertyId === f.prop)) && (!f.cat || e.categoryId === f.cat) && words.every((w) => fold(e.description).includes(w)))
       .sort((a, b) => approvedOnly
         ? (a.propertyId ? propName[a.propertyId] ?? "" : "\uffff").localeCompare(b.propertyId ? propName[b.propertyId] ?? "" : "\uffff", "vi") ||
           (catName[a.categoryId] ?? "").localeCompare(catName[b.categoryId] ?? "", "vi") || a.incurredOn.localeCompare(b.incurredOn)
